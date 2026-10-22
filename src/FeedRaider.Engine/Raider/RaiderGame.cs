@@ -144,6 +144,7 @@ public sealed partial class RaiderGame
     public readonly List<Wingman> Wings = [];
     public WingQueue Queue { get; } = new();
     public WingComms Comms { get; } = new();
+    public FeedLog Log { get; } = new();
     private readonly Queue<WaveSpec> _waves = new();
     private readonly List<(long At, EnemySpawn Spawn, bool Live, DarknessKind? Src, string? Badge)> _pending = [];
     private readonly HashSet<string> _liked = new(StringComparer.Ordinal);
@@ -726,6 +727,7 @@ public sealed partial class RaiderGame
         if (_avatars.TryGetValue(post.AuthorDid, out var av)) w.Avatar = av; else AvatarWanted?.Invoke(post);
         Comms.Arrive(w, Layout.PCols);
         Wings.Add(w);
+        Log.Add(w);
         if (post.LikeCount >= Tuning.BombLikeThreshold) ScreenClearingBomb(w);
     }
 

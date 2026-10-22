@@ -2,117 +2,106 @@ using TUImation;
 
 namespace FeedRaider.Engine.Raider;
 
-/// <summary>Draws the wingmen's comms and chips under their ships. All the placement lives here and in
-/// <see cref="CommPlacement"/>; <see cref="RaiderView"/> only calls <see cref="Draw"/> and reads <see cref="Occupied"/>.</summary>
+/// <summary>Which field cells the action (ships, enemies, bullets, pickups, effects) covers this frame: a cell is covered when
+/// any of its four pixels, read with the shake offset as <see cref="QuadComposer"/> reads them, differs from the backdrop.</summary>
+public readonly struct Foreground(uint[] world, uint[] backdrop, int w, int h, int ox, int oy, int col0)
+{
+    public bool Covers(int col, int row)
+    {
+        if (world is null) return false;
+        int cx = col - col0;
+        if (cx < 0 || cx * 2 >= w || row < 0 || row * 2 >= h) return false;
+        int x0 = Math.Clamp(cx * 2 - ox, 0, w - 1), x1 = Math.Clamp(cx * 2 + 1 - ox, 0, w - 1);
+        int y0 = Math.Clamp(row * 2 - oy, 0, h - 1) * w, y1 = Math.Clamp(row * 2 + 1 - oy, 0, h - 1) * w;
+        return world[y0 + x0] != backdrop[y0 + x0] || world[y0 + x1] != backdrop[y0 + x1]
+            || world[y1 + x0] != backdrop[y1 + x0] || world[y1 + x1] != backdrop[y1 + x1];
+    }
+}
+
+/// <summary>Draws each wingman's comm under its ship. The box is background: <see cref="RaiderView"/> paints it before every
+/// other overlay, and it leaves the cells the action covers alone, so ships and bullets show through it.</summary>
 public sealed class CommPainter
 {
-    private const uint PanelBg = 0x0c1830, Dim = 0x6f86ad, TextFg = 0xe6eefc;
+    private const uint PanelBg = 0x0a1426, Dim = 0x6f86ad, TextFg = 0xe6eefc;
 
     private readonly QuadComposer[] _avQuad = [new(), new()];
     private readonly Surface _avSurface = new(8, 8);
-    private readonly List<CellRect> _avoid = new(16);
-    private CellRect _comm;
+    private readonly Screen _avCells = new(4, 4);
+    private Screen _scr = null!;
+    private CellRect _clip;
+    private Foreground _fore;
 
-    /// <summary>Cells the speaker's comm took this frame (W = 0 when nobody speaks); other overlays can steer clear.</summary>
-    public CellRect Occupied => _comm;
-
-    /// <summary>Cells other overlays have claimed this frame; a merge adds speech bubbles and enemy badges here.</summary>
-    public void Avoid(CellRect r) => _avoid.Add(r);
-
-    public void Draw(RaiderGame g, Screen scr, FieldLayout lay)
+    public void Draw(RaiderGame g, Screen scr, FieldLayout lay, Foreground fore)
     {
-        _comm = default;
-        int c0 = lay.Col0, cols = lay.PCols;
-        var field = new CellRect(c0, 0, cols, lay.Rows);
-
-        if (g.Alive)
-        {
-            int pw = g.Plane.W / 2 + 2, ph = g.Plane.H / 2 + 2;
-            _avoid.Add(new CellRect(c0 + (int)(g.PX / 2) - pw / 2 - 1, (int)(g.PY / 2) - ph / 2 - 1, pw + 2, ph + 2));
-        }
-        if (g.Input.PointerLast)
-        {
-            var (bc, br, bw, bh) = g.BombButton;
-            _avoid.Add(new CellRect(bc, br, bw, bh));
-        }
-
-        if (g.Comms.Speaker is { } sp && OnScreen(sp, lay))
-        {
-            _comm = Place(sp, WingComms.CommW(sp), WingComms.CommH(sp), c0, field, out bool above);
-            DrawComm(scr, sp, _comm, above);
-            _avoid.Add(_comm);
-        }
-        foreach (var w in g.Wings)
-        {
-            if (w == g.Comms.Speaker || !OnScreen(w, lay)) continue;
-            var r = Place(w, WingComms.ChipW, WingComms.ChipH, c0, field, out _);
-            DrawChip(scr, w, r);
-            _avoid.Add(r);
-        }
-        _avoid.Clear();
+        _scr = scr; _fore = fore;
+        _clip = new CellRect(lay.Col0, 2, lay.PCols, Math.Min(lay.PRows, scr.Rows) - 2);
+        // the speaker last, so where two boxes overlap the one being read is whole
+        foreach (var w in g.Wings) if (w != g.Comms.Speaker) DrawComm(w, Box(w, lay), speaking: false);
+        if (g.Comms.Speaker is { } sp && g.Wings.Contains(sp)) DrawComm(sp, Box(sp, lay), speaking: true);
     }
 
-    private static bool OnScreen(Wingman w, FieldLayout lay) => w.Y < lay.PH && w.Y > 8;
+    /// <summary>The cells of <paramref name="w"/>'s comm: centred under the ship at one fixed offset, wherever the ship is.
+    /// It is never moved to stay on screen; the field's edge crops it.</summary>
+    public static CellRect Box(Wingman w, FieldLayout lay) =>
+        new(lay.Col0 + (int)Math.Floor(w.X / 2) - WingComms.CommW(w) / 2, (int)Math.Floor(w.Y / 2) + (w.Plane.H + 3) / 4 + 2, WingComms.CommW(w), WingComms.CommH(w));
 
-    private CellRect Place(Wingman w, int width, int height, int c0, CellRect field, out bool above)
+    /// <summary>One cell of a comm: dropped outside the field (the crop) and where the action covers it (it shows through).</summary>
+    private void Put(int c, int r, char ch, uint fg, uint bg)
     {
-        int shipCol = c0 + (int)(w.X / 2);
-        int top = (int)((w.Y - w.Plane.H / 2.0) / 2), bottom = (int)((w.Y + w.Plane.H / 2.0) / 2) + 1;
-        return CommPlacement.Place(shipCol, top, bottom, width, height, field, 2, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_avoid), out above);
+        if (c < _clip.C || c >= _clip.Right || r < _clip.R || r >= _clip.Bottom || _fore.Covers(c, r)) return;
+        _scr.Put(c, r, ch, fg, bg);
     }
 
-    private void DrawComm(Screen scr, Wingman w, CellRect r, bool above)
+    private void Text(int c, int r, string s, uint fg, uint bg)
     {
-        uint ac = w.Accent, bg = Surface.Mix(PanelBg, ac, 0.22);
-        double open = WingComms.Openness(w);
-        int h = open >= 1 ? r.H : Math.Max(2, (int)Math.Round(r.H * open));
-        int row = above ? r.Bottom - h : r.R;
-        Frame(scr, r.C, row, r.W, h, ac, bg);
-        // a pointer on the edge nearest the ship ties the comm to it
-        int tip = Math.Clamp(r.C + r.W / 2, r.C + 1, r.Right - 2);
-        scr.Put(tip, above ? row + h - 1 : row, above ? '▼' : '▲', ac, bg);
-        if (h < r.H) return;
+        for (int i = 0; i < s.Length; i++) Put(c + i, r, s[i], fg, bg);
+    }
+
+    private void DrawComm(Wingman w, CellRect r, bool speaking)
+    {
+        if (!r.Overlaps(_clip)) return;
+        // dim and low-contrast, so it reads as part of the backdrop; the words keep their contrast
+        uint ac = w.Accent, bg = Surface.Mix(PanelBg, ac, 0.14), edge = Surface.Mix(ac, bg, 0.5);
+        Frame(r, edge, bg);
+        // a pointer on the top edge ties the comm to the ship above it
+        Put(r.C + r.W / 2, r.R, '▲', edge, bg);
 
         FillAvatar(w);
-        _avQuad[w.Slot & 1].Compose(_avSurface, 0, 0, scr, r.C + 1, r.R + 1);
-        scr.Text(r.C + 6, r.R + 1, w.HandleTag, ac, bg);
-        // an open thread reads down: stubs of the oldest posts, the previous post shortened, then the newest being typed out
-        int y = r.R + 2, x = r.C + 6;
-        foreach (var stub in WingComms.Stubs(w, w.CommTextW)) scr.Text(x, y++, stub, Dim, bg);
-        uint prevFg = Surface.Mix(TextFg, bg, 0.45);
-        foreach (var line in w.PrevLines) scr.Text(x, y++, line, prevFg, bg);
+        _avQuad[w.Slot & 1].Compose(_avSurface, 0, 0, _avCells, 0, 0);
+        for (int y = 0; y < 4 && y < r.H - 2; y++)
+            for (int x = 0; x < 4; x++)
+            {
+                int i = y * _avCells.Cols + x;
+                Put(r.C + 1 + x, r.R + 1 + y, _avCells.Ch[i], _avCells.Fg[i], _avCells.Bg[i]);
+            }
+        Text(r.C + 6, r.R + 1, w.HandleTag, ac, bg);
+        // an open thread reads down: stubs of the oldest posts, the previous post shortened, then the newest. The whole page is
+        // always on show; the typewriter only brightens it, so nothing appears or vanishes as it is read out
+        int y0 = r.R + 2, x0 = r.C + 6;
+        foreach (var stub in WingComms.Stubs(w, w.CommTextW)) Text(x0, y0++, stub, Dim, bg);
+        uint prevFg = Surface.Mix(TextFg, bg, 0.45), unread = Surface.Mix(TextFg, bg, 0.4);
+        foreach (var line in w.PrevLines) Text(x0, y0++, line, prevFg, bg);
         var (page, shown) = WingComms.Progress(w, w.CommAge);
-        bool thread = w.Earlier.Count > 0;
-        for (int i = 0, first = page * w.PageLines; i < w.PageLines && first + i < w.CommLines.Length && shown > 0; i++)
+        bool thread = w.Earlier.Count > 0, cursor = speaking;
+        for (int i = 0, first = page * w.PageLines; i < w.PageLines && first + i < w.CommLines.Length; i++)
         {
             string line = w.CommLines[first + i];
-            int n = Math.Min(line.Length, shown);
+            int n = w.Comm == CommState.Waiting ? 0 : Math.Min(line.Length, shown);   // not yet read out: whole, in the unread colour
             shown -= n;
-            if (thread) scr.Put(x - 1, y + i, '▌', ac, bg);
-            for (int k = 0; k < n; k++) scr.Put(x + k, y + i, line[k], TextFg, bg);
-            if (n < line.Length) { scr.Put(x + n, y + i, '▌', ac, bg); break; }
+            if (thread) Put(x0 - 1, y0 + i, '▌', ac, bg);
+            for (int k = 0; k < line.Length; k++) Put(x0 + k, y0 + i, line[k], k < n ? TextFg : unread, bg);
+            if (cursor && n < line.Length) { Put(x0 + n, y0 + i, '▌', ac, bg); cursor = false; }
         }
-        if (WingComms.Pages(w) > 1) scr.Text(r.Right - 5, r.Bottom - 1, $"{page + 1}/{WingComms.Pages(w)}", Dim, bg);
+        if (WingComms.Pages(w) > 1) Text(r.Right - 5, r.Bottom - 1, $"{page + 1}/{WingComms.Pages(w)}", Dim, bg);
     }
 
-    private static void Frame(Screen scr, int c, int r, int w, int h, uint fg, uint bg)
+    private void Frame(CellRect r, uint fg, uint bg)
     {
-        for (int y = 0; y < h; y++) scr.Blank(c, r + y, w, fg, bg);
-        for (int x = 1; x < w - 1; x++) { scr.Put(c + x, r, '─', fg, bg); scr.Put(c + x, r + h - 1, '─', fg, bg); }
-        for (int y = 1; y < h - 1; y++) { scr.Put(c, r + y, '│', fg, bg); scr.Put(c + w - 1, r + y, '│', fg, bg); }
-        scr.Put(c, r, '┌', fg, bg); scr.Put(c + w - 1, r, '┐', fg, bg);
-        scr.Put(c, r + h - 1, '└', fg, bg); scr.Put(c + w - 1, r + h - 1, '┘', fg, bg);
-    }
-
-    private void DrawChip(Screen scr, Wingman w, CellRect r)
-    {
-        uint ac = w.Accent, bg = Surface.Mix(PanelBg, ac, 0.16);
-        for (int y = 0; y < r.H; y++) scr.Blank(r.C, r.R + y, r.W, ac, bg);
-        for (int y = 0; y < r.H; y++) scr.Put(r.C, r.R + y, '▌', ac, bg);
-        FillAvatar(w);
-        _avQuad[w.Slot & 1].Compose(_avSurface, 0, 0, scr, r.C + 1, r.R);
-        scr.Text(r.C + 6, r.R + 1, w.ChipTag, ac, bg);
-        scr.Text(r.C + 6, r.R + 2, Snippet(w.Text, r.W - 7), Dim, bg);
+        for (int y = 0; y < r.H; y++) for (int x = 0; x < r.W; x++) Put(r.C + x, r.R + y, ' ', fg, bg);
+        for (int x = 1; x < r.W - 1; x++) { Put(r.C + x, r.R, '─', fg, bg); Put(r.C + x, r.Bottom - 1, '─', fg, bg); }
+        for (int y = 1; y < r.H - 1; y++) { Put(r.C, r.R + y, '│', fg, bg); Put(r.Right - 1, r.R + y, '│', fg, bg); }
+        Put(r.C, r.R, '┌', fg, bg); Put(r.Right - 1, r.R, '┐', fg, bg);
+        Put(r.C, r.Bottom - 1, '└', fg, bg); Put(r.Right - 1, r.Bottom - 1, '┘', fg, bg);
     }
 
     /// <summary>The post's opening words on one line, whitespace collapsed, cut with an ellipsis to fit <paramref name="w"/> cells.</summary>

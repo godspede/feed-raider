@@ -23,7 +23,8 @@ Losing your last heart keeps the stage you reached and only sets back half your 
 | Fire | Space (hold), F toggles auto-fire; the mouse and touch fire automatically |
 | Bomb | B; right click; two-finger tap |
 | Like a wingman's post | E; or hold the left button or a finger on (or near) the wingman for about half a second until its ring fills. A click or tap never likes; letting go early cancels |
-| Music | M mutes, or use the speaker button and slider |
+| Pause | Esc, or the gear beside the stage: the pause menu holds the sound controls, sign-in and the way back to the main menu |
+| Sound | M mutes all sound; the volume slider is in the pause menu |
 
 Address options: `?sfx=off` turns the sound effects off, `?music=off` the music. `?mode=spectator` shows a watch-only crowd view of a handle's feed. `?debug=feed` lists the first posts of a feed with a like button each, for checking the sign-in. `?stage=6` starts at a later stage, for trying out the later enemies.
 
@@ -33,7 +34,7 @@ The start page has three choices.
 
 - **Sign in with Bluesky** plays with your own feed and lets you like posts for real.
 - **Play as someone** needs no account: type a handle and the wingmen are the posts of the people that handle follows. An empty box asks for a handle. Liking is off.
-- **Random** is one click, no account: posts from public Bluesky comedy feeds. It mixes the "LMAO (Comedy/Humor)" and "Daily Bangers" feeds, turns to a comedy starter-pack feed when both run short, and plays Discover if all three fail. It also leaves out any post that carries a Bluesky moderation label, and a thread reply that carries one ends the thread. The game sends no labeler header, so only Bluesky's own labels come back. Liking is off. `?feed=random` in the address starts it directly.
+- **Random** is one click, no account: posts from public Bluesky comedy feeds. It mixes the "LMAO (Comedy/Humor)" and "Daily Bangers" feeds, turns to a comedy starter-pack feed when both run short, and plays Discover if all three fail. It also leaves out any post that carries a label, on the post or on its author's account, whether from Bluesky's moderation or set by the author, and a thread reply that carries one ends the thread. Liking is off. `?feed=random` in the address starts it directly.
 
 Signing in uses Bluesky's OAuth, and the page talks to your account directly from your browser.
 
@@ -44,7 +45,7 @@ Signing in uses Bluesky's OAuth, and the page talks to your account directly fro
 
 ## Privacy
 
-The game shows real Bluesky posts. Wingmen are posts from your feed. Signed out (Play as someone, Random), posts by authors who carry Bluesky's `!no-unauthenticated` label, which asks not to be shown to logged-out viewers, are left out. Posts, or posts by authors, labelled `porn`, `sexual`, `nudity` or `graphic-media` are left out in every mode. The enemies include posts by strangers, drawn from Bluesky's public moderation label stream (`mod.bsky.app`) and from replies that thread owners hid, read from Bluesky's Jetstream. These are shown without the author: mentions (`@...`), links, hashtags, DIDs and anything that looks like a handle or domain name is removed, the text is cut to about 60 characters, and the game stores none of it.
+The game shows real Bluesky posts. Wingmen are posts from the feed you picked. Signed out (Play as someone, Random), posts by authors who carry Bluesky's `!no-unauthenticated` label, which asks not to be shown to logged-out viewers, are left out. Posts, or posts by authors, labelled `porn`, `sexual`, `nudity` or `graphic-media` are left out in every mode. The enemies include posts by strangers, drawn from Bluesky's public moderation label stream (`mod.bsky.app`) and from replies that thread owners hid, read from Bluesky's Jetstream. These are shown without the author: mentions (`@...`), links, hashtags, DIDs and anything that looks like a handle or domain name is removed, the text is cut to about 60 characters, and the game stores none of it.
 
 xterm.js (MIT) is served with the page from `xterm/`, so no third-party CDN is asked for anything. The page looks handles up through plc.directory and the public Bluesky API, and reads avatars from each author's own PDS. The browser keeps only your last handle, your best score and your sound settings in localStorage. Sign-in is OAuth, and the session is held by the ATProto library in your browser, not by this project.
 

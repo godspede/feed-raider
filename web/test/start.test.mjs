@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { startView, renderStart, normalizeHandle, guestTarget, signInTarget, loadPercent, createTypeahead, stepActive, signIn, SignInCancelled, signInFailed, isOAuthCallback, popupKey, handOff, POPUP_STATE } from '../../src/FeedRaider.Web/wwwroot/page.js';
+import { startView, renderStart, normalizeHandle, guestTarget, signInTarget, loadPercent, createTypeahead, stepActive, signIn, SignInCancelled, signInFailed, isOAuthCallback, popupKey, handOff, POPUP_STATE, watchSaved, completeCallback } from '../../src/FeedRaider.Web/wwwroot/page.js';
 
 const el = (extra = {}) => ({ hidden: true, disabled: false, textContent: '', className: '', style: {}, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; }, ...extra });
 const fakeEls = () => ({ load: el(), loadText: el(), retry: el(), bar: el(), barFill: el(), cardSignIn: el(), signIn: el(), guest: el(), random: el(), hint: el(), signed: el(), play: el(), signOut: el() });
@@ -398,6 +398,118 @@ test('sign-in: a popup closed before the authorization page loads is a cancel', 
   await assert.rejects(signIn(fakeClient(), 'ivy', { open: () => fakeWindow(true) }), (e) => e instanceof SignInCancelled && e.name === 'SignInCancelled');
 });
 
+test('sign-in: no hand-off, no wake and a popup that never reads closed: asking every so often still finds the saved session', async () => {
+  let saved = null;
+  const run = signIn(fakeClient(), 'kim', { open: () => fakeWindow(), restore: async () => saved, channel: fakeBus().channel, watch: fakeWake().watch, pollMs: 5, restoreMs: 20, timeoutMs: 500 });
+  await tick(10);
+  saved = { sub: 'did:plc:kim' }; // the callback saved it; its message was lost and the page never lost focus
+  assert.deepEqual((await run).session, { sub: 'did:plc:kim' });
+});
+
+test('sign-in: a session found before the hand-off arrives still answers the late hand-off, so the popup closes', async () => {
+  const bus = fakeBus(), client = fakeClient();
+  let saved = null;
+  const run = signIn(client, 'kim', { open: () => fakeWindow(), restore: async () => saved, channel: bus.channel, watch: fakeWake().watch, pollMs: 5, restoreMs: 10, ackMs: 100, timeoutMs: 500 });
+  await tick(5);
+  saved = { sub: 'did:plc:kim' }; // the callback restored it (storage changed) before it got to hand off
+  assert.deepEqual((await run).session, { sub: 'did:plc:kim' });
+  assert.equal(await handOff(keyOf(client), { sub: 'did:plc:kim' }, { channel: bus.channel, waitMs: 50 }), true);
+  await tick(150);
+  assert.equal(bus.open(), 0, 'the channel closes once no hand-off can still come');
+});
+
+test('sign-in: a signal aborted as soon as the popup shows the authorization page still cancels', async () => {
+  const bus = fakeBus(), stop = new AbortController();
+  const run = signIn(fakeClient(), 'kim', { open: () => fakeWindow(), restore: async () => null, onWaiting: () => stop.abort(), signal: stop.signal, channel: bus.channel, watch: fakeWake().watch, pollMs: 5, timeoutMs: 60e3 });
+  await assert.rejects(Promise.race([run, tick(200).then(() => { throw new Error('still waiting'); })]), (e) => e instanceof SignInCancelled);
+  assert.equal(bus.open(), 0);
+});
+
+// A window and document for the default page-wake hook, put on globalThis for one test.
+async function withFakePage(fn) {
+  const window = new EventTarget(), document = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+  Object.assign(globalThis, { window, document });
+  try { return await fn(window); } finally { delete globalThis.window; delete globalThis.document; }
+}
+
+test('sign-in: another page of the site writing storage (the callback saving the account) wakes the check', async () => {
+  await withFakePage(async (window) => {
+    let saved = null;
+    const run = signIn(fakeClient(), 'lou', { open: () => fakeWindow(), restore: async () => saved, channel: fakeBus().channel, pollMs: 5, timeoutMs: 300 });
+    await tick(10);
+    saved = { sub: 'did:plc:lou' };
+    window.dispatchEvent(new Event('storage'));
+    assert.deepEqual((await run).session, { sub: 'did:plc:lou' });
+  });
+});
+
+test('watchSaved: a session saved by another page while this one is signed out signs it in; signed in, nothing is asked', async () => {
+  const target = new EventTarget(), got = [];
+  let saved = null, signedIn = false, restores = 0;
+  const stop = watchSaved({ restore: async () => { restores++; return saved; }, onSession: (s) => got.push(s), signedIn: () => signedIn, target });
+  target.dispatchEvent(new Event('storage')); // another tab saved its handle: no session yet
+  await tick(1);
+  saved = { sub: 'did:plc:mo' }; // the popup whose sign-in this page stopped waiting for saved one
+  target.dispatchEvent(new Event('storage'));
+  await tick(1);
+  assert.deepEqual(got, [{ sub: 'did:plc:mo' }]);
+  signedIn = true;
+  target.dispatchEvent(new Event('storage'));
+  await tick(1);
+  assert.equal(restores, 2);
+  stop();
+  signedIn = false;
+  target.dispatchEvent(new Event('storage'));
+  await tick(1);
+  assert.equal(restores, 2, 'stopped');
+});
+
+test('watchSaved: a broken saved session leaves the page signed out; an event during a restore asks again', async () => {
+  const target = new EventTarget(), got = [];
+  let release, first = true, saved = null;
+  const restore = async () => {
+    if (first) { first = false; await new Promise((r) => { release = r; }); throw new Error('session was deleted'); }
+    return saved;
+  };
+  watchSaved({ restore, onSession: (s) => got.push(s), target });
+  target.dispatchEvent(new Event('storage'));
+  await tick(1);
+  saved = { sub: 'did:plc:ned' };
+  target.dispatchEvent(new Event('storage'));
+  release();
+  await tick(5);
+  assert.deepEqual(got, [{ sub: 'did:plc:ned' }]);
+});
+
+test('completeCallback: a popup callback hands the account back and closes once the opener answers', async () => {
+  const sent = [], closed = [];
+  const hand = async (key, result) => { sent.push([key, result]); return true; };
+  const result = await completeCallback({ callback: async () => ({ state: POPUP_STATE + 'k1' }), adopt: async () => 'did:plc:me', handOff: hand, close: () => closed.push(1) });
+  assert.deepEqual(result, { state: POPUP_STATE + 'k1' });
+  assert.deepEqual(sent, [['k1', { sub: 'did:plc:me' }]]);
+  assert.equal(closed.length, 1);
+});
+
+test('completeCallback: a restore that fails after the code exchange still tells the opener why, instead of leaving it waiting', async () => {
+  const sent = [], closed = [];
+  const hand = async (key, result) => { sent.push([key, result]); return true; };
+  await assert.rejects(completeCallback({ callback: async () => ({ state: POPUP_STATE + 'k2' }), adopt: async () => { throw new Error('session was deleted'); }, handOff: hand, close: () => closed.push(1) }), /session was deleted/);
+  assert.deepEqual(sent, [['k2', { error: 'session was deleted' }]]);
+  assert.equal(closed.length, 1);
+});
+
+test('completeCallback: a failed exchange hands back its reason; a redirect callback hands nothing back; no answer, no close', async () => {
+  const sent = [], closed = [];
+  const hand = async (key, result) => { sent.push([key, result]); return false; };
+  const failing = async () => { throw Object.assign(new Error('Issuer mismatch'), { state: POPUP_STATE + 'k3' }); };
+  await assert.rejects(completeCallback({ callback: failing, adopt: async () => 'x', handOff: hand, close: () => closed.push(1) }), /Issuer mismatch/);
+  assert.deepEqual(sent, [['k3', { error: 'Issuer mismatch' }]]);
+  const result = await completeCallback({ callback: async () => ({ state: '?handle=x' }), adopt: async () => 'did:plc:me', handOff: hand, close: () => closed.push(1) });
+  assert.equal(result.state, '?handle=x');
+  assert.equal(sent.length, 1, 'a redirect callback has no opener to tell');
+  assert.equal(closed.length, 0);
+});
+
 test('handOff: false when no opener answers in time, so the callback page stays as a signed-in page', async () => {
   const bus = fakeBus();
   assert.equal(await handOff('k', { sub: 'did:plc:me' }, { channel: bus.channel, waitMs: 20 }), false);
@@ -439,8 +551,14 @@ test('atproto.js: the callback is finished here, not by the library popup hand-o
   const src = readFileSync(new URL('../src/atproto.js', import.meta.url), 'utf8');
   assert.doesNotMatch(src, /signInPopup|client\.init\(/);
   assert.match(src, /client\.callback\(params/);
-  assert.match(src, /client\.restore\(result\.session\.sub, false\)/);
+  assert.match(src, /client\.restore\(sub, false\)/);
+  assert.match(src, /completeCallback\(\{/, 'a restore that fails after the exchange is handed back too');
   assert.match(src, /export function initError/);
+});
+
+test('main.js: a signed-out start page takes a session another page saved, so a popup it stopped waiting for still signs it in', () => {
+  const js = readFileSync(new URL('../../src/FeedRaider.Web/wwwroot/main.js', import.meta.url), 'utf8');
+  assert.match(js, /page\.watchSaved\(\{\s*restore: \(\) => auth\.adoptSaved\(\)/);
 });
 
 test('index.html: three equal choices, one handle box, the old guest and Discover wording is gone, nothing needs JS to paint', () => {

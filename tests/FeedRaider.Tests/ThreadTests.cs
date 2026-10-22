@@ -280,7 +280,7 @@ public class ThreadTests
         for (int i = 0; i < WingComms.TotalFrames(w) + 10; i++) g.Step();
         Assert.NotEqual(WingPhase.Leave, w.Phase);
         Assert.Same(w, g.Comms.Speaker);                          // past the post's own time, still open
-        Assert.Equal(1.0, WingComms.Openness(w));
+        Assert.True(w.CommAge < WingComms.TotalFrames(w) - Tuning.CommCollapseFrames);   // and short of handing the mic over
     }
 
     [Fact]

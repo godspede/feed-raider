@@ -11,7 +11,13 @@ const debug = params.get('debug');
 // The game is the default view; ?mode=spectator keeps the crowd view.
 const spectatorMode = (params.get('mode') || '').toLowerCase() === 'spectator';
 if (!spectatorMode) document.body.classList.add('game');
-else document.querySelector('header form').insertAdjacentHTML('beforeend', '<input type="hidden" name="mode" value="spectator">');
+else {
+  document.querySelector('header form').insertAdjacentHTML('beforeend', '<input type="hidden" name="mode" value="spectator">');
+  // the game keeps the sound controls in its pause menu; the spectator view has no menu, so they go in its header
+  document.getElementById('right').prepend(document.getElementById('vol'), document.getElementById('mute'));
+}
+// ?debug=feed keeps the header bar for its own sign-in
+if (debug === 'feed') document.body.classList.add('debug');
 const errorBox = document.getElementById('error');
 const showError = (message) => {
   errorBox.textContent = message;
@@ -56,18 +62,26 @@ fit.fit();
 // WebGL addon paints the same cells on the GPU. It is served beside xterm (xterm/, or from memory in the single-file build) and
 // is loaded in the background: with no WebGL, a file that fails to load or a lost context the terminal keeps the DOM renderer.
 // ?renderer=dom forces the DOM renderer.
+// Before the glyph atlas fills to where the addon merges pages and starts drawing stale glyphs (page.watchAtlas), the addon is
+// swapped for a fresh one. The old one goes first, as the atlas is cached per terminal, and its GL context is let go at once.
+const loadWebgl = () => {
+  try {
+    const gl = new WebglAddon.WebglAddon();
+    gl.onContextLoss(() => gl.dispose());
+    page.watchAtlas(gl, () => setTimeout(() => {
+      const canvases = [...term.element.querySelectorAll('canvas')];
+      gl.dispose(); loadWebgl();
+      for (const c of canvases) if (!c.isConnected) c.getContext('webgl2')?.getExtension('WEBGL_lose_context')?.loseContext();
+    }));
+    term.loadAddon(gl);
+  } catch (e) {
+    console.warn('webgl renderer unavailable, using the DOM renderer: ' + (e.message || e));
+  }
+};
 if (params.get('renderer') !== 'dom') {
   const tag = document.createElement('script');
   tag.src = frBundle ? frBundle.webglUrl : './xterm/addon-webgl.js';
-  tag.onload = () => {
-    try {
-      const gl = new WebglAddon.WebglAddon();
-      gl.onContextLoss(() => gl.dispose());
-      term.loadAddon(gl);
-    } catch (e) {
-      console.warn('webgl renderer unavailable, using the DOM renderer: ' + (e.message || e));
-    }
-  };
+  tag.onload = loadWebgl;
   tag.onerror = () => console.warn('webgl addon failed to load, using the DOM renderer');
   document.head.appendChild(tag);
 }
@@ -198,8 +212,10 @@ async function loadAvatar(did, url) {
 }
 
 // --- start page: sign in, play as someone (a typed handle) or play Random; a start pressed before the runtime is ready is queued ---
-let pickHandle;
-const handlePicked = new Promise((resolve) => { pickHandle = resolve; }); // resolves { handle, feed }
+// resolves { handle, feed }; armed again for each run, so the start page can pick anew after Back to main menu
+let pickHandle, handlePicked;
+const armPick = () => { handlePicked = new Promise((resolve) => { pickHandle = resolve; }); };
+armPick();
 let busy = false;
 const startError = $('start-error');
 // the handle box's suggestion list; it opens under the box and would cover the error line
@@ -247,7 +263,8 @@ function pick(h, kind, feed = '') {
   renderStartPage();
   pickHandle({ handle: h, feed });
 }
-if (needsStart) {
+// wired with ?handle= in the URL too: Back to main menu brings the start page up later
+if (!spectatorMode) {
   startEls.retry.addEventListener('click', () => location.reload());
   // sign in: popup, or redirect where a popup cannot work; Bluesky's own page asks which account. Once the popup shows Bluesky
   // the page is free again: a closed popup cannot be told from one that is still open, so pressing again starts over.
@@ -377,6 +394,18 @@ authReady.then(() => {
   if (auth && auth.returnTo() !== null && auth.returnTo() !== location.search) location.replace(location.pathname + auth.returnTo());
   renderStartPage();
   if (needsStart && finePointer && currentSession()) startEls.play.focus();
+  // a popup this page stopped waiting for (pressed again, timed out) may still save a session: take it when it lands
+  if (needsStart && auth) {
+    page.watchSaved({
+      restore: () => auth.adoptSaved(),
+      signedIn: () => !!currentSession() || startScreen.hidden || !!queued,
+      onSession: () => {
+        startError.style.display = 'none';
+        renderStartPage();
+        if (finePointer) startEls.play.focus();
+      },
+    });
+  }
 });
 
 const { setModuleImports, getAssemblyExports, getConfig } = await runtimeReady;
@@ -476,6 +505,9 @@ function postRow(p) {
 if (debug === 'feed') renderDebug();
 
 // --- the game ---
+const gear = $('gear'), side = $('side');
+let menu = null;              // the pause menu (page.createMenu), once the game is up
+let releaseKeys = () => {};   // lets go of the held game keys and presses; installGameInput fills it in
 // A hidden tab pauses the engine's loop, feed paging and both live sockets, and the music; coming back resumes all of it.
 function pauseForTab() {
   const hidden = document.hidden;
@@ -493,18 +525,116 @@ if (spectatorMode) {
   if (handle) await exports.Host.Start(handle, (params.get('darkness') || 'on').toLowerCase());
 } else {
   // waits here for the start screen's click (or a session) unless the URL already named a handle
-  const choice = handle || randomFromUrl ? { handle, feed: params.get('feed') || '' } : await handlePicked;
-  const who = choice.handle;
+  let choice = handle || randomFromUrl ? { handle, feed: params.get('feed') || '' } : await handlePicked;
   await audioReady;
   pauseForTab();
+  installGameInput();
+  installMenu();
+  // one run per pick; Back to main menu ends it and brings the start page back for the next pick
+  for (;;) {
+    armPick();
+    startRun(choice);
+    choice = await handlePicked;
+  }
+}
+
+function startRun(choice) {
   for (const n of behindStart) n.inert = false;
   startScreen.hidden = true;
-  installGameInput();
   // hides the header's sign-in and watch forms; StartGame runs the game, so this must come first
   document.body.classList.add('playing');
-  await exports.Host.StartGame(who, choice.feed || params.get('feed') || '', (params.get('darkness') || 'on').toLowerCase(), params.get('fps') === '1', params.get('quality') === 'adaptive',
+  menu.started();
+  renderMenuWho();
+  gear.hidden = false;
+  placeChrome();
+  requestAnimationFrame(placeChrome);   // once the terminal has painted at its final cell size
+  // the run ends when Back to main menu cancels it; it is not waited on, so the next pick never hangs on a slow socket
+  exports.Host.StartGame(choice.handle, choice.feed || params.get('feed') || '', (params.get('darkness') || 'on').toLowerCase(), params.get('fps') === '1', params.get('quality') === 'adaptive',
     // development aid: ?stage=6 starts the run at stage 6, to see the later enemies without playing up to them
-    Number.parseInt(params.get('stage') || '1', 10) || 1);
+    Number.parseInt(params.get('stage') || '1', 10) || 1).catch((e) => showError(e?.message || String(e)));
+}
+
+// --- the pause menu: the gear or Esc opens it, the game holds still behind it; Back to main menu ends the run ---
+function installMenu() {
+  for (const box of [$('side'), $('menu-info')]) box.append($('info').content.cloneNode(true));
+  $('menu-sound').hidden = !music && !sfx;
+  const dialog = $('menu');
+  menu = page.createMenu({
+    show: () => dialog.showModal(),
+    hide: () => { if (dialog.open) dialog.close(); },
+    setPaused: (on) => exports.Host.SetMenu(on),
+    releaseKeys,
+    quit: () => exports.Host.Quit(),
+    toStart: showStartPage,
+  });
+  // however the dialog closed (the browser's own Esc, Resume), the game resumes and focus goes back to the game, not a button
+  dialog.addEventListener('close', () => {
+    menu.closed();
+    if (dialog.contains(document.activeElement)) document.activeElement.blur();
+  });
+  dialog.addEventListener('cancel', (e) => { e.preventDefault(); menu.close(); });
+  $('menu-resume').addEventListener('click', () => menu.close());
+  $('menu-quit').addEventListener('click', () => menu.backToMenu());
+  $('menu-signout').addEventListener('click', async () => {
+    try { await auth?.logout(); } catch (e) { console.warn('sign-out failed: ' + (e?.message || e)); }
+    renderSession();
+    menu.backToMenu();
+  });
+  // a press on the gear must not take focus from the game
+  gear.addEventListener('mousedown', (e) => e.preventDefault());
+  gear.addEventListener('click', () => menu.open());
+  // capture phase, before the game's keys: Esc opens and closes the menu during a run
+  window.addEventListener('keydown', (e) => {
+    const act = page.menuKey(e, { playing: menu.isPlaying(), open: menu.isOpen() });
+    if (!act) return;
+    e.preventDefault();
+    if (act === 'open') menu.open(); else menu.close();
+  }, true);
+  window.addEventListener('resize', placeChrome);
+}
+
+function renderMenuWho() {
+  const s = currentSession();
+  $('menu-who').textContent = s ? `Signed in as @${s.handle}.` : 'Not signed in, so liking is off.';
+  $('menu-signout').hidden = !s;
+}
+
+// The gear beside the Stage readout and, on a wide window, the help in the empty margin right of the field.
+function placeChrome() {
+  if (!menu?.isPlaying()) { gear.hidden = true; side.hidden = true; return; }
+  const r = term.element.querySelector('.xterm-screen').getBoundingClientRect();
+  const l = page.chromeLayout({ cols: term.cols, rows: term.rows, cellW: r.width / term.cols, cellH: r.height / term.rows, left: r.left, top: r.top, width: document.documentElement.clientWidth });
+  const g = l.gear, left = g.x - (g.size - g.w) / 2, top = Math.max(0, g.y - (g.size - g.h) / 2);
+  Object.assign(gear.style, { left: left + 'px', top: top + 'px', width: g.size + 'px', height: g.size + 'px' });
+  Object.assign(gear.firstElementChild.style, { left: g.x - left + 'px', top: g.y - top + 'px', width: g.w + 'px', height: g.h + 'px' });
+  side.hidden = !l.side;
+  if (l.side) Object.assign(side.style, { left: l.side.x + 'px', top: l.side.y + 'px', width: l.side.w + 'px', maxHeight: l.side.h + 'px' });
+}
+
+// Back to main menu: the run is over (Host.Quit), so the page goes back to how it looked before the pick: the three choices,
+// the menu theme, an address with no handle in it (a reload lands here too) and nothing of the old run on screen.
+function showStartPage() {
+  document.body.classList.remove('playing');
+  placeChrome();
+  const p = new URLSearchParams(location.search);
+  p.delete('handle');
+  if ((p.get('feed') || '').toLowerCase() === 'random') p.delete('feed');
+  const q = String(p);
+  history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + location.hash);
+  term.write('\x1b[H\x1b[2J');
+  errorBox.style.display = 'none';
+  startError.style.display = 'none';
+  queued = null;
+  busy = false;
+  if (!startHandle.value) startHandle.value = localStorage.getItem(savedKey) || '';
+  startScreen.classList.remove('booting');
+  startScreen.hidden = false;
+  for (const n of behindStart) n.inert = true;
+  renderStartPage();
+  musicCue('menu');
+  // focus moves to the start page: its first live button (a text box would pop a phone's keyboard)
+  const first = [startEls.play, startEls.signIn, startEls.guest, startEls.random].find((b) => b.offsetParent !== null && !b.disabled);
+  first?.focus({ preventScroll: true });
 }
 
 // Keyboard, mouse and touch become the engine's input calls. Nothing here sends a like: E latches in the game, and a held
@@ -517,11 +647,17 @@ function installGameInput() {
   };
   const toCell = (cx, cy) => { const c = cell(); return [(cx - c.left) / c.w, (cy - c.top) / c.h]; };
   const held = new Set();
+  releaseKeys = () => {
+    for (const c of held) exports.Host.Key(c, false);
+    held.clear();
+    exports.Host.HoldEnd();
+    exports.Host.PointerGone();
+  };
   // Capture phase on window: nothing inside the page (xterm's helper textarea, a focused button) can swallow a game key first.
   const typing = () => page.isTextEntry(document.activeElement);
   window.addEventListener('keydown', (e) => {
     const code = page.gameKey(e);
-    if (!code || typing() || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!code || typing() || menu?.isOpen() || e.ctrlKey || e.metaKey || e.altKey) return;
     e.preventDefault();
     if (e.repeat) return;
     held.add(code);

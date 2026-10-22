@@ -8,6 +8,7 @@ public sealed class PauseGate
     private readonly object _lock = new();
     private CancellationTokenSource _cts = new();
     private TaskCompletionSource? _resumed;
+    private readonly HashSet<string> _holds = [];
 
     public bool IsPaused { get { lock (_lock) return _resumed is not null; } }
 
@@ -37,6 +38,18 @@ public sealed class PauseGate
             _cts = new CancellationTokenSource();
         }
         resumed.TrySetResult();
+    }
+
+    /// <summary>Pauses while any reason holds the gate (the tab hidden, the page's menu open) and resumes once none does.</summary>
+    public void Hold(string reason, bool on)
+    {
+        bool any;
+        lock (_lock)
+        {
+            if (on) _holds.Add(reason); else _holds.Remove(reason);
+            any = _holds.Count > 0;
+        }
+        if (any) Pause(); else Resume();
     }
 
     /// <summary>Completes at once when not paused, else when <see cref="Resume"/> is called. Throws if <paramref name="ct"/> is cancelled first.</summary>

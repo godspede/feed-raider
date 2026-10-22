@@ -43,7 +43,7 @@ public sealed class Wingman
     public int CommChars;                     // characters over all lines
     public string HandleTag = "";             // "@handle" for the comm header
     public string LikesTag = "";
-    public string ChipTag = "";               // short handle for the chip
+    public string ChipTag = "";               // short handle for the phone panel line
     public uint Accent;
     public int CommSeq;                       // arrival order
     public CommState Comm = CommState.Waiting;

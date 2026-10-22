@@ -179,14 +179,62 @@ export function handOff(key, result, { channel = makeChannel, waitMs = 500, setT
   });
 }
 
-// Calls wake() when the page comes back to the front: window focus, or the document turning visible (a phone tab switch).
+// The callback page's work once the authorization server has answered: `callback()` exchanges the code and saves the session
+// (resolving { state }), `adopt()` restores and shows it (resolving the account's DID). A popup's callback hands the result, or
+// the reason it failed at any step, back to the page that opened it and closes once that page answers; without the reason
+// that page would wait on a session that never comes. A redirect's callback hands nothing back. Resolves callback()'s result, or
+// rejects with the step's error, after handing it back.
+export async function completeCallback({ callback, adopt, handOff: hand = handOff, close = () => globalThis.window?.close() }) {
+  let key = null;
+  try {
+    const result = await callback();
+    key = popupKey(result?.state);
+    const sub = await adopt();
+    if (key && await hand(key, { sub })) close();
+    return result;
+  } catch (e) {
+    key ??= popupKey(e?.state);
+    if (key && await hand(key, { error: e instanceof Error ? e.message : String(e) })) close();
+    throw e;
+  }
+}
+
+// Calls wake() when the page comes back to the front (window focus, or the document turning visible: a phone tab switch) or
+// another page of the site writes storage, as the callback page does when it restores the session it saved.
 function watchWake(wake) {
   const w = globalThis.window, d = globalThis.document;
   if (!w || !d) return () => {};
   const onVisible = () => { if (d.visibilityState === 'visible') wake(); };
   w.addEventListener('focus', wake);
+  w.addEventListener('storage', wake);
   d.addEventListener('visibilitychange', onVisible);
-  return () => { w.removeEventListener('focus', wake); d.removeEventListener('visibilitychange', onVisible); };
+  return () => { w.removeEventListener('focus', wake); w.removeEventListener('storage', wake); d.removeEventListener('visibilitychange', onVisible); };
+}
+
+// While this page is signed out, a session another page of the site saved (a popup whose sign-in this page stopped waiting for,
+// or a sign-in in another tab) is adopted when that page writes storage: `restore()` resolves it or null, `onSession` shows it.
+// A restore that fails leaves the page as it is. Returns a function that stops watching.
+export function watchSaved({ restore, onSession, signedIn = () => false, target = globalThis.window }) {
+  if (!target) return () => {};
+  let checking = false, again = false, stopped = false;
+  const check = async () => {
+    if (stopped || signedIn()) return;
+    if (checking) { again = true; return; }
+    checking = true;
+    try {
+      do {
+        again = false;
+        try {
+          const s = await restore();
+          if (s && !stopped) return onSession(s);
+        } catch { /* nothing usable was saved */ }
+      } while (again && !stopped && !signedIn());
+    } finally {
+      checking = false;
+    }
+  };
+  target.addEventListener('storage', check);
+  return () => { stopped = true; target.removeEventListener('storage', check); };
 }
 
 // Signs in with a popup, so the page (and the runtime download) stays loaded, and falls back to the full-page redirect where a
@@ -195,11 +243,11 @@ function watchWake(wake) {
 // The authorization server sends Cross-Origin-Opener-Policy: same-origin, which cuts the popup off from this page: `closed`
 // reads true a moment after it loads and the popup loses its opener. So closed is no sign of a cancel. The callback page
 // hands back over a BroadcastChannel instead, and since a phone's popup is a tab that may come back to a frozen page,
-// `restore()` (the session the callback saved, or null) is asked whenever the popup reads closed, a hand-off arrives, or this
-// page regains focus or visibility. Resolves { via: 'popup', session }; { via: 'redirect' } is what a test sees, for in a
-// browser the redirect leaves the page. `onWaiting` runs once the popup shows the authorization page.
+// `restore()` (the session the callback saved, or null) is asked whenever the popup reads closed, a hand-off arrives, this
+// page regains focus or visibility or sees storage change, and every `restoreMs` besides, so a lost hand-off is no hang.
+// Resolves { via: 'popup', session }; { via: 'redirect' } is what a test sees, for in a browser the redirect leaves the page. `onWaiting` runs once the popup shows the authorization page.
 // Rejects with the callback's error, or SignInCancelled after `timeoutMs` or on `signal`.
-export async function signIn(client, raw, { scope, state, open = globalThis.window?.open?.bind(globalThis.window), standalone = false, restore = async () => null, onWaiting = () => {}, signal, channel = makeChannel, watch = watchWake, popupName = 'feed-raider-signin', popupFeatures = 'width=500,height=700,menubar=no,toolbar=no', pollMs = 500, timeoutMs = 5 * 60e3 } = {}) {
+export async function signIn(client, raw, { scope, state, open = globalThis.window?.open?.bind(globalThis.window), standalone = false, restore = async () => null, onWaiting = () => {}, signal, channel = makeChannel, watch = watchWake, popupName = 'feed-raider-signin', popupFeatures = 'width=500,height=700,menubar=no,toolbar=no', pollMs = 500, restoreMs = 2000, ackMs = 10e3, timeoutMs = 5 * 60e3 } = {}) {
   const target = signInTarget(raw);
   let probe = null;
   if (!standalone && typeof client.authorize === 'function' && typeof open === 'function') {
@@ -223,14 +271,16 @@ export async function signIn(client, raw, { scope, state, open = globalThis.wind
   onWaiting();
   const session = await new Promise((resolve, reject) => {
     const ch = channel(POPUP_CHANNEL);
-    let finished = false, checking = false, again = false, sawClosed = false;
+    let finished = false, checking = false, again = false, sawClosed = false, handedOff = false;
     const finish = (settle, value) => {
       if (finished) return;
       finished = true;
       clearInterval(poll);
+      clearInterval(asking);
       clearTimeout(timer);
-      ch.removeEventListener('message', onMessage);
-      ch.close();
+      const hangUp = () => { ch.removeEventListener('message', onMessage); ch.close(); };
+      // a session found before its hand-off came: the popup is still to hand off, and closes only once answered
+      if (settle === resolve && !handedOff) setTimeout(hangUp, ackMs); else hangUp();
       unwatch();
       signal?.removeEventListener('abort', onAbort);
       settle(value);
@@ -254,7 +304,9 @@ export async function signIn(client, raw, { scope, state, open = globalThis.wind
     };
     const onMessage = ({ data }) => {
       if (data?.key !== key || data.ack) return;
+      handedOff = true;
       ch.postMessage({ key, ack: true });
+      if (finished) return;
       if (data.error) finish(reject, new Error(data.error)); else check();
     };
     const onAbort = () => finish(reject, new SignInCancelled());
@@ -262,7 +314,9 @@ export async function signIn(client, raw, { scope, state, open = globalThis.wind
     signal?.addEventListener('abort', onAbort);
     const unwatch = watch(check);
     const poll = setInterval(() => { if (probe.closed && !sawClosed) { sawClosed = true; check(); } }, pollMs);
+    const asking = setInterval(check, restoreMs);
     const timer = setTimeout(onAbort, timeoutMs);
+    if (signal?.aborted) onAbort(); // given up while the popup was being shown
   });
   return { via: 'popup', session };
 }
@@ -345,4 +399,96 @@ export function createGestures(host, now = () => performance.now()) {
     },
     touchCancel() { host.holdEnd(); t = null; },
   };
+}
+
+// --- the pause menu: Esc or the gear opens it during a run; it pauses the game and can end the run ---
+
+// What a key means for the pause menu: 'open', 'close' or null. Only during a run, so the start page keeps Esc for its list.
+export function menuKey(e, { playing, open }) {
+  if (!playing || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return null;
+  if (e.key !== 'Escape' && e.key !== 'Esc' && e.code !== 'Escape') return null;
+  return open ? 'close' : 'open';
+}
+
+// The menu's state, free of the DOM. host: { show(), hide(), setPaused(on), releaseKeys(), quit(), toStart() }. closed() is the
+// dialog's own close event, however it closed (the browser's Esc, the Resume button, close()); it resumes a run that is still on.
+export function createMenu(host) {
+  let playing = false, open = false;
+  return {
+    isOpen: () => open,
+    isPlaying: () => playing,
+    started() { playing = true; open = false; },
+    open() {
+      if (!playing || open) return;
+      open = true;
+      host.releaseKeys();
+      host.setPaused(true);
+      host.show();
+    },
+    close() {
+      if (!open) return;
+      host.hide();
+      this.closed();
+    },
+    closed() {
+      if (!open) return;
+      open = false;
+      if (playing) host.setPaused(false);
+    },
+    // ends the run (the host's quit lets go of the pause too) and shows the start page
+    backToMenu() {
+      if (!playing) return;
+      playing = false;
+      open = false;
+      host.hide();
+      host.quit();
+      host.toStart();
+    },
+  };
+}
+
+// The WebGL addon (0.18) keeps every glyph it has drawn, per glyph, foreground and background, on texture pages. At its page
+// cap (the GPU's texture units, at least 16 in WebGL2) it merges four pages into one and shifts the rest down a slot, and it
+// re-uploads a slot only when the page there has a different version number: a page that lands in a slot whose old page had
+// the same number keeps the old texture, and cells draw pieces of other glyphs until the page is cleared. The game's
+// true-colour cells (avatars, the dimmed log, the backdrop) fill the cap in two to four minutes of play. watchAtlas counts
+// the pages from the addon's events and calls renew once, at ATLAS_PAGE_LIMIT pages or at the first merge; the page then
+// swaps in a fresh addon, which starts with a one-page atlas.
+export const ATLAS_PAGE_LIMIT = 14;
+export function watchAtlas(addon, renew, limit = ATLAS_PAGE_LIMIT) {
+  let pages = 1, asked = false;
+  const ask = () => { if (!asked) { asked = true; renew(); } };
+  addon.onChangeTextureAtlas(() => { pages = 1; });
+  addon.onAddTextureAtlasCanvas(() => { if (++pages >= limit) ask(); });
+  addon.onRemoveTextureAtlasCanvas(() => { pages--; ask(); });
+}
+
+export const FIELD_MAX_COLS = 64; // the engine's Tuning.FieldMaxCols: the playfield is centred, at most this many columns
+export const GEAR_PX = 44;        // the gear's touch target, in CSS pixels
+const SIDE_MIN_PX = 260;          // the narrowest right margin that takes the how-to-play panel
+
+// Where the gear and the widescreen side panel go, in page pixels, from the terminal's grid: cols x rows cells of cellW x cellH
+// from (left, top), in a window `width` wide. The field sits as the engine puts it (FieldLayout). With room right of the field
+// the gear sits there beside the Stage readout and, with more room, the panel below it; otherwise the gear goes into the HUD
+// just left of the longest readout ("STAGE 10") and there is no panel.
+export function chromeLayout({ cols, rows, cellW, cellH, left, top, width }) {
+  const pc = Math.min(cols, FIELD_MAX_COLS) & ~1;
+  const c0 = Math.floor((cols - pc) / 2);
+  const fieldRight = left + (c0 + pc) * cellW;
+  const room = width - fieldRight;
+  let gear;
+  if (room >= GEAR_PX + 8) {
+    const s = Math.max(28, Math.min(40, Math.round(2 * cellH)));
+    gear = { x: fieldRight + 4, y: top, w: s, h: s, size: Math.max(GEAR_PX, s), inField: false };
+  } else {
+    const stageLeft = left + (c0 + pc - 1 - 'STAGE 10'.length) * cellW;
+    const h = Math.round(cellH), w = Math.round(cellH * 1.6);
+    gear = { x: stageLeft - cellW - w, y: top, w, h, size: GEAR_PX, inField: true };
+  }
+  let side = null;
+  if (room >= SIDE_MIN_PX) {
+    const y = top + gear.h + 16;
+    side = { x: fieldRight + 16, y, w: Math.min(room - 32, 440), h: top + rows * cellH - y - 16 };
+  }
+  return { fieldRight, gear, side };
 }

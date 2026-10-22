@@ -45,6 +45,51 @@ public class PauseTests
     }
 
     [Fact]
+    public void Gate_stays_paused_while_any_reason_holds_it()
+    {
+        var gate = new PauseGate();
+        gate.Hold("tab", true);
+        gate.Hold("menu", true);
+        Assert.True(gate.IsPaused);
+
+        gate.Hold("tab", false);   // the tab is back, but the menu is still open
+        Assert.True(gate.IsPaused);
+        gate.Hold("menu", true);   // holding twice is one hold
+        gate.Hold("menu", false);
+        Assert.False(gate.IsPaused);
+        Assert.False(gate.PauseToken.IsCancellationRequested);
+
+        gate.Hold("menu", false);  // letting go of a reason that is not held changes nothing
+        Assert.False(gate.IsPaused);
+    }
+
+    [Fact]
+    public async Task Runner_sits_still_while_the_menu_holds_the_gate_and_carries_on_after()
+    {
+        var game = new RaiderGame(1);
+        var gate = new PauseGate();
+        var runner = new RaiderRunner(game, () => (60, 20), new CountSink()) { Adaptive = false, Pause = gate };
+        using var cts = new CancellationTokenSource();
+        var run = runner.RunAsync(cts.Token);
+        await Task.Delay(300);
+
+        gate.Hold("menu", true);
+        await Task.Delay(100);
+        long atPause; lock (game) atPause = game.Tick;
+        await Task.Delay(300);
+        long whilePaused; lock (game) whilePaused = game.Tick;
+        Assert.Equal(atPause, whilePaused);
+
+        gate.Hold("menu", false);
+        await Task.Delay(300);
+        long after; lock (game) after = game.Tick;
+        Assert.True(after > whilePaused, "the run goes on once the menu closes");
+
+        cts.Cancel();   // back to the main menu: the run ends
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
     public async Task A_wait_while_paused_ends_when_the_run_is_cancelled()
     {
         var gate = new PauseGate();

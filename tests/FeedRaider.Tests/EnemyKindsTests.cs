@@ -406,7 +406,7 @@ public class EnemyKindsTests
     }
 
     [Fact]
-    public void The_stage_banner_and_new_enemies_never_cover_the_wingmans_comm()
+    public void The_stage_banner_and_new_enemies_draw_over_the_wingmans_comm_and_never_move_it()
     {
         var g = new RaiderGame(5) { LoggedIn = true, MaxWings = 1 };
         g.SetLayout(FieldLayout.Compute(48, 60));
@@ -425,8 +425,9 @@ public class EnemyKindsTests
         var scr = new Screen(48, 60);
         view.Render(g, scr);
         string all = string.Join("\n", Enumerable.Range(0, scr.Rows).Select(r => Row(scr, r)));
-        Assert.Contains(sp.HandleTag, all);
-        foreach (var line in g.Comms.Speaker!.CommLines) Assert.Contains(line, all);
-        Assert.Contains("STAGE 5", all);
+        Assert.Contains("STAGE 5", all);                // the banner is foreground; the comm is background
+        var box = CommPainter.Box(sp, g.Layout);        // still pinned under the ship, not pushed aside by the banner
+        Assert.Equal(g.Layout.Col0 + (int)Math.Floor(sp.X / 2) - WingComms.CommW(sp) / 2, box.C);
+        Assert.Contains(sp.HandleTag[..6], Row(scr, box.R + 1));   // the new enemies cover the rest of it
     }
 }

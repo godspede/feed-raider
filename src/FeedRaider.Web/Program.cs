@@ -12,7 +12,7 @@ public static partial class Host
     private static CancellationTokenSource? _cts;
     private static RaiderGame? _game;
     private static PauseGate _pause = new();
-    private static bool _hidden;
+    private static bool _hidden, _menu;
 
     public static void Main() { }
 
@@ -94,7 +94,8 @@ public static partial class Host
         game.Sfx = new SfxBus((name, pan, step, size) => Safe(() => SfxPlay(name, pan, step, size)));
         lock (game) _game = game;
         var pause = _pause = new PauseGate();
-        if (_hidden) pause.Pause();
+        pause.Hold("tab", _hidden);
+        pause.Hold("menu", _menu);
 
         // Signed in, the wingmen are the player's Following timeline unless ?feed= names another; see FeedPlan.
         var plan = FeedPlan.Choose(feed, me is not null, handle, Bridge.TimelineSource, Bridge.FeedSource, new PublicFeedSource(http), h => new FollowsFeedSource(http, h));
@@ -131,7 +132,25 @@ public static partial class Host
     public static void SetHidden(bool hidden)
     {
         _hidden = hidden;
-        if (hidden) _pause.Pause(); else _pause.Resume();
+        _pause.Hold("tab", hidden);
+    }
+
+    /// <summary>The page's pause menu opened (or closed): the game holds still behind it, as for a hidden tab.</summary>
+    [JSExport]
+    public static void SetMenu(bool open)
+    {
+        _menu = open;
+        _pause.Hold("menu", open);
+    }
+
+    /// <summary>Back to the main menu: the run ends with no game-over song (the page cues the menu theme) and nothing of it is
+    /// left to take input. The next <see cref="StartGame"/> builds a fresh game.</summary>
+    [JSExport]
+    public static void Quit()
+    {
+        _cts?.Cancel();
+        _game = null;
+        SetMenu(false);
     }
 
     [JSExport]

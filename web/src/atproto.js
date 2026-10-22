@@ -3,7 +3,7 @@ import { BrowserOAuthClient } from '@atproto/oauth-client-browser';
 import { buildAtprotoLoopbackClientId } from '@atproto/oauth-types';
 import { Agent } from '@atproto/api';
 import scopes from '../scope.json';
-import { metadataUrl, signIn as signInWith, signInFailed, popupKey, handOff } from '../../src/FeedRaider.Web/wwwroot/page.js';
+import { metadataUrl, signIn as signInWith, signInFailed, popupKey, completeCallback } from '../../src/FeedRaider.Web/wwwroot/page.js';
 
 const PUBLIC_API = 'https://public.api.bsky.app';
 const APPVIEW = 'did:web:api.bsky.app#bsky_appview';
@@ -78,22 +78,20 @@ export async function init() {
 
 // The callback, in the page the authorization server sent back to: a full-page redirect, or the popup, which may have lost its
 // opener on the way. The session is saved as this browser's either way, so the opener and any reload restore it. The popup
-// hands the result to its opener and closes once the opener has it; with no opener listening it stays as a signed-in page.
+// hands the result, or why any step failed, to its opener and closes once the opener has it; with no opener listening it stays
+// as a signed-in page (or shows why it is not).
 async function finishCallback(params, redirectUri) {
   history.replaceState(null, '', location.pathname + location.search); // a reload must not replay the code
-  let result;
-  try {
-    result = await client.callback(params, { redirect_uri: redirectUri });
-  } catch (e) {
-    const key = popupKey(e?.state);
-    if (key && await handOff(key, { error: e?.message || String(e) })) window.close();
-    throw e;
-  }
-  await adopt(await client.restore(result.session.sub, false));
-  const key = popupKey(result.state);
-  if (key) {
-    if (await handOff(key, { sub: did })) window.close();
-  } else if (typeof result.state === 'string' && result.state.startsWith('?')) {
+  let sub;
+  const result = await completeCallback({
+    callback: async () => {
+      const r = await client.callback(params, { redirect_uri: redirectUri });
+      sub = r.session.sub;
+      return r;
+    },
+    adopt: async () => { await adopt(await client.restore(sub, false)); return did; },
+  });
+  if (!popupKey(result.state) && typeof result.state === 'string' && result.state.startsWith('?')) {
     // a fresh login carries the query string we left with (?debug=feed, ?handle=...), so the page can go back to it
     returnSearch = result.state;
   }
@@ -126,6 +124,16 @@ export async function signIn(input, { onWaiting, signal } = {}) {
   const restore = async () => (await client.initRestore(false))?.session ?? null;
   const out = await signInWith(client, input, { scope: client.clientMetadata.scope, state: location.search, standalone: navigator.standalone === true, restore, onWaiting, signal });
   if (out.via === 'popup') await adopt(out.session);
+  failure = null;
+  return session();
+}
+
+// A session another page of the site saved since this one loaded (a popup whose sign-in this page stopped waiting for), adopted:
+// the session JSON, or null when there is none.
+export async function adoptSaved() {
+  const restored = await client.initRestore(false);
+  if (!restored?.session) return null;
+  await adopt(restored.session);
   failure = null;
   return session();
 }

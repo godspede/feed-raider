@@ -3,7 +3,7 @@ using FeedRaider.Engine.Raider;
 
 namespace FeedRaider.Tests;
 
-// The Star Fox style wingman comms: who holds the mic, the typewriter, the wrap, where it sits, what the rest wear.
+// The Star Fox style wingman comms: who holds the mic, the typewriter, the wrap, the picture. Where the box sits: CommBoxTests.
 public class CommTests
 {
     private const string Long = "this is a perfectly ordinary post with enough words in it to run well past three short lines of comm text";
@@ -72,7 +72,7 @@ public class CommTests
     // ---------------------------------------------------------------- typewriter and wrap
 
     [Fact]
-    public void The_text_types_out_at_the_comm_rate_then_holds_then_collapses()
+    public void The_text_types_out_at_the_comm_rate_then_holds_then_hands_over()
     {
         Assert.Equal(0, WingComms.Revealed(0, 40));
         Assert.Equal(Tuning.CommCharsPerSecond, WingComms.Revealed(Tuning.Fps, 100));
@@ -85,10 +85,6 @@ public class CommTests
         Assert.Equal(reveal + Tuning.CommHoldFrames + Tuning.CommCollapseFrames, WingComms.TotalFrames(w));
         double hold = Tuning.CommHoldFrames / (double)Tuning.Fps;
         Assert.InRange(hold, 4, 5);                                          // "about 4-5 s"
-        w.CommAge = WingComms.TotalFrames(w) - 1;
-        Assert.True(WingComms.Openness(w) < 0.2);
-        w.CommAge = reveal + 5;
-        Assert.Equal(1, WingComms.Openness(w));
     }
 
     [Fact]
@@ -152,65 +148,23 @@ public class CommTests
         Assert.DoesNotContain(g.Comms.Speaker!.CommLines, l => l.Contains('…'));
     }
 
-    // ---------------------------------------------------------------- placement
-
-    private static readonly CellRect Field = new(0, 0, 48, 60);
-
-    [Fact]
-    public void The_comm_sits_just_below_the_ship()
-    {
-        var r = CommPlacement.Place(24, 20, 26, 23, 6, Field, 2, [], out bool above);
-        Assert.False(above);
-        Assert.Equal(27, r.R);
-        Assert.Equal(24 - 23 / 2, r.C);
-    }
-
-    [Fact]
-    public void The_comm_flips_above_when_it_would_run_off_the_bottom()
-    {
-        var r = CommPlacement.Place(24, 50, 56, 23, 6, Field, 2, [], out bool above);
-        Assert.True(above);
-        Assert.Equal(50 - 6 - 1, r.R);
-        Assert.True(r.Bottom <= 50);
-    }
-
-    [Fact]
-    public void The_comm_is_clamped_to_the_field_and_clear_of_the_hud()
-    {
-        var left = CommPlacement.Place(0, 20, 26, 23, 6, Field, 2, [], out _);
-        var right = CommPlacement.Place(47, 20, 26, 23, 6, Field, 2, [], out _);
-        Assert.Equal(0, left.C);
-        Assert.Equal(48, right.Right);
-        var top = CommPlacement.Place(24, -4, 1, 23, 6, Field, 2, [], out _);
-        Assert.True(top.R >= 2);
-    }
-
-    [Fact]
-    public void The_comm_steers_clear_of_the_player_and_other_overlays()
-    {
-        var player = new CellRect(16, 26, 12, 8);
-        var r = CommPlacement.Place(24, 20, 26, 23, 6, Field, 2, [player], out bool above);
-        Assert.False(r.Overlaps(player));
-        Assert.True(above || r.R > 26 || r.Right <= player.C || r.C >= player.Right);
-        var wall = new[] { new CellRect(0, 27, 48, 6), new CellRect(0, 12, 48, 7) };
-        var s = CommPlacement.Place(24, 20, 26, 23, 6, Field, 2, wall, out _);
-        Assert.True(s.C >= 0 && s.Right <= 48 && s.R >= 2 && s.Bottom <= 60);   // boxed in: still inside the field
-    }
-
     // ---------------------------------------------------------------- the picture
 
     [Fact]
-    public void A_rendered_phone_screen_shows_the_comm_under_the_speaker_and_a_chip_on_the_other()
+    public void A_rendered_phone_screen_shows_a_comm_under_each_wingman()
     {
         var g = TwoWingmen();
         g.Input.Key(GameKey.Down, true);                          // the player starts mid-field; park it at the bottom
         Run(g, WingComms.RevealFrames(g.Comms.Speaker!.CommChars) + 1);
         g.Input.Key(GameKey.Down, false);
+        g.Enemies.Clear(); g.Bullets.Clear(); g.Particles.Clear(); g.Rings.Clear();   // the comm is background: shots would show over it
         var view = new RaiderView();
         var scr = new Screen(48, 60);
         view.Render(g, scr);
         var sp = g.Comms.Speaker!;
         var other = g.Wings.Single(w => w != sp);
+        sp.X = other.X = g.Layout.PW / 2.0; sp.Y = 24; other.Y = 64;   // mid-field: a ship near a side has its comm cropped
+        view.Render(g, scr);
         int shipBottom = (int)((sp.Y + sp.Plane.H / 2.0) / 2) + 1;
 
         int handleRow = -1;
@@ -221,10 +175,9 @@ public class CommTests
         Assert.Contains(sp.CommLines[2], Row(scr, handleRow + 3));
         Assert.Contains('┌', Row(scr, handleRow - 1));
 
-        bool chip = false;
-        for (int r = 0; r < scr.Rows; r++) chip |= Row(scr, r).Contains(other.ChipTag);
-        Assert.True(chip, "the waiting wingman wears a chip");
-        Assert.DoesNotContain(Enumerable.Range(0, scr.Rows), r => Row(scr, r).Contains(other.HandleTag));
+        var ro = CommPainter.Box(other, g.Layout);
+        if (ro.R + 1 >= 2 && ro.R + 1 < scr.Rows && ro.C + 6 >= g.Layout.Col0 && ro.C + 6 + other.HandleTag.Length <= g.Layout.Col0 + g.Layout.PCols)
+            Assert.Contains(other.HandleTag, Row(scr, ro.R + 1));   // the waiting wingman has its own comm, not a chip
     }
 
     [Fact]

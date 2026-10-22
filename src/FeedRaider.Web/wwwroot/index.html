@@ -51,7 +51,7 @@
     #error { color: #f4f8e4; background: var(--wine); padding: 6px 16px; display: none; box-shadow: inset 4px 0 0 var(--cream); }
     #right { margin-left: auto; display: flex; gap: 8px 12px; align-items: center; }
     #who { display: flex; gap: 8px; align-items: center; color: var(--cream); }
-    /* music: a speaker button and a volume slider; neither takes focus, so Space and the arrows stay with the game */
+    /* music: a speaker button and a volume slider, in the pause menu (in the header for the spectator view) */
     #mute { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 28px; padding: 0; }
     #mute[hidden], #vol[hidden] { display: none; }
     #mute.muted { background: transparent; color: var(--text); box-shadow: inset 0 0 0 2px var(--frame); }
@@ -83,10 +83,68 @@
     body.game { overscroll-behavior: none; position: fixed; inset: 0; }
     body.game #term, body.game #term * { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
     body.game #term { cursor: crosshair; padding: 0; }
-    /* game: the start screen names the handle and lists the controls, so the header keeps only sign-in */
+    /* game: no header bar; the title, sound and sign-in live in the pause menu. ?debug=feed keeps it for its sign-in. */
+    body.game:not(.debug) header { display: none; }
     body.game header form:not(#login), body.game #note { display: none; }
-    /* game: once the game has started, the header keeps only the signed-in #who box (with Sign out) */
     body.playing #login { display: none; }
+    /* the gear at the top right of the field, beside the Stage readout: a 44 px target around a HUD-sized button. It never
+       takes focus, so Space and the arrows stay with the game; Esc does the same. */
+    #gear { position: fixed; z-index: 2; padding: 0; background: transparent; box-shadow: none; cursor: pointer; }
+    #gear[hidden], #side[hidden] { display: none; }
+    #gear .face { position: absolute; display: flex; align-items: center; justify-content: center; background: var(--field); color: var(--olive); box-shadow: inset 0 0 0 2px var(--frame); }
+    #gear svg { width: 70%; height: 70%; }
+    #gear .hole { fill: var(--field); }
+    #gear:hover:not(:disabled) { background: transparent; box-shadow: none; }
+    #gear:hover .face { color: var(--olive-light); box-shadow: inset 0 0 0 2px var(--olive), var(--glow); }
+    #gear:active:not(:disabled) { transform: none; box-shadow: none; }
+    /* how to play and what it is: one text, in the pause menu and, on a wide window, in the empty margin right of the field */
+    .info { font-size: 13px; }
+    .info h2 { margin: 0 0 8px; font-size: 13px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--cream); }
+    .info h2::before { content: "> "; color: var(--olive); letter-spacing: 0; }
+    .info section + section { margin-top: 18px; }
+    .info p, .info ul { margin: 0 0 8px; }
+    .info ul { padding-left: 1.2em; }
+    .info li + li { margin-top: 4px; }
+    .info b { color: var(--cream); }
+    .info a { color: var(--sky); text-underline-offset: 3px; }
+    .info a:hover { color: var(--cream); }
+    .info dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 10px; }
+    .info dt { color: var(--olive); font-weight: 700; }
+    .info dd { margin: 0; }
+    kbd { display: inline-block; padding: 0 4px; font: inherit; line-height: 1.3; color: var(--cream); background: var(--field); border: 1px solid var(--frame); border-bottom-width: 2px; }
+    /* the side panel looks like a comm panel: a navy field in a frame with the talking bar down its left edge */
+    #side { position: fixed; z-index: 1; overflow-y: auto; padding: 14px 16px 14px 20px; background: var(--field); border: 2px solid var(--frame); box-shadow: inset 4px 0 0 var(--frame); }
+    #side kbd { background: var(--ground); }
+    /* the pause menu: a real dialog over a dimmed game; the controls on the left, the help beside them, stacked on a phone */
+    #menu { width: min(60em, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0; overflow: auto; color: var(--text); border: 2px solid var(--frame); background:
+      repeating-linear-gradient(to bottom, transparent 0 2px, rgba(24, 34, 58, .45) 2px 3px), var(--ground);
+      box-shadow: inset 4px 0 0 var(--olive), 0 0 24px rgba(163, 179, 95, .18); }
+    #menu::backdrop { background: rgba(16, 19, 22, .75); }
+    #menu[open] { display: grid; grid-template-columns: minmax(16em, 20em) 1fr; }
+    #menu .controls { display: flex; flex-direction: column; gap: 12px; padding: 22px 20px 22px 24px; border-right: 2px solid var(--field); }
+    #menu h1 { font-size: 24px; letter-spacing: .14em; white-space: normal; text-shadow: 3px 3px 0 var(--olive-deep), var(--glow); }
+    #menu h1::before { text-shadow: var(--glow); }
+    #menu .paused { margin: -4px 0 4px; }
+    #menu .paused::before { content: "> "; color: var(--olive); }
+    #menu button { min-height: 44px; padding: 8px 16px; }
+    #menu .ghost { background: transparent; color: var(--cream); box-shadow: inset 0 0 0 2px var(--frame); }
+    #menu .ghost:hover:not(:disabled) { background: transparent; box-shadow: inset 0 0 0 2px var(--olive), var(--glow); }
+    #menu .ghost:active:not(:disabled) { transform: translateY(1px); box-shadow: inset 0 0 0 2px var(--olive); }
+    /* a fieldset is min-content wide by default, which pushed the slider past the column's edge */
+    #menu-sound { display: flex; align-items: center; gap: 12px; min-width: 0; margin: 0; padding: 10px 12px; border: 2px solid var(--field); }
+    #menu-sound[hidden] { display: none; }
+    #menu-sound legend { padding: 0 6px; color: var(--cream); font-weight: 700; }
+    #menu #mute { width: 44px; height: 36px; min-height: 0; padding: 0; }
+    #menu #vol { flex: 1 1 0; width: 0; min-width: 6em; height: 36px; }
+    #menu-who { margin: 0; color: var(--cream); overflow-wrap: anywhere; }
+    #menu-signout, #menu-signout:hover:not(:disabled) { align-self: flex-start; min-height: 44px; padding: 6px 0; background: transparent; color: var(--sky); font-weight: 400; text-decoration: underline; text-underline-offset: 3px; box-shadow: none; }
+    #menu-signout[hidden] { display: none; }
+    #menu .info { padding: 22px 24px; }
+    @media (max-width: 720px) {
+      #menu[open] { grid-template-columns: 1fr; }
+      #menu .controls { border-right: 0; border-bottom: 2px solid var(--field); }
+      #menu .info { padding: 18px 20px 20px 24px; }
+    }
     /* game: no text selection or highlight anywhere; inputs stay selectable so a handle can be typed and fixed */
     body.game { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
     body.game input, body.game textarea { user-select: text; -webkit-user-select: text; }
@@ -152,7 +210,6 @@
     #start .hint { margin: 0; font-size: 13px; color: var(--sky); }
     #start-error { display: none; margin: 0; color: #f4f8e4; background: var(--wine); padding: 8px 12px 8px 16px; font-size: 14px; box-shadow: inset 4px 0 0 var(--cream); }
     #start .controls { margin: 0; font-size: 13px; }
-    #start kbd { display: inline-block; padding: 0 4px; font: inherit; line-height: 1.3; color: var(--cream); background: var(--field); border: 1px solid var(--frame); border-bottom-width: 2px; }
     #start .alt { margin: 0; font-size: 13px; text-align: center; }
     #start.booting #start-choices, #start.booting .hint, #start.booting .controls, #start.booting .alt { display: none !important; }
     #start .alt a { color: var(--sky); display: inline-block; padding: 12px 8px; text-underline-offset: 3px; }
@@ -160,7 +217,6 @@
     @media (max-width: 640px) {
       body.game header { min-height: 36px; padding: 3px 8px; gap: 4px 8px; }
       body.game input { width: 11em; }
-      body.game #vol { display: none; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -178,14 +234,6 @@
     </form>
     <span id="note">A watch-only view of a feed, nothing to fly. <a href="./">Play the game</a></span>
     <div id="right">
-    <input id="vol" type="range" min="0" max="100" step="5" value="50" aria-label="Music volume" hidden>
-    <button id="mute" type="button" aria-label="Music" aria-pressed="false" title="Music (M)" hidden>
-      <svg width="20" height="16" viewBox="0 0 20 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M2 6h3l4-3.5v11L5 10H2z" fill="currentColor"/>
-        <path class="wave" d="M12 5.5a3.5 3.5 0 0 1 0 5M14.5 3a7 7 0 0 1 0 10"/>
-        <path class="cross" d="M12.5 5.5l5 5m0-5l-5 5"/>
-      </svg>
-    </button>
     <form id="login">
       <input name="login-handle" placeholder="your handle, e.g. you.bsky.social" aria-label="Your Bluesky handle" autocomplete="username" spellcheck="false">
       <button type="submit">Sign in with Bluesky</button>
@@ -196,6 +244,58 @@
   <div id="debug"></div>
   <div id="error" role="alert"></div>
   <div id="term"></div>
+  <button id="gear" type="button" tabindex="-1" aria-label="Pause menu" aria-haspopup="dialog" aria-controls="menu" title="Pause (Esc)" hidden>
+    <span class="face"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="4" stroke-dasharray="3.1416 3.1416"/><circle cx="12" cy="12" r="6.5" fill="currentColor"/><circle class="hole" cx="12" cy="12" r="2.6"/></svg></span>
+  </button>
+  <aside id="side" class="info" aria-label="About Feed Raider" hidden></aside>
+  <dialog id="menu" aria-labelledby="menu-title">
+    <div class="controls">
+      <h1 id="menu-title">Feed Raider</h1>
+      <p class="paused">Paused.</p>
+      <button type="button" id="menu-resume" autofocus>Resume</button>
+      <fieldset id="menu-sound" hidden>
+        <legend>Sound</legend>
+        <button id="mute" type="button" aria-label="Sound" aria-pressed="false" title="Sound (M)" hidden>
+          <svg width="20" height="16" viewBox="0 0 20 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M2 6h3l4-3.5v11L5 10H2z" fill="currentColor"/>
+            <path class="wave" d="M12 5.5a3.5 3.5 0 0 1 0 5M14.5 3a7 7 0 0 1 0 10"/>
+            <path class="cross" d="M12.5 5.5l5 5m0-5l-5 5"/>
+          </svg>
+        </button>
+        <input id="vol" type="range" min="0" max="100" step="5" value="50" aria-label="Volume" hidden>
+      </fieldset>
+      <p id="menu-who" role="status"></p>
+      <button type="button" id="menu-signout" hidden>Sign out</button>
+      <button type="button" id="menu-quit" class="ghost">Back to main menu</button>
+    </div>
+    <div id="menu-info" class="info"></div>
+  </dialog>
+  <!-- the help, shown in the pause menu and, on a wide window, beside the game -->
+  <template id="info">
+    <section>
+      <h2>How to play</h2>
+      <dl>
+        <dt>Move</dt><dd><kbd>WASD</kbd> or arrows, the mouse, or drag a finger</dd>
+        <dt>Fire</dt><dd>hold <kbd>Space</kbd>, <kbd>F</kbd> for auto-fire; mouse and touch fire on their own</dd>
+        <dt>Bomb</dt><dd><kbd>B</kbd>, right click, or a two-finger tap</dd>
+        <dt>Like</dt><dd><kbd>E</kbd> near a wingman, or hold on it until its ring fills (a tap never likes)</dd>
+        <dt>Pause</dt><dd><kbd>Esc</kbd> or the gear; <kbd>M</kbd> mutes</dd>
+      </dl>
+      <p><b>Wingmen</b> are posts from the feed you picked: yours, the follows of the handle you typed, or Random's. They fly in beside you and talk.</p>
+      <p><b>Liking</b> one gives you a power-up. If its author replied in their own thread, the reply opens in the same bubble and the next like reads on. Signed in, each like is a real Bluesky like; signed out, nothing is written.</p>
+      <p><b>Random</b> plays posts from public Bluesky comedy feeds, with no account.</p>
+    </section>
+    <section>
+      <h2>What it is</h2>
+      <p>A demo of what you can build for free:</p>
+      <ul>
+        <li><b>AT Protocol</b>: OAuth sign-in in the browser, then your own feed and your likes, through your own session.</li>
+        <li><b>Bluesky</b>: its public feeds and API, for Random and Play as someone.</li>
+        <li><b>GitHub Pages</b>: static hosting, no server. The game is C# on .NET in WebAssembly, running in your browser.</li>
+      </ul>
+      <p><a href="https://github.com/godspede/feed-raider" target="_blank" rel="noopener">Source on GitHub</a>. Not made or endorsed by Bluesky.</p>
+    </section>
+  </template>
   <div id="start">
     <main id="start-form">
       <h1>Feed Raider</h1>
@@ -235,7 +335,7 @@
       </div>
       <p class="hint" id="start-hint">Without signing in, liking is off.</p>
       <div id="start-error" role="alert"></div>
-      <p class="controls"><kbd>WASD</kbd>/arrows move, <kbd>Space</kbd> fires (<kbd>F</kbd> auto-fire), <kbd>B</kbd> bomb, <kbd>E</kbd> likes a wingman's post. Mouse or touch: hold on a wingman to like it (a tap never does), right click or two-finger tap bombs.</p>
+      <p class="controls"><kbd>WASD</kbd>/arrows move, <kbd>Space</kbd> fires (<kbd>F</kbd> auto-fire), <kbd>B</kbd> bomb, <kbd>E</kbd> likes a wingman's post, <kbd>Esc</kbd> pauses. Mouse or touch: hold on a wingman to like it (a tap never does), right click or two-finger tap bombs.</p>
       <p class="alt"><a href="?mode=spectator">spectator view</a></p>
     </main>
   </div>

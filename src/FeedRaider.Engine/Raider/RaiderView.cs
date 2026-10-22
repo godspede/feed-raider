@@ -9,13 +9,14 @@ public sealed class RaiderView
     public static readonly uint Rail = Surface.Pack(0x1c, 0x3a, 0x6e);
     public static readonly uint Blue = Surface.Pack(0x00, 0x85, 0xff);
     private const uint HudBg = 0x0a1224, PanelBg = 0x0c1830, PanelEdge = 0x1c3a6e, Dim = 0x6f86ad, Pink = 0xff5a8a, Ice = 0xbfe9ff;
-    private const int PanelW = 26, PanelMinH = 8, PanelChrome = 6, PanelNarrowH = 7;
+    private const int PanelW = 26;
 
     private readonly QuadComposer _quad = new();
-    private readonly QuadComposer[] _avQuad = [new(), new()];
+    private readonly QuadComposer _avQuad = new();
     private readonly Surface _avSurface = new(8, 8);
     private readonly CommPainter _comms = new();
     private Surface? _field;
+    private uint[] _backdrop = [];
     private Background? _bg;
     private FieldLayout _lay;
     private readonly ulong _seed;
@@ -43,7 +44,16 @@ public sealed class RaiderView
         }
         var f = _field;
         _bg!.Draw(f, g.ScrollFrames);
+        if (_backdrop.Length != f.P.Length) _backdrop = new uint[f.P.Length];
+        Array.Copy(f.P, _backdrop, f.P.Length);
         DrawWorld(g, f);
+        if (g.ScreenFlash > 0)
+        {
+            // the backdrop copy takes the same flash, so the comms still see only the action as covering them
+            double a = 0.5 * g.ScreenFlash / Tuning.ScreenFlashFrames;
+            var px = f.P;
+            for (int i = 0; i < px.Length; i++) { px[i] = Surface.Mix(px[i], 0xFFFFFF, a); _backdrop[i] = Surface.Mix(_backdrop[i], 0xFFFFFF, a); }
+        }
         var (sx, sy) = g.ShakeOffset();
         _quad.Compose(f, sx, sy, scr, lay.Col0, 0);
         for (int r = 0; r < scr.Rows; r++)
@@ -51,7 +61,7 @@ public sealed class RaiderView
             scr.Put(lay.Col0 - 1, r, '│', Rail, Ground);
             scr.Put(lay.Col0 + lay.PCols, r, '│', Rail, Ground);
         }
-        DrawText(g, scr, lay, debug);
+        DrawText(g, scr, lay, debug, new Foreground(f.P, _backdrop, f.W, f.H, sx, sy, lay.Col0));
     }
 
     // ---------------------------------------------------------------- pixels
@@ -160,12 +170,6 @@ public sealed class RaiderView
             uint c = fade < 1 ? Surface.Mix(0x0b1c44, p.Color, fade) : p.Color;
             if (p.Kind == ParticleKind.Heart) { f.Set(x - 1, y, c); f.Set(x + 1, y, c); f.Rect(x - 1, y + 1, 3, 1, c); f.Set(x, y + 2, c); }
             else f.Rect(x, y, p.Size, p.Size, c);
-        }
-        if (g.ScreenFlash > 0)
-        {
-            double a = 0.5 * g.ScreenFlash / Tuning.ScreenFlashFrames;
-            var px = f.P;
-            for (int i = 0; i < px.Length; i++) px[i] = Surface.Mix(px[i], 0xFFFFFF, a);
         }
     }
 
@@ -277,11 +281,14 @@ public sealed class RaiderView
 
     private static string Hearts(int n) => new('\u2665', Math.Max(0, n));   // \u2665 heart suit
 
-    private void DrawText(RaiderGame g, Screen scr, FieldLayout lay, string? debug)
+    private void DrawText(RaiderGame g, Screen scr, FieldLayout lay, string? debug, Foreground fore)
     {
         int c0 = lay.Col0, cols = lay.PCols;
         int Cx(double x) => c0 + (int)(x / 2);
         int Cy(double y) => (int)(y / 2);
+
+        // the comms first: they are background, under every other overlay and around the action
+        _comms.Draw(g, scr, lay, fore);
 
         // HUD
         scr.Blank(c0, 0, cols, 0xffffff, HudBg);
@@ -310,7 +317,6 @@ public sealed class RaiderView
             if (e.Kind == EnemyKind.Carrier)
             {
                 int col = Math.Clamp(Cx(e.X) - t.Length / 2, c0, c0 + cols - t.Length);
-                _comms.Avoid(new CellRect(col, Math.Max(2, Cy(e.Y - e.Sprite.H / 2.0) - 1), t.Length, 1));
                 scr.Text(col, Math.Max(2, Cy(e.Y - e.Sprite.H / 2.0) - 1), t, 0xe3c8ff, 0x1a1030);
             }
             else if (e.Kind == EnemyKind.Gunship)
@@ -319,7 +325,6 @@ public sealed class RaiderView
                 int w = lines.Max(l => l.Length) + 2;
                 int col = Math.Clamp(Cx(e.X) - w / 2, c0 + 1, c0 + cols - w - 1);
                 int row = Cy(e.Y + e.Sprite.H / 2.0) + 1;
-                _comms.Avoid(new CellRect(col, row, w, lines.Length));
                 for (int i = 0; i < lines.Length; i++)
                 {
                     scr.Text(col, row + i, " " + lines[i].PadRight(w - 2) + " ", 0xffd0e0, 0x2a1740);
@@ -345,17 +350,13 @@ public sealed class RaiderView
             int row = lay.PRows * 2 / 5;
             string title = StageTitle(g.StageShown);
             int tc = c0 + (cols - title.Length) / 2;
-            _comms.Avoid(new CellRect(tc, row, title.Length, 1));
             scr.Text(tc, row, title, 0xffffff, 0x2a1740);
             if (Ramp.Hint(g.StageShown) is { } hint && hint.Length <= cols - 2)
             {
                 int hc = c0 + (cols - hint.Length) / 2;
-                _comms.Avoid(new CellRect(hc, row + 1, hint.Length, 1));
                 scr.Text(hc, row + 1, hint, Art.Body(Ramp.Introduces(g.StageShown)!.Value), 0x1a1030);
             }
         }
-
-        _comms.Draw(g, scr, lay);
 
         // like prompt
         if (g.Prompt is { } w2)
@@ -397,27 +398,7 @@ public sealed class RaiderView
     private void DrawPanels(RaiderGame g, Screen scr, FieldLayout lay)
     {
         bool wide = lay.Margin >= PanelW + 3;
-        if (wide)
-        {
-            // each panel is as tall as its whole post (or open thread) needs; when two do not fit, the shorter keeps what it needs
-            int avail = lay.Rows - 4, tw = PanelW - 2;
-            int n0 = 0, n1 = 0;
-            Wingman? w0 = null, w1 = null;
-            foreach (var w in g.Wings) { if (w.Slot == 0) w0 = w; else w1 = w; }
-            if (w0 is not null) n0 = Math.Max(PanelMinH, PanelChrome + ThreadRows(w0, tw));
-            if (w1 is not null) n1 = Math.Max(PanelMinH, PanelChrome + ThreadRows(w1, tw));
-            int room = avail - (w0 is not null && w1 is not null ? 1 : 0), h0 = n0, h1 = n1;
-            if (n0 + n1 > room)
-            {
-                int half = room / 2;
-                if (n0 <= half) h1 = room - n0;
-                else if (n1 <= half) h0 = room - n1;
-                else { h0 = half; h1 = room - half; }
-            }
-            int col = Math.Max(1, lay.Col0 - PanelW - 2);
-            if (w0 is not null) DrawPanel(g, scr, w0, col, 2, PanelW, h0, slideFromLeft: true);
-            if (w1 is not null) DrawPanel(g, scr, w1, col, 2 + (w0 is not null ? h0 + 1 : 0), PanelW, h1, slideFromLeft: true);
-        }
+        if (wide) DrawLog(g, scr, Math.Max(1, lay.Col0 - PanelW - 2), 2, lay.Rows - 2);
         else
         {
             // the speaker, else the one still fighting with the lowest age (else the youngest leaver)
@@ -434,87 +415,102 @@ public sealed class RaiderView
         }
     }
 
-    private void DrawPanel(RaiderGame g, Screen scr, Wingman w, int col, int row, int width, int height, bool slideFromLeft)
+    /// <summary>The wide screen's left column as a feed: every wingman's post since the run began, the newest ending at
+    /// <paramref name="bottom"/> and the older ones above it, cut off by <paramref name="top"/>. It moves only when the log
+    /// grows (a wingman arrives, or a thread opens under its post), as a quick scroll of <see cref="LogScrollFrames"/>.</summary>
+    private void DrawLog(RaiderGame g, Screen scr, int col, int top, int bottom)
     {
-        // slide in over the first 10 frames, out over the last 10 (a wingman that has left takes its panel with it)
-        int total = w.TotalFrames;
-        double inT = Math.Min(1, w.Age / 10.0), outT = Math.Min(1, (total - w.Age) / 10.0);
-        double slide = 1 - Math.Min(inT, outT);
-        slide = slide * slide;
-        if (slideFromLeft) col -= (int)Math.Round(slide * (width + 4));
-        else row -= (int)Math.Round(slide * (height + 4));
-        for (int r = 0; r < height; r++)
-            scr.Blank(col, row + r, width, 0xffffff, PanelBg);
-        for (int c = 0; c < width; c++)
+        var entries = g.Log.Entries;
+        int total = 0;
+        foreach (var w in entries) total += LogLines(w).Length + LogHeader;
+        if (_logRows >= 0 && total > _logRows)
         {
-            scr.Put(col + c, row, '─', PanelEdge, PanelBg);
-            scr.Put(col + c, row + height - 1, '─', PanelEdge, PanelBg);
+            // the scroll runs from when the post opened (game time), not from when this frame first saw it
+            int youngest = int.MaxValue;
+            foreach (var w in g.Wings) youngest = Math.Min(youngest, w.PostAge);
+            _scrollRows = ScrollOffset(g.Tick) + total - _logRows;
+            _scrollAt = g.Tick - (youngest == int.MaxValue ? 0 : youngest);
         }
-        scr.Put(col, row, '▌', Blue, PanelBg);
-        if (w == g.Comms.Speaker) for (int r = 0; r < height; r++) scr.Put(col, row + r, '▌', w.Accent, PanelBg);
-        // avatar: 8x8 pixels is 4x4 cells
-        FillAvatar(w);
-        if (col >= 0 && row >= 0 && col + 5 < scr.Cols && row + 5 < scr.Rows) _avQuad[w.Slot & 1].Compose(_avSurface, 0, 0, scr, col + 1, row + 1);
-        int tx = col + 6, tw = width - 7;
-        scr.Text(tx, row + 1, Trim("@" + w.Handle, tw), Ice, PanelBg);
-        string likes = w.Liked ? "\u2665 liked" : w.LikesTag;   // \u2665 heart suit
-        // wide panels run the text under the avatar; narrow ones put it beside the avatar
-        bool beside = width > PanelW + 4;
-        int xr = beside ? tx : col + 1, wr = beside ? tw : width - 2;
-        int yr = beside ? row + 2 : row + 5, nr = beside ? height - 3 : height - 6;
-        if (beside) scr.Text(col + width - likes.Length - 1, row + 1, likes, w.Liked ? Pink : Dim, PanelBg);
-        else scr.Text(tx, row + 2, likes, w.Liked ? Pink : Dim, PanelBg);
-        int shown = w.Typed();
-        var lines = ThreadLines(w, wr, Math.Max(1, nr));
-        for (int i = 0; i < lines.Count; i++)
+        else if (total < _logRows) _scrollRows = 0;
+        _logRows = total;
+
+        int y = bottom + 1 + ScrollOffset(g.Tick);
+        for (int i = entries.Count - 1; i >= 0 && y > top; i--)
         {
-            var (line, kind) = lines[i];
-            if (kind == PanelRule) { for (int k = 0; k < wr; k++) scr.Put(xr + k, yr + i, '┄', PanelEdge, PanelBg); continue; }
-            if (kind != PanelNewest) { scr.Text(xr, yr + i, line, kind == PanelStub ? Dim : Surface.Mix(0xe6eefc, PanelBg, 0.45), PanelBg); continue; }
-            if (shown <= 0) break;
-            int n = Math.Min(line.Length, shown);
-            shown -= n;
-            scr.Text(xr, yr + i, line[..n], 0xe6eefc, PanelBg);
-            if (n < line.Length) { scr.Put(xr + n, yr + i, '▌', Blue, PanelBg); break; }
+            var w = entries[i];
+            var lines = LogLines(w);
+            y -= LogHeader + lines.Length;
+            DrawLogEntry(g, scr, w, lines, col, y, top, bottom);
         }
     }
 
-    private const int PanelOlder = 0, PanelStub = 1, PanelRule = 2, PanelNewest = 3;
-
-    /// <summary>Rows the whole open thread takes wrapped to <paramref name="width"/>: every post in full, a rule between them.</summary>
-    private static int ThreadRows(Wingman w, int width)
+    /// <summary>Rows the scroll still has to run at <paramref name="frame"/>: it starts fast and eases in.</summary>
+    private int ScrollOffset(long frame)
     {
-        int n = BubbleText.Format(w.Text, width, 200).Length;
-        foreach (var t in w.Earlier) n += BubbleText.Format(t, width, 200).Length + 1;
-        return n;
+        double t = (frame - _scrollAt) / (double)LogScrollFrames;
+        return t >= 1 || t < 0 ? 0 : (int)Math.Round(_scrollRows * (1 - t) * (1 - t));
     }
 
-    /// <summary>The thread for a panel of <paramref name="rows"/> text rows: every post in full when it fits. If not, the oldest
-    /// posts shrink into one "+N earlier" line until it does, and only a newest post longer than the panel itself is cut.</summary>
-    private static List<(string Text, int Kind)> ThreadLines(Wingman w, int width, int rows)
+    private const int LogHeader = 5, LogScrollFrames = 6;
+    private const int LogOlder = 0, LogRule = 1, LogNewest = 2;
+    private int _logRows = -1, _scrollRows;
+    private long _scrollAt;
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Wingman, LogText> _logText = new();
+    private sealed record LogText(string Text, int Earlier, (string Line, int Kind)[] Lines);
+
+    /// <summary>The wingman's whole thread wrapped to the column: each earlier post, a rule, then the newest; wrapped once per post.</summary>
+    private (string Line, int Kind)[] LogLines(Wingman w)
     {
-        var older = new string[w.Earlier.Count][];
-        for (int i = 0; i < older.Length; i++) older[i] = BubbleText.Format(w.Earlier[i], width, 200);
-        var newest = BubbleText.Format(w.Text, width, 200);
-        int from = 0, total = newest.Length;
-        foreach (var o in older) total += o.Length + 1;
-        while (total > rows && from < older.Length)
-        {
-            total -= older[from].Length + 1;
-            if (from == 0) total++;      // the "+N earlier" line
-            from++;
-        }
+        if (_logText.TryGetValue(w, out var t) && ReferenceEquals(t.Text, w.Text) && t.Earlier == w.Earlier.Count) return t.Lines;
+        int width = PanelW - 2;
         var lines = new List<(string, int)>();
-        if (from > 0) lines.Add(($"+{from} earlier", PanelStub));
-        for (int i = from; i < older.Length; i++)
+        foreach (var e in w.Earlier)
         {
-            foreach (var l in older[i]) lines.Add((l, PanelOlder));
-            lines.Add(("", PanelRule));
+            foreach (var l in BubbleText.Format(e, width, 200)) lines.Add((l, LogOlder));
+            lines.Add(("", LogRule));
         }
-        int left = Math.Max(1, rows - lines.Count);
-        if (newest.Length > left) newest = BubbleText.Format(w.Text, width, left);
-        foreach (var l in newest) lines.Add((l, PanelNewest));
-        return lines;
+        foreach (var l in BubbleText.Format(w.Text, width, 200)) lines.Add((l, LogNewest));
+        var arr = lines.ToArray();
+        _logText.AddOrUpdate(w, new LogText(w.Text, w.Earlier.Count, arr));
+        return arr;
+    }
+
+    /// <summary>One entry: a rule, the avatar with the handle and likes beside it, then the post. The speaker is brightest with
+    /// its accent bar; a wingman still on screen is plain; one that has flown off (or gone) is dimmed, avatar and all.</summary>
+    private void DrawLogEntry(RaiderGame g, Screen scr, Wingman w, (string Line, int Kind)[] lines, int col, int row, int top, int bottom)
+    {
+        bool speaking = w == g.Comms.Speaker, gone = !FeedLog.OnScreen(w, g.Wings);
+        double fade = gone ? 0.6 : speaking ? 0 : 0.2;
+        uint text = Surface.Mix(0xe6eefc, PanelBg, fade), older = Surface.Mix(0xe6eefc, PanelBg, 0.45 + fade / 2);
+        uint handle = gone ? Surface.Mix(Ice, PanelBg, 0.55) : Ice, bar = speaking ? w.Accent : gone ? PanelEdge : Blue;
+        uint likesFg = Surface.Mix(w.Liked ? Pink : Dim, PanelBg, gone ? 0.4 : 0);
+        int height = LogHeader + lines.Length;
+        for (int r = Math.Max(row, top); r < Math.Min(row + height, bottom + 1); r++)
+        {
+            scr.Blank(col, r, PanelW, 0xffffff, PanelBg);
+            scr.Put(col, r, '▌', bar, PanelBg);
+        }
+        bool In(int r) => r >= top && r <= bottom;
+        if (In(row)) for (int c = 1; c < PanelW; c++) scr.Put(col + c, row, '─', PanelEdge, PanelBg);
+        // avatar: 8x8 pixels is 4x4 cells, drawn only when all of it is inside the column
+        if (In(row + 1) && In(row + 4))
+        {
+            FillAvatar(w);
+            if (gone) for (int i = 0; i < _avSurface.P.Length; i++) _avSurface.P[i] = Surface.Mix(_avSurface.P[i], PanelBg, 0.6);
+            _avQuad.Compose(_avSurface, 0, 0, scr, col + 1, row + 1);
+        }
+        int tx = col + 6, tw = PanelW - 7;
+        if (In(row + 1)) scr.Text(tx, row + 1, Trim("@" + w.Handle, tw), handle, PanelBg);
+        string likes = w.Liked ? "\u2665 liked" : w.LikesTag;   // \u2665 heart suit
+        if (In(row + 2)) scr.Text(tx, row + 2, likes, likesFg, PanelBg);
+        for (int i = 0; i < lines.Length; i++)
+        {
+            int r = row + LogHeader + i;
+            if (!In(r)) continue;
+            var (line, kind) = lines[i];
+            if (kind == LogRule) for (int k = 0; k < PanelW - 2; k++) scr.Put(col + 1 + k, r, '\u2504', PanelEdge, PanelBg);
+            else scr.Text(col + 1, r, line, kind == LogNewest ? text : older, PanelBg);
+        }
     }
 
     private static void DrawPanelLine(Screen scr, Wingman w, int col, int row, int width, bool speaking)

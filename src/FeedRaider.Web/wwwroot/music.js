@@ -373,12 +373,14 @@ function installControls() {
   for (const el of [button, slider]) {
     if (!el) continue;
     el.hidden = false;
+    // a focused control would eat the game's Space and arrow keys (the page ignores keys while an input has focus); in the
+    // pause menu the game is paused and the controls keep focus like any dialog's
+    if (el.closest('dialog')) continue;
     el.tabIndex = -1;
-    // a focused control would eat the game's Space and arrow keys (the page ignores keys while an input has focus)
     el.addEventListener('mousedown', () => setTimeout(() => el.blur(), 0));
     el.addEventListener('change', () => el.blur());
   }
-  button?.addEventListener('click', () => { toggleMute(); button.blur(); });
+  button?.addEventListener('click', () => { toggleMute(); if (!button.closest('dialog')) button.blur(); });
   slider?.addEventListener('input', () => { setVolume(Number(slider.value) / 100); if (muted && Number(slider.value) > 0) setMuted(false); });
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'KeyM' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
