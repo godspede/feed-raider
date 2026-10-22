@@ -53,7 +53,7 @@ public static class BubbleText
     }
 
     /// <summary>Single-cell-wide printable text only: wide (CJK, emoji) and combining characters
-    /// would knock the cell grid out of line, so they become '?' or vanish.</summary>
+    /// would knock the cell grid out of line, so they become '?' or vanish. Widths are xterm's (<see cref="CellWidth"/>).</summary>
     public static string Sanitize(string text)
     {
         var sb = new StringBuilder(text.Length);
@@ -67,18 +67,19 @@ public static class BubbleText
                 lastSpace = true;
                 continue;
             }
-            lastSpace = false;
-            if (char.IsHighSurrogate(ch)) { i++; sb.Append('?'); continue; }
             if (char.IsLowSurrogate(ch)) continue;
-            if ((ch >= 0x300 && ch <= 0x36F) || (ch >= 0x200B && ch <= 0x200F) || (ch >= 0x202A && ch <= 0x202E) || (ch >= 0x2060 && ch <= 0x206F) || ch == 0xFEFF || (ch >= 0xFE00 && ch <= 0xFE0F)) continue;
+            // marks such as U+20E3 (the combining keycap, as in "2" + U+FE0F + U+20E3) have no cell of their own in xterm
+            if (!char.IsHighSurrogate(ch) && (CellWidth.Of(ch) == 0 || ch == '­')) continue;   // a browser draws the soft hyphen 0 wide
+            lastSpace = false;
+            if (char.IsHighSurrogate(ch)) { if (i + 1 < text.Length && char.IsLowSurrogate(text[i + 1])) i++; sb.Append('?'); continue; }
             if (IsWide(ch)) { sb.Append('?'); continue; }
             sb.Append(ch);
         }
         return sb.ToString().Trim();
     }
 
+    // xterm's wide chars, and the symbols a browser draws as emoji, wider than the cell xterm gives them
     private static bool IsWide(char c) =>
-        (c >= 0x1100 && c <= 0x115F) || (c >= 0x2E80 && c <= 0xA4CF) || (c >= 0xAC00 && c <= 0xD7A3) ||
-        (c >= 0xF900 && c <= 0xFAFF) || (c >= 0xFE30 && c <= 0xFE6F) || (c >= 0xFF00 && c <= 0xFF60) ||
-        (c >= 0xFFE0 && c <= 0xFFE6) || (c >= 0x231A && c <= 0x23FF) || (c >= 0x2600 && c <= 0x27BF);
+        CellWidth.Of(c) == 2 || (c >= 0x231A && c <= 0x23FF) || (c >= 0x2600 && c <= 0x27BF) ||
+        c is '\u25fd' or '\u25fe' or '\u2b1b' or '\u2b1c' or '\u2b50' or '\u2b55';
 }

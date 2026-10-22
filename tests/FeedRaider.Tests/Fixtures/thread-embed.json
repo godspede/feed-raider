@@ -1,0 +1,96 @@
+{
+ "thread": {
+  "$type": "app.bsky.feed.defs#threadViewPost",
+  "post": {
+   "uri": "at://did:plc:ann111/app.bsky.feed.post/p1",
+   "cid": "cidp1",
+   "author": {
+    "did": "did:plc:ann111",
+    "handle": "ann.example.com"
+   },
+   "record": {
+    "$type": "app.bsky.feed.post",
+    "text": "first post of a small example thread about gardens and tomatoes",
+    "createdAt": "2026-10-01T10:00:00.000Z"
+   },
+   "replyCount": 4,
+   "repostCount": 0,
+   "likeCount": 3,
+   "indexedAt": "2026-10-01T10:00:00.000Z"
+  },
+  "replies": [
+   {
+    "$type": "app.bsky.feed.defs#threadViewPost",
+    "post": {
+     "uri": "at://did:plc:ann111/app.bsky.feed.post/p2",
+     "cid": "cidp2",
+     "author": {
+      "did": "did:plc:ann111",
+      "handle": "ann.example.com"
+     },
+     "record": {
+      "$type": "app.bsky.feed.post",
+      "text": "second post carries a picture, so the thread ends right here",
+      "createdAt": "2026-10-01T10:01:00.000Z",
+      "reply": {
+       "root": {
+        "uri": "at://did:plc:ann111/app.bsky.feed.post/p1",
+        "cid": "cidp1"
+       },
+       "parent": {
+        "uri": "at://did:plc:ann111/app.bsky.feed.post/p1",
+        "cid": "cidp1"
+       }
+      }
+     },
+     "replyCount": 0,
+     "repostCount": 0,
+     "likeCount": 3,
+     "indexedAt": "2026-10-01T10:01:00.000Z",
+     "embed": {
+      "$type": "app.bsky.embed.images#view",
+      "images": [
+       {
+        "thumb": "https://img.example.com/t.jpg",
+        "fullsize": "https://img.example.com/f.jpg",
+        "alt": ""
+       }
+      ]
+     }
+    },
+    "replies": []
+   },
+   {
+    "$type": "app.bsky.feed.defs#threadViewPost",
+    "post": {
+     "uri": "at://did:plc:ann111/app.bsky.feed.post/p3",
+     "cid": "cidp3",
+     "author": {
+      "did": "did:plc:ann111",
+      "handle": "ann.example.com"
+     },
+     "record": {
+      "$type": "app.bsky.feed.post",
+      "text": "a later self reply that must not win over the earlier one",
+      "createdAt": "2026-10-01T10:05:00.000Z",
+      "reply": {
+       "root": {
+        "uri": "at://did:plc:ann111/app.bsky.feed.post/p1",
+        "cid": "cidp1"
+       },
+       "parent": {
+        "uri": "at://did:plc:ann111/app.bsky.feed.post/p1",
+        "cid": "cidp1"
+       }
+      }
+     },
+     "replyCount": 0,
+     "repostCount": 0,
+     "likeCount": 3,
+     "indexedAt": "2026-10-01T10:05:00.000Z"
+    },
+    "replies": []
+   }
+  ]
+ }
+}

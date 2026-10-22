@@ -16,7 +16,7 @@ public class RaiderTests
     }
 
     private static FeedPost Post(int n, string text = LongText, int likes = 10, bool media = false) =>
-        new($"at://did:plc:t{n}/app.bsky.feed.post/{n}", $"cid{n}", $"did:plc:t{n}", $"t{n}.test", text, likes, 0, 0, null, null, HasMedia: media);
+        new($"at://did:plc:t{n}/app.bsky.feed.post/{n}", $"cid{n}", $"did:plc:t{n}", $"t{n}.test", text, likes, 0, 0, null, null, HasEmbed: media);
 
     private static void Run(RaiderGame g, int frames) { for (int i = 0; i < frames; i++) g.Step(); }
 
@@ -64,17 +64,32 @@ public class RaiderTests
         Assert.Equal(Post(1).Uri, first.Uri);
     }
 
+    private static FeedPage EmbedPage() => FeedMapper.ParsePage(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "feed-embeds.json")), skipReposts: true);
+
     [Fact]
-    public void Feed_mapper_flags_media_embeds_and_keeps_quotes_and_avatar()
+    public void Feed_mapper_flags_every_embed_and_keeps_the_avatar()
     {
-        string Page(string embed) => """{"feed":[{"post":{"uri":"at://did:plc:a/app.bsky.feed.post/1","cid":"c","author":{"did":"did:plc:a","handle":"a.test","avatar":"https://cdn.example/a.jpg"},"record":{"text":"hello there"},"likeCount":1,"embed":""" + embed + "}}]}";
-        FeedPost P(string embed) => FeedMapper.ParsePage(Page(embed)).Posts.Single();
-        Assert.True(P("""{"$type":"app.bsky.embed.images#view"}""").HasMedia);
-        Assert.True(P("""{"$type":"app.bsky.embed.video#view"}""").HasMedia);
-        Assert.True(P("""{"$type":"app.bsky.embed.external#view"}""").HasMedia);
-        Assert.True(P("""{"$type":"app.bsky.embed.recordWithMedia#view","media":{"$type":"app.bsky.embed.images#view"}}""").HasMedia);
-        Assert.False(P("""{"$type":"app.bsky.embed.record#view"}""").HasMedia);
-        Assert.Equal("https://cdn.example/a.jpg", P("""{"$type":"app.bsky.embed.record#view"}""").AvatarUrl);
+        var posts = EmbedPage().Posts;
+        Assert.Equal(8, posts.Count);
+        Assert.Equal([false, true, true, true, true, true, true, false], posts.Select(p => p.HasEmbed));
+        Assert.Equal([true, false, false, false, false, false, false, true], posts.Select(WingQueue.Eligible));
+        const string one = """{"feed":[{"post":{"uri":"at://did:plc:a/app.bsky.feed.post/1","cid":"c","author":{"did":"did:plc:a","handle":"a.test","avatar":"https://cdn.example/a.jpg"},"record":{"text":"hello there"},"embed":null}}]}""";
+        var plain = FeedMapper.ParsePage(one).Posts.Single();
+        Assert.False(plain.HasEmbed);
+        Assert.Equal("https://cdn.example/a.jpg", plain.AvatarUrl);
+    }
+
+    [Fact]
+    public void The_queue_and_the_interleaver_take_only_posts_without_an_embed()
+    {
+        var posts = EmbedPage().Posts;
+        var q = new WingQueue();
+        foreach (var p in posts) q.Offer(p);
+        Assert.Equal(2, q.Count);
+        var mix = new FeedInterleaver();
+        mix.Add(posts);
+        Assert.Equal(2, mix.Count);
+        while (mix.TryTake(out var p, allowRepeat: true)) Assert.False(p.HasEmbed);
     }
 
     // ---------------------------------------------------------------- wingman life cycle
@@ -88,8 +103,8 @@ public class RaiderTests
         Assert.Single(g.Wings);
         Assert.Equal(WingPhase.Enter, g.Wings[0].Phase);
         Run(g, Tuning.WingStaggerFrames);
-        Assert.Equal(2, g.Wings.Count);                       // at most two at once
-        Assert.Equal(1, g.Queue.Count);                       // the third waits
+        Assert.Single(g.Wings);                               // one ally at a time
+        Assert.Equal(2, g.Queue.Count);                       // the others wait
         var first = g.Wings[0];
         for (int i = 0; i < 2000 && first.Phase != WingPhase.Fight; i++) g.Step();
         Assert.Equal(WingPhase.Fight, first.Phase);
@@ -97,9 +112,10 @@ public class RaiderTests
         Assert.Equal(WingPhase.Leave, first.Phase);
         for (int i = 0; i < 2000 && g.Wings.Contains(first); i++) g.Step();
         Assert.DoesNotContain(first, g.Wings);                // gone
-        for (int i = 0; i < 200 && !g.Wings.Any(w => w.Post.Uri == Post(3).Uri); i++) g.Step();
-        Assert.Contains(g.Wings, w => w.Post.Uri == Post(3).Uri);   // the queued one took the slot
-        Assert.True(g.Wings.Count <= Tuning.MaxWingmen);
+        for (int i = 0; i < 200 && !g.Wings.Any(w => w.Post.Uri == Post(2).Uri); i++) g.Step();
+        var next = Assert.Single(g.Wings);                    // the queued one took the slot
+        Assert.Equal(Post(2).Uri, next.Post.Uri);
+        Assert.NotEqual(first.Slot, next.Slot);               // and flies on the other side
     }
 
     [Fact]
@@ -107,9 +123,10 @@ public class RaiderTests
     {
         var g = NewGame();
         g.OfferPost(Post(1, likes: 0)); Run(g, 60);
-        g.OfferPost(Post(2, likes: 900)); Run(g, 60);
         var low = g.Wings.Single(w => w.Post.LikeCount == 0).Firepower;
-        var high = g.Wings.Single(w => w.Post.LikeCount == 900).Firepower;
+        var h = NewGame();
+        h.OfferPost(Post(2, likes: 900)); Run(h, 60);
+        var high = h.Wings.Single(w => w.Post.LikeCount == 900).Firepower;
         Assert.Equal(1.0, low, 6);
         Assert.True(high > low && high < low * 3);
     }

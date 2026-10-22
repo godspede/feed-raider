@@ -115,6 +115,92 @@ public static class Art
         "..............#..............",
     ], DarkPal);
 
+    // the newer kinds keep the dark husk outline and each wears one colour of its own, so they read apart at a glance
+    public const uint MineLit = 0xffb347, DiverLime = 0x9dff5a, SplitterPink = 0xff6be0, TurretTeal = 0x3fe0d0;
+
+    private static Dictionary<char, uint> With(params (char C, uint V)[] extra)
+    {
+        var pal = new Dictionary<char, uint>(DarkPal);
+        foreach (var (c, v) in extra) pal[c] = v;
+        return pal;
+    }
+
+    private static readonly string[] MineRows =
+    [
+        "a..a..a",
+        ".#ooo#.",
+        ".oayao.",
+        "aoyyyoa",
+        ".oayao.",
+        ".#ooo#.",
+        "a..a..a",
+    ];
+
+    /// <summary>A mine, armed: an amber spiked orb. Bullets ping off it.</summary>
+    public static readonly Sprite Mine = Sprite.FromArt(MineRows, With(('a', MineLit), ('y', 0xffd166)));
+
+    /// <summary>A mine before it arms: the same orb, unlit.</summary>
+    public static readonly Sprite MineCold = Sprite.FromArt(MineRows, With(('a', 0x6b4f3a), ('y', 0x8a6a4a)));
+
+    /// <summary>A diver: a narrow lime dart, nose down.</summary>
+    public static readonly Sprite Diver = Sprite.FromArt(
+    [
+        "#...#",
+        "##.##",
+        "#g#g#",
+        ".#g#.",
+        ".ggg.",
+        ".gwg.",
+        "..g..",
+        "..g..",
+        "..#..",
+    ], With(('g', DiverLime), ('w', 0xe4ffc8)));
+
+    /// <summary>A splitter: a pink blob with a seam down the middle, where it bursts.</summary>
+    public static readonly Sprite Splitter = Sprite.FromArt(
+    [
+        "..##.##..",
+        ".#mm#mm#.",
+        "#mMm#mMm#",
+        "#mmm.mmm#",
+        "#mMm#mMm#",
+        ".#mm#mm#.",
+        "..##.##..",
+    ], With(('m', 0xc23aa8), ('M', SplitterPink)));
+
+    /// <summary>Half a splitter, flying off on its own.</summary>
+    public static readonly Sprite Shard = Sprite.FromArt(
+    [
+        ".#m.",
+        "#mM#",
+        "#mm#",
+        ".##.",
+    ], With(('m', 0xc23aa8), ('M', SplitterPink)));
+
+    /// <summary>A turret: a teal hex pod with its barrel down.</summary>
+    public static readonly Sprite Turret = Sprite.FromArt(
+    [
+        "...#####...",
+        "..#ttttt#..",
+        ".#tTTtTTt#.",
+        "#ttT#c#Ttt#",
+        "#tttTcTttt#",
+        ".#ttttttt#.",
+        "..##t#t##..",
+        "....#t#....",
+        "....#t#....",
+    ], With(('t', 0x1f8f86), ('T', TurretTeal), ('c', 0xb8fff6)));
+
+    /// <summary>The colour a kind's debris and telegraphs wear.</summary>
+    public static uint Body(EnemyKind kind) => kind switch
+    {
+        EnemyKind.Mine => MineLit,
+        EnemyKind.Diver => DiverLime,
+        EnemyKind.Splitter or EnemyKind.Shard => SplitterPink,
+        EnemyKind.Turret => TurretTeal,
+        _ => 0x7a3fb0,
+    };
+
     public static readonly Sprite Heart = Sprite.FromArt(
     [
         ".#.#.",

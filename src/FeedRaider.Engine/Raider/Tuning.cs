@@ -35,7 +35,7 @@ public static class Tuning
     public const double PowerDamageMul = 1.5;
 
     // --- wingmen ---
-    public const int MaxWingmen = 2;
+    public const int MaxWingmen = 1;                 // one ally at a time: its post has the field's whole comm to itself
     public const int WingEnterFrames = 40;
     public const int WingFightFrames = 10 * Fps;
     public const int WingLeaveFrames = 40;
@@ -48,18 +48,65 @@ public static class Tuning
     public const int LikeHoldMs = 450;                // hold the button or a finger on a wingman this long to like it
     public const int LikeHoldFrames = (LikeHoldMs * Fps + 999) / 1000;
     public const double LikeHoldRadius = 14;          // how near a wingman the hold may sit
+    // a wingman whose thread is being followed stays at least ThreadReadFrames after each reply opens (time to read it and like it),
+    // and at most ThreadMaxExtraFrames beyond its usual stay in all, so a long thread cannot hold a slot for good
+    public const int ThreadReadFrames = 9 * Fps;
+    public const int ThreadMaxExtraFrames = 40 * Fps;
+    public const int ThreadLookupMs = 6000;           // a thread lookup slower than this ends the thread
     public const int TypeCharsPerSecond = 48;
-    public const int CommCharsPerSecond = 36, CommHoldFrames = 135, CommCollapseFrames = 8;
+    public const int CommCharsPerSecond = 36, CommHoldFrames = 135, CommPageHoldFrames = 75, CommCollapseFrames = 8;
 
     // --- enemies and waves ---
     public const int GruntHp = 3, CarrierHp = 5, GunshipHp = 70;
     public const int SpamMin = 5, SpamMax = 12;
     public const int WaveGapFrames = 75;
-    public const int FillerGapFrames = 100;
+    public const int FillerGapFrames = 100;           // between filler waves at stage 1; the ramp shortens it to FillerGapCap
     public const int EmptyScreenFrames = 18;
     public const int MaxPendingWaves = 6;
     public const double EnemyBulletSpeed = 0.95;
     public const int ScoreGrunt = 100, ScoreCarrier = 400, ScoreGunship = 3000;
+
+    // --- the newer kinds; each unlocks at a stage (see Ramp.UnlockStage) and every danger is telegraphed first ---
+    // mine: drifts down, shrugs off bullets (only a bomb clears it), detonates on contact. Unlit and harmless until armed.
+    public const double MineDrift = 0.32;             // px/frame down the field
+    public const int MineArmFrames = 45;              // from spawn (it starts above the field) until it lights and can hurt
+    public const int MinesPerSpecial = 2;             // a mine special is a pair, so there is a gap to thread
+    // diver: falls to a hold row, winds up while it shows where it will go, then charges that spot in a straight line
+    public const int DiverHp = 2;
+    public const double DiverFall = 0.75;             // px/frame on the way to its hold row
+    public const double DiverHoldRow = 0.2;           // fraction of the field height where it stops to wind up
+    public const int DiverWindupFrames = 30;          // 1 s of shaking and an aim line before the charge
+    public const double DiverDashSpeed = 2.4;         // px/frame, straight at the spot locked when the wind-up began
+    // splitter: a slow weaving blob that cracks as it is hurt and bursts into two shards when shot down
+    public const int SplitterHp = 6;
+    public const double SplitterFall = 0.4;
+    public const int ShardHp = 1;
+    public const double ShardSpeedX = 1.0, ShardSpeedY = 0.85;
+    public const int ShardGraceFrames = 12;           // a new shard cannot touch the ship this long
+    // turret: settles high, then charges (a growing glow and a reticle on the locked spot) and fires an aimed burst
+    public const int TurretHp = 8;
+    public const double TurretHoldRow = 0.16;
+    public const int TurretWindupFrames = 27;         // the telegraph before every burst
+    public const int TurretRestFrames = 55;           // between bursts
+    public const int TurretBurst = 3, TurretBurstGap = 4;
+    public const int TurretVolleys = 3;               // bursts before it pulls out
+    public const double TurretBulletSpeed = 1.5;      // before the ramp's bullet-speed multiplier
+    public const int ScoreMine = 150, ScoreDiver = 250, ScoreSplitter = 300, ScoreShard = 50, ScoreTurret = 600;
+
+    // --- the difficulty ramp: the stage follows time alive plus a little per kill (see Ramp). Stage 1 is the game as it was.
+    // every lever below moves in even steps from its stage-1 value to its cap at StageCap, and no further ---
+    public const int StageFrames = 50 * Fps;          // progress per stage: 50 s of flying alive...
+    public const int StageKillFrames = 15;            // ...less 0.5 s for every kill, so a sharp player climbs faster
+    public const int StageCap = 10;                   // the last stage; a long run stays here, hard but playable
+    public const int StageBannerFrames = 75;          // "STAGE 3" fades in the middle of the field this long
+    public const int FillerGapCap = 60;               // frames between filler waves at the cap (FillerGapFrames at stage 1)
+    public const int FillerExtraCap = 4;              // grunts added to every filler wave at the cap (4-8 at stage 1, 8-12 at the cap)
+    public const double HpMulCap = 1.5;               // enemy health multiplier at the cap (mines and shards excepted)
+    public const double BulletSpeedMulCap = 1.4;      // enemy bullet speed multiplier at the cap
+    public const double FireGapMulCap = 0.6;          // grunt fire cooldown multiplier at the cap: more bullets in the air
+    public const int SpecialsCap = 3;                 // newer-kind groups per filler wave: 0 at stage 1, 1 from stage 2, 3 at the cap
+    public const int LiveSpecialsFromStage = 3;       // from here a live spam wave may swap a few grunts (never the carrier) for newer kinds
+    public const double DeathSetback = 0.5;           // dying keeps the stage and gives back this share of the way into the next one
 
     // --- impact feel ---
     public const int HitStopSmallKill = 0;

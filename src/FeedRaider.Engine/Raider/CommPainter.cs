@@ -38,7 +38,7 @@ public sealed class CommPainter
 
         if (g.Comms.Speaker is { } sp && OnScreen(sp, lay))
         {
-            _comm = Place(sp, WingComms.CommW, WingComms.CommH, c0, field, out bool above);
+            _comm = Place(sp, WingComms.CommW(sp), WingComms.CommH(sp), c0, field, out bool above);
             DrawComm(scr, sp, _comm, above);
             _avoid.Add(_comm);
         }
@@ -76,15 +76,23 @@ public sealed class CommPainter
         FillAvatar(w);
         _avQuad[w.Slot & 1].Compose(_avSurface, 0, 0, scr, r.C + 1, r.R + 1);
         scr.Text(r.C + 6, r.R + 1, w.HandleTag, ac, bg);
-        int shown = WingComms.Revealed(w.CommAge, w.CommChars);
-        for (int i = 0; i < w.CommLines.Length && shown > 0; i++)
+        // an open thread reads down: stubs of the oldest posts, the previous post shortened, then the newest being typed out
+        int y = r.R + 2, x = r.C + 6;
+        foreach (var stub in WingComms.Stubs(w, w.CommTextW)) scr.Text(x, y++, stub, Dim, bg);
+        uint prevFg = Surface.Mix(TextFg, bg, 0.45);
+        foreach (var line in w.PrevLines) scr.Text(x, y++, line, prevFg, bg);
+        var (page, shown) = WingComms.Progress(w, w.CommAge);
+        bool thread = w.Earlier.Count > 0;
+        for (int i = 0, first = page * w.PageLines; i < w.PageLines && first + i < w.CommLines.Length && shown > 0; i++)
         {
-            string line = w.CommLines[i];
+            string line = w.CommLines[first + i];
             int n = Math.Min(line.Length, shown);
             shown -= n;
-            for (int k = 0; k < n; k++) scr.Put(r.C + 6 + k, r.R + 2 + i, line[k], TextFg, bg);
-            if (n < line.Length) { scr.Put(r.C + 6 + n, r.R + 2 + i, '▌', ac, bg); break; }
+            if (thread) scr.Put(x - 1, y + i, '▌', ac, bg);
+            for (int k = 0; k < n; k++) scr.Put(x + k, y + i, line[k], TextFg, bg);
+            if (n < line.Length) { scr.Put(x + n, y + i, '▌', ac, bg); break; }
         }
+        if (WingComms.Pages(w) > 1) scr.Text(r.Right - 5, r.Bottom - 1, $"{page + 1}/{WingComms.Pages(w)}", Dim, bg);
     }
 
     private static void Frame(Screen scr, int c, int r, int w, int h, uint fg, uint bg)

@@ -22,12 +22,13 @@ export function loadPercent(loaded, total) {
   return Math.min(99, Math.floor((loaded / total) * 100));
 }
 
-const SIGN_IN_NOTE = 'Signing in lets you like posts. Nothing else is ever posted.';
-const GUEST_NOTE = 'As a guest, your wingmen come from the people you follow; leave the box empty for the public Discover feed.';
+const NO_LIKES_NOTE = 'Without signing in, liking is off.';
 
-// What the start page shows. `load` is { status: 'loading' | 'ready' | 'failed', percent: number | null }; `queued` is 'play' or
-// 'guest' once a start was pressed before the runtime was ready; `busy` is a handle check in flight; `authPending` is the
-// OAuth client still starting; `handle` is the signed-in account (restored session or back from the redirect), or null.
+// What the start page shows: three equal choices. Sign in with Bluesky (or, once signed in, Play as @handle), Play as someone (a
+// typed handle; its follows are the wingmen) and Random (posts from public comedy feeds). `load` is { status: 'loading' | 'ready' |
+// 'failed', percent: number | null }; `queued` is 'play', 'guest' or 'random' once a start was pressed before the runtime was ready.
+// `busy` is a handle check in flight; `authPending` is the OAuth client still starting; `handle` is the signed-in account (restored
+// session or back from the redirect), or null.
 export function startView({ loginAvailable, handle, load = { status: 'ready', percent: null }, queued = null, busy = false, authPending = false }) {
   const mode = !loginAvailable ? 'guest-only' : handle ? 'signed-in' : 'signed-out';
   const ready = load.status === 'ready', failed = load.status === 'failed';
@@ -43,19 +44,27 @@ export function startView({ loginAvailable, handle, load = { status: 'ready', pe
       percent: ready ? 100 : failed ? 0 : pct, // null: the bar has no numbers to show and moves on its own
       retry: failed,
     },
-    form: mode !== 'signed-in',
+    cardSignIn: mode !== 'guest-only',
     signIn: mode === 'signed-out',
     signInDisabled: authPending || busy || !!queued,
-    guest: mode !== 'signed-in',
-    guestPrimary: mode === 'guest-only',
-    guestLabel: queued === 'guest' ? loadingLabel : 'Play as guest',
+    guestLabel: queued === 'guest' ? loadingLabel : 'Play as someone',
     guestDisabled: startDisabled,
+    randomLabel: queued === 'random' ? loadingLabel : 'Play random',
+    randomDisabled: startDisabled,
     signedIn: mode === 'signed-in',
     signOut: mode === 'signed-in',
     playLabel: handle ? (queued === 'play' ? loadingLabel : `Play as @${handle}`) : null,
     playDisabled: startDisabled,
-    hint: mode === 'guest-only' ? `Sign-in is not available on this page (it needs HTTPS). ${GUEST_NOTE}` : `${SIGN_IN_NOTE} ${GUEST_NOTE}`,
+    hint: mode === 'guest-only' ? `Sign-in is not available on this page (it needs HTTPS). ${NO_LIKES_NOTE}` : NO_LIKES_NOTE,
   };
+}
+
+// What pressing "Play as someone" means: the handle to check, or an error to show. An empty box asks for a handle; a DID or a URL is not one.
+export function guestTarget(raw) {
+  const h = normalizeHandle(raw);
+  if (!h) return { error: 'Type a handle to play as, e.g. someone.bsky.social.' };
+  if (/^(did:|https?:)/i.test(h)) return { error: 'Type a handle, e.g. someone.bsky.social.' };
+  return { handle: h };
 }
 
 // els: the start page's elements. Each takes `hidden`; load and bar take `className`; the bar `setAttribute`/`removeAttribute`
@@ -70,13 +79,13 @@ export function renderStart(els, view) {
   els.barFill.style.width = view.load.percent == null ? '' : `${view.load.percent}%`;
   if (view.load.percent == null) els.bar.removeAttribute('aria-valuenow');
   else els.bar.setAttribute('aria-valuenow', String(view.load.percent));
-  els.form.hidden = !view.form;
+  els.cardSignIn.hidden = !view.cardSignIn;
   els.signIn.hidden = !view.signIn;
   els.signIn.disabled = view.signInDisabled;
-  els.guest.hidden = !view.guest;
-  els.guest.className = view.guestPrimary ? 'primary secondary' : 'secondary';
   els.guest.textContent = view.guestLabel;
   els.guest.disabled = view.guestDisabled;
+  els.random.textContent = view.randomLabel;
+  els.random.disabled = view.randomDisabled;
   els.hint.textContent = view.hint;
   els.signed.hidden = !view.signedIn;
   els.signOut.hidden = !view.signOut;
@@ -130,42 +139,152 @@ export class SignInCancelled extends Error {
   constructor() { super('The sign-in window was closed.'); this.name = 'SignInCancelled'; }
 }
 
-// Signs in with the popup, so the page (and the runtime download) stays loaded, and falls back to the full-page redirect where a
-// popup cannot work: iOS standalone, no window.open, or a blocked popup. The library opens its popup by name without ever
-// reporting a block (it then waits forever), so one is opened here first, in the click, and handed over by name.
-// Resolves { via: 'popup', session }; { via: 'redirect' } is what a test sees, for in a browser the redirect leaves the page.
-// A popup the user closes rejects with SignInCancelled after `graceMs`, in case the result is still on its way.
-export async function signIn(client, raw, { scope, state, open = globalThis.window?.open?.bind(globalThis.window), standalone = false, popupName = 'feed-raider-signin', popupFeatures = 'width=500,height=700,menubar=no,toolbar=no', pollMs = 500, graceMs = 1500 } = {}) {
+// The start page's line for a sign-in that failed: the callback, the token exchange or the session restore.
+export function signInFailed(e) {
+  const reason = String((e instanceof Error ? e.message : e) || 'unknown error').trim().replace(/[.\s]+$/, '') || 'unknown error';
+  return `Sign-in didn't finish: ${reason}. Try again.`;
+}
+
+// True when the page URL carries an OAuth answer (state with code or error). The library asks for it in the fragment; the
+// query is accepted too.
+export function isOAuthCallback(href) {
+  const u = new URL(href);
+  return [new URLSearchParams(u.hash.slice(1)), u.searchParams].some((p) => p.has('state') && (p.has('code') || p.has('error')));
+}
+
+// The popup's sign-in carries this prefix and a random key in its OAuth app state; the page that receives the callback hands
+// the result back over a BroadcastChannel of this name.
+export const POPUP_STATE = 'feed-raider-popup:';
+export const POPUP_CHANNEL = 'feed-raider-signin';
+const makeChannel = (name) => new BroadcastChannel(name);
+
+// The popup key in a callback's app state, or null when the sign-in was not a popup's.
+export const popupKey = (appState) => (typeof appState === 'string' && appState.startsWith(POPUP_STATE) ? appState.slice(POPUP_STATE.length) || null : null);
+
+// The callback page tells the opener how it went: { sub } once the session is saved, or { error }. Resolves true when the opener
+// answered within `waitMs`; false when no page was listening (an opener frozen in a background tab, or gone).
+export function handOff(key, result, { channel = makeChannel, waitMs = 500, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  const ch = channel(POPUP_CHANNEL);
+  return new Promise((resolve) => {
+    const done = (acked) => {
+      clearTimer(timer);
+      ch.removeEventListener('message', onMessage);
+      ch.close();
+      resolve(acked);
+    };
+    const onMessage = ({ data }) => { if (data?.key === key && data.ack) done(true); };
+    ch.addEventListener('message', onMessage);
+    const timer = setTimer(() => done(false), waitMs);
+    ch.postMessage({ key, ...result });
+  });
+}
+
+// Calls wake() when the page comes back to the front: window focus, or the document turning visible (a phone tab switch).
+function watchWake(wake) {
+  const w = globalThis.window, d = globalThis.document;
+  if (!w || !d) return () => {};
+  const onVisible = () => { if (d.visibilityState === 'visible') wake(); };
+  w.addEventListener('focus', wake);
+  d.addEventListener('visibilitychange', onVisible);
+  return () => { w.removeEventListener('focus', wake); d.removeEventListener('visibilitychange', onVisible); };
+}
+
+// Signs in with a popup, so the page (and the runtime download) stays loaded, and falls back to the full-page redirect where a
+// popup cannot work: iOS standalone, no window.open, or a blocked popup. The window is opened here, in the click, before the
+// authorization request is made, so a popup blocker sees the user's gesture.
+// The authorization server sends Cross-Origin-Opener-Policy: same-origin, which cuts the popup off from this page: `closed`
+// reads true a moment after it loads and the popup loses its opener. So closed is no sign of a cancel. The callback page
+// hands back over a BroadcastChannel instead, and since a phone's popup is a tab that may come back to a frozen page,
+// `restore()` (the session the callback saved, or null) is asked whenever the popup reads closed, a hand-off arrives, or this
+// page regains focus or visibility. Resolves { via: 'popup', session }; { via: 'redirect' } is what a test sees, for in a
+// browser the redirect leaves the page. `onWaiting` runs once the popup shows the authorization page.
+// Rejects with the callback's error, or SignInCancelled after `timeoutMs` or on `signal`.
+export async function signIn(client, raw, { scope, state, open = globalThis.window?.open?.bind(globalThis.window), standalone = false, restore = async () => null, onWaiting = () => {}, signal, channel = makeChannel, watch = watchWake, popupName = 'feed-raider-signin', popupFeatures = 'width=500,height=700,menubar=no,toolbar=no', pollMs = 500, timeoutMs = 5 * 60e3 } = {}) {
   const target = signInTarget(raw);
   let probe = null;
-  if (!standalone && typeof client.signInPopup === 'function' && typeof open === 'function') {
+  if (!standalone && typeof client.authorize === 'function' && typeof open === 'function') {
     try { probe = open('about:blank', popupName, popupFeatures) || null; } catch { probe = null; }
   }
   if (!probe) {
     await client.signInRedirect(target, { scope, state });
     return { via: 'redirect' };
   }
-  let poll = null, grace = null;
+  const key = Math.random().toString(36).slice(2);
   try {
-    const popup = client.signInPopup(target, { scope, popupName, popupFeatures });
-    popup.catch(() => {}); // a popup the user closed never settles; its late failure is nobody's
-    const closed = new Promise((_, reject) => {
-      poll = setInterval(() => {
-        if (probe.closed && grace === null) grace = setTimeout(() => reject(new SignInCancelled()), graceMs);
-      }, pollMs);
-    });
-    return { via: 'popup', session: await Promise.race([popup, closed]) };
+    const url = await client.authorize(target, { scope, state: POPUP_STATE + key, display: 'popup' });
+    signal?.throwIfAborted();
+    if (probe.closed) throw new SignInCancelled();
+    probe.location.href = url.href;
+    probe.focus?.();
   } catch (e) {
     try { if (!probe.closed) probe.close(); } catch { /* already gone */ }
-    throw e;
-  } finally {
-    clearInterval(poll);
-    clearTimeout(grace);
+    throw signal?.aborted ? new SignInCancelled() : e;
   }
+  onWaiting();
+  const session = await new Promise((resolve, reject) => {
+    const ch = channel(POPUP_CHANNEL);
+    let finished = false, checking = false, again = false, sawClosed = false;
+    const finish = (settle, value) => {
+      if (finished) return;
+      finished = true;
+      clearInterval(poll);
+      clearTimeout(timer);
+      ch.removeEventListener('message', onMessage);
+      ch.close();
+      unwatch();
+      signal?.removeEventListener('abort', onAbort);
+      settle(value);
+    };
+    // one restore at a time; a wake during one asks again once it is done, since the session may have landed meanwhile
+    const check = async () => {
+      if (finished) return;
+      if (checking) { again = true; return; }
+      checking = true;
+      try {
+        do {
+          again = false;
+          const s = await restore();
+          if (s) return finish(resolve, s);
+        } while (again && !finished);
+      } catch (e) {
+        finish(reject, e);
+      } finally {
+        checking = false;
+      }
+    };
+    const onMessage = ({ data }) => {
+      if (data?.key !== key || data.ack) return;
+      ch.postMessage({ key, ack: true });
+      if (data.error) finish(reject, new Error(data.error)); else check();
+    };
+    const onAbort = () => finish(reject, new SignInCancelled());
+    ch.addEventListener('message', onMessage);
+    signal?.addEventListener('abort', onAbort);
+    const unwatch = watch(check);
+    const poll = setInterval(() => { if (probe.closed && !sawClosed) { sawClosed = true; check(); } }, pollMs);
+    const timer = setTimeout(onAbort, timeoutMs);
+  });
+  return { via: 'popup', session };
 }
 
 // The OAuth client metadata document sits beside index.html, whatever the page URL's file name, query or fragment.
 export const metadataUrl = (pageHref) => new URL('./client-metadata.json', pageHref);
+
+// --- avatars: the Bluesky CDN sends no CORS headers, so a page cannot read its pixels; the author's own PDS can serve the blob ---
+
+// Where an author's DID document lives (plc.directory, or a did:web host's well-known file), or null for a DID we cannot resolve.
+export function didDocUrl(did) {
+  if (typeof did !== 'string') return null;
+  if (did.startsWith('did:plc:')) return 'https://plc.directory/' + did;
+  const host = did.startsWith('did:web:') ? decodeURIComponent(did.slice('did:web:'.length)) : '';
+  return host && !host.includes(':') && !host.includes('/') ? `https://${host}/.well-known/did.json` : null;
+}
+
+// The blob CID a CDN avatar URL (.../img/avatar/plain/<did>/<cid>@jpeg) already names, so the PDS can be asked for it directly.
+export function avatarCid(url) {
+  const m = /\/img\/avatar[^/]*\/[^/]+\/did:[^/]+\/([a-z0-9]+)(?:@[a-z]+)?$/i.exec(typeof url === 'string' ? url : '');
+  return m ? m[1] : null;
+}
 
 // Without an inlined manifest the music is music/fr-<cue>.mp3 beside the page.
 

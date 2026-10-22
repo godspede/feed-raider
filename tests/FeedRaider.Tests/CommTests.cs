@@ -8,9 +8,10 @@ public class CommTests
 {
     private const string Long = "this is a perfectly ordinary post with enough words in it to run well past three short lines of comm text";
 
-    private static RaiderGame NewGame(int cols = 48, int rows = 60)
+    private static RaiderGame NewGame(int cols = 48, int rows = 60, int wings = 2)
     {
-        var g = new RaiderGame(5) { LoggedIn = true };
+        // two at once, so the comm queue (one speaker at a time, in arrival order) is still exercised
+        var g = new RaiderGame(5) { LoggedIn = true, MaxWings = wings };
         g.SetLayout(FieldLayout.Compute(cols, rows));
         return g;
     }
@@ -91,15 +92,55 @@ public class CommTests
     }
 
     [Fact]
-    public void The_comm_text_wraps_once_to_three_lines_with_an_ellipsis()
+    public void A_post_of_the_full_length_fits_one_page_at_the_widest_comm()
     {
-        var g = TwoWingmen();
+        var g = NewGame();
+        string text = string.Join(' ', Enumerable.Repeat("word wordier wordiest", 20))[..300];
+        g.OfferPost(Post(1, text));
+        RunUntil(g, () => g.Comms.Speaker is not null);
         var w = g.Comms.Speaker!;
-        Assert.Equal(WingComms.TextLines, w.CommLines.Length);
-        Assert.All(w.CommLines, l => Assert.True(l.Length <= WingComms.TextW));
-        Assert.EndsWith("…", w.CommLines[^1]);
+        Assert.Equal(WingComms.MaxTextW, w.CommTextW);
+        Assert.InRange(w.CommLines.Length, 1, WingComms.TextLines);
+        Assert.Equal(1, WingComms.Pages(w));
+        Assert.All(w.CommLines, l => Assert.True(l.Length <= w.CommTextW));
+        Assert.DoesNotContain(w.CommLines, l => l.Contains('…'));
         Assert.Equal(w.CommLines.Sum(l => l.Length), w.CommChars);
         Assert.Equal("@t1.test", w.HandleTag);
+    }
+
+    [Fact]
+    public void A_post_of_long_words_is_paged_and_every_word_is_read()
+    {
+        var g = NewGame();
+        string text = string.Join(' ', Enumerable.Repeat("sixteencharwords", 18))[..300];
+        g.OfferPost(Post(1, text));
+        RunUntil(g, () => g.Comms.Speaker is not null);
+        var w = g.Comms.Speaker!;
+        Assert.True(WingComms.Pages(w) > 1);
+        Assert.Equal(text.Replace(" ", ""), string.Concat(w.CommLines).Replace(" ", ""));
+        var seen = new HashSet<int>();
+        for (int age = 0; age < WingComms.TotalFrames(w); age++) seen.Add(WingComms.Progress(w, age).Page);
+        Assert.Equal(WingComms.Pages(w), seen.Count);
+        var (last, shown) = WingComms.Progress(w, WingComms.TotalFrames(w) - 1);
+        Assert.Equal(WingComms.Pages(w) - 1, last);
+        Assert.Equal(WingComms.PageChars(w, last), shown);
+        Assert.True(WingComms.CommH(w) <= WingComms.CommChrome + WingComms.TextLines);
+    }
+
+    [Fact]
+    public void A_narrow_field_gets_a_narrow_comm_and_a_short_post_a_short_one()
+    {
+        Assert.Equal(WingComms.MinTextW, WingComms.TextWidth(30));
+        Assert.Equal(WingComms.MaxTextW, WingComms.TextWidth(64));
+        var g = NewGame(30, 40);
+        g.OfferPost(Post(1));
+        RunUntil(g, () => g.Comms.Speaker is not null);
+        var w = g.Comms.Speaker!;
+        Assert.True(WingComms.CommW(w) <= 30);
+        var g2 = NewGame();
+        g2.OfferPost(Post(1, "just a short little post here"));
+        RunUntil(g2, () => g2.Comms.Speaker is not null);
+        Assert.Equal(WingComms.CommChrome + 1, WingComms.CommH(g2.Comms.Speaker!));
     }
 
     [Fact]
@@ -118,29 +159,29 @@ public class CommTests
     [Fact]
     public void The_comm_sits_just_below_the_ship()
     {
-        var r = CommPlacement.Place(24, 20, 26, WingComms.CommW, WingComms.CommH, Field, 2, [], out bool above);
+        var r = CommPlacement.Place(24, 20, 26, 23, 6, Field, 2, [], out bool above);
         Assert.False(above);
         Assert.Equal(27, r.R);
-        Assert.Equal(24 - WingComms.CommW / 2, r.C);
+        Assert.Equal(24 - 23 / 2, r.C);
     }
 
     [Fact]
     public void The_comm_flips_above_when_it_would_run_off_the_bottom()
     {
-        var r = CommPlacement.Place(24, 50, 56, WingComms.CommW, WingComms.CommH, Field, 2, [], out bool above);
+        var r = CommPlacement.Place(24, 50, 56, 23, 6, Field, 2, [], out bool above);
         Assert.True(above);
-        Assert.Equal(50 - WingComms.CommH - 1, r.R);
+        Assert.Equal(50 - 6 - 1, r.R);
         Assert.True(r.Bottom <= 50);
     }
 
     [Fact]
     public void The_comm_is_clamped_to_the_field_and_clear_of_the_hud()
     {
-        var left = CommPlacement.Place(0, 20, 26, WingComms.CommW, WingComms.CommH, Field, 2, [], out _);
-        var right = CommPlacement.Place(47, 20, 26, WingComms.CommW, WingComms.CommH, Field, 2, [], out _);
+        var left = CommPlacement.Place(0, 20, 26, 23, 6, Field, 2, [], out _);
+        var right = CommPlacement.Place(47, 20, 26, 23, 6, Field, 2, [], out _);
         Assert.Equal(0, left.C);
         Assert.Equal(48, right.Right);
-        var top = CommPlacement.Place(24, -4, 1, WingComms.CommW, WingComms.CommH, Field, 2, [], out _);
+        var top = CommPlacement.Place(24, -4, 1, 23, 6, Field, 2, [], out _);
         Assert.True(top.R >= 2);
     }
 
@@ -148,11 +189,11 @@ public class CommTests
     public void The_comm_steers_clear_of_the_player_and_other_overlays()
     {
         var player = new CellRect(16, 26, 12, 8);
-        var r = CommPlacement.Place(24, 20, 26, WingComms.CommW, WingComms.CommH, Field, 2, [player], out bool above);
+        var r = CommPlacement.Place(24, 20, 26, 23, 6, Field, 2, [player], out bool above);
         Assert.False(r.Overlaps(player));
         Assert.True(above || r.R > 26 || r.Right <= player.C || r.C >= player.Right);
         var wall = new[] { new CellRect(0, 27, 48, 6), new CellRect(0, 12, 48, 7) };
-        var s = CommPlacement.Place(24, 20, 26, WingComms.CommW, WingComms.CommH, Field, 2, wall, out _);
+        var s = CommPlacement.Place(24, 20, 26, 23, 6, Field, 2, wall, out _);
         Assert.True(s.C >= 0 && s.Right <= 48 && s.R >= 2 && s.Bottom <= 60);   // boxed in: still inside the field
     }
 
@@ -202,7 +243,8 @@ public class CommTests
         RunUntil(gw, () => gw.Wings.Count == 2 && gw.Comms.Speaker is not null);
         view.Render(gw, wide);
         var s2 = gw.Comms.Speaker!;
-        int top = 2 + s2.Slot * 13;
+        int mx = gw.Layout.Col0 - 26 - 2;
+        int top = Enumerable.Range(2, 40).First(r => wide.CharAt(mx, r) == '▌' && wide.Fg[r * wide.Cols + mx] == s2.Accent);
         Assert.Equal('▌', wide.CharAt((gw.Layout.Col0 - 26 - 2), top));
         Assert.Equal(s2.Accent, wide.Fg[top * wide.Cols + (gw.Layout.Col0 - 26 - 2)]);
     }

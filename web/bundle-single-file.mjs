@@ -1,7 +1,7 @@
 // Turns a publish output wwwroot into ONE self-contained html file (no sibling files).
 //   node web/bundle-single-file.mjs <wwwroot> <out.html> [--music <manifest.json>]
-// index.html keeps its CDN xterm tags; main.js, atproto.js, every _framework file the runtime loads (the boot config is
-// embedded in dotnet.js on this .NET version) are gzipped + base64'd into the page. At load the page unpacks them with
+// index.html's xterm stylesheet and scripts (xterm/ beside the page) are inlined; main.js, atproto.js, the WebGL addon, every
+// _framework file the runtime loads (the boot config is embedded in dotnet.js on this .NET version) are gzipped + base64'd into the page. At load the page unpacks them with
 // DecompressionStream, hands JS to the runtime as blob: URLs and wasm as in-memory Responses via main.js's
 // globalThis.__frBundle seam (withResourceLoader). The runtime's SRI hashes cover the uncompressed bytes; a loader-supplied
 // Response bypasses the fetch integrity check, so this script checks every hash from the boot config at build time instead.
@@ -54,6 +54,8 @@ else console.warn('no atproto.js: login will be unavailable in the bundle');
 // music.js also carries the master volume and mute that sfx.js plays through, so both are always embedded
 add('music.js', readFileSync(join(root, 'music.js')), 'js');
 add('sfx.js', readFileSync(join(root, 'sfx.js')), 'js');
+// main.js loads the WebGL addon as a classic script from frBundle.webglUrl
+add('addon-webgl.js', readFileSync(join(root, 'xterm', 'addon-webgl.js')), 'js');
 add('dotnet.js', rebase(Buffer.from(dotnetSrc)), 'js');
 
 let checked = 0;
@@ -86,6 +88,7 @@ globalThis.__frBundle = {
   pageUrl: urls['page.js'],
   musicUrl: urls['music.js'],
   sfxUrl: urls['sfx.js'],
+  webglUrl: urls['addon-webgl.js'],
   music: ${JSON.stringify(music).replace(/</g, "\\u003c")},
   loadBootResource(type, name) {
     const f = files[name];
@@ -98,6 +101,17 @@ await import(urls['main.js']);
 `;
 
 let html = readFileSync(join(root, 'index.html'), 'utf8');
+// xterm's stylesheet and scripts go inline, in place of their tags
+const inline = (re, wrap) => {
+  const m = html.match(re);
+  if (!m) throw new Error(`index.html has no ${re}`);
+  const text = readFileSync(join(root, m[1]), 'utf8');
+  if (/<\/(script|style)/i.test(text)) throw new Error(`${m[1]} cannot be inlined: it holds a closing tag`);
+  html = html.replace(re, () => wrap(text));
+};
+inline(/<link rel="stylesheet" href="\.\/(xterm\/xterm\.min\.css)">/, (t) => `<style>${t}</style>`);
+inline(/<script src="\.\/(xterm\/xterm\.min\.js)"><\/script>/, (t) => `<script>${t}</script>`);
+inline(/<script src="\.\/(xterm\/addon-fit\.min\.js)"><\/script>/, (t) => `<script>${t}</script>`);
 const tag = /<script type="module" src="\.\/main\.js"><\/script>/;
 if (!tag.test(html)) throw new Error('index.html has no <script type="module" src="./main.js">');
 const json = JSON.stringify(files).replace(/</g, '\u003c');

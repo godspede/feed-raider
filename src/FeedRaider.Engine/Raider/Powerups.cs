@@ -46,7 +46,8 @@ public sealed partial class RaiderGame
     public static double DropChance(EnemyKind kind) => kind switch
     {
         EnemyKind.Gunship => 1,
-        EnemyKind.Carrier => Tuning.DropCarrier,
+        EnemyKind.Carrier or EnemyKind.Turret => Tuning.DropCarrier,
+        EnemyKind.Shard => 0,                        // its splitter already had its chance
         _ => Tuning.DropGrunt,
     };
 

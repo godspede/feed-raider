@@ -5,7 +5,7 @@ namespace FeedRaider.Engine.Raider;
 /// A self-thread continuation is taken ahead of everything else so the thread reads in order. When the buffer holds only
 /// the previous author's posts they are held back (a repeat is served only on <c>allowRepeat</c>), so the caller can pull
 /// more from other authors first. Only eligible posts (see <see cref="WingQueue.Eligible"/>) are buffered.</summary>
-public sealed class FeedInterleaver(int capacity = 300)
+public sealed class FeedInterleaver(int capacity = 300, bool signedOut = false)
 {
     private readonly List<FeedPost> _buf = [];
     private readonly HashSet<string> _seen = new(StringComparer.Ordinal);
@@ -18,7 +18,7 @@ public sealed class FeedInterleaver(int capacity = 300)
         foreach (var p in posts)
         {
             if (_buf.Count >= capacity) break;
-            if (!WingQueue.Eligible(p) || !_seen.Add(p.Uri)) continue;
+            if (!WingQueue.Eligible(p, signedOut) || !_seen.Add(p.Uri)) continue;
             _buf.Add(p);
         }
         if (_seen.Count > 4000) { _seen.Clear(); foreach (var p in _buf) _seen.Add(p.Uri); }

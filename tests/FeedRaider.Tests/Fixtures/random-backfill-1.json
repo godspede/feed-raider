@@ -1,0 +1,77 @@
+{
+  "feed": [
+    {
+      "post": {
+        "uri": "at://did:plc:poster1/app.bsky.feed.post/poster1",
+        "cid": "bafyposter1",
+        "author": {
+          "did": "did:plc:poster1",
+          "handle": "poster1.example.com"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon poster one",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 500
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:poster2/app.bsky.feed.post/poster2",
+        "cid": "bafyposter2",
+        "author": {
+          "did": "did:plc:poster2",
+          "handle": "poster2.example.com"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon poster two",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 49
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:poster3/app.bsky.feed.post/poster3",
+        "cid": "bafyposter3",
+        "author": {
+          "did": "did:plc:poster3",
+          "handle": "poster3.example.com"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon poster three",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 50
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:poster4/app.bsky.feed.post/poster4",
+        "cid": "bafyposter4",
+        "author": {
+          "did": "did:plc:poster4",
+          "handle": "poster4.example.com"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon poster four",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 12000
+      }
+    }
+  ],
+  "cursor": "b2"
+}

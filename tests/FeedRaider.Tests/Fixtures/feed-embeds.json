@@ -1,0 +1,166 @@
+{
+ "feed": [
+  {
+   "post": {
+    "uri": "at://did:plc:a1/app.bsky.feed.post/1",
+    "cid": "c1",
+    "author": {
+     "did": "did:plc:a1",
+     "handle": "a1.test"
+    },
+    "record": {
+     "text": "a long enough post to be a wingman"
+    },
+    "likeCount": 1
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:a2/app.bsky.feed.post/2",
+    "cid": "c2",
+    "author": {
+     "did": "did:plc:a2",
+     "handle": "a2.test"
+    },
+    "record": {
+     "text": "a long enough post to be a wingman"
+    },
+    "likeCount": 1,
+    "embed": {
+     "$type": "app.bsky.embed.images#view",
+     "images": [
+      {
+       "thumb": "https://cdn.example/t.jpg",
+       "alt": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:a3/app.bsky.feed.post/3",
+    "cid": "c3",
+    "author": {
+     "did": "did:plc:a3",
+     "handle": "a3.test"
+    },
+    "record": {
+     "text": "a long enough post to be a wingman"
+    },
+    "likeCount": 1,
+    "embed": {
+     "$type": "app.bsky.embed.video#view",
+     "playlist": "https://cdn.example/v.m3u8"
+    }
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:a4/app.bsky.feed.post/4",
+    "cid": "c4",
+    "author": {
+     "did": "did:plc:a4",
+     "handle": "a4.test"
+    },
+    "record": {
+     "text": "a long enough post to be a wingman"
+    },
+    "likeCount": 1,
+    "embed": {
+     "$type": "app.bsky.embed.external#view",
+     "external": {
+      "uri": "https://example.com",
+      "title": "t"
+     }
+    }
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:a5/app.bsky.feed.post/5",
+    "cid": "c5",
+    "author": {
+     "did": "did:plc:a5",
+     "handle": "a5.test"
+    },
+    "record": {
+     "text": "a long enough post to be a wingman"
+    },
+    "likeCount": 1,
+    "embed": {
+     "$type": "app.bsky.embed.record#view",
+     "record": {
+      "$type": "app.bsky.embed.record#viewRecord",
+      "uri": "at://did:plc:b/app.bsky.feed.post/9"
+     }
+    }
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:a6/app.bsky.feed.post/6",
+    "cid": "c6",
+    "author": {
+     "did": "did:plc:a6",
+     "handle": "a6.test"
+    },
+    "record": {
+     "text": "a long enough post to be a wingman"
+    },
+    "likeCount": 1,
+    "embed": {
+     "$type": "app.bsky.embed.recordWithMedia#view",
+     "media": {
+      "$type": "app.bsky.embed.images#view"
+     },
+     "record": {
+      "record": {
+       "uri": "at://did:plc:b/app.bsky.feed.post/9"
+      }
+     }
+    }
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:a7/app.bsky.feed.post/7",
+    "cid": "c7",
+    "author": {
+     "did": "did:plc:a7",
+     "handle": "a7.test"
+    },
+    "record": {
+     "text": "a long enough post to be a wingman"
+    },
+    "likeCount": 1,
+    "embed": {
+     "$type": "app.bsky.embed.recordWithMedia#view",
+     "media": {
+      "$type": "app.bsky.embed.external#view"
+     },
+     "record": {
+      "record": {
+       "uri": "at://did:plc:b/app.bsky.feed.post/9"
+      }
+     }
+    }
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:a8/app.bsky.feed.post/8",
+    "cid": "c8",
+    "author": {
+     "did": "did:plc:a8",
+     "handle": "a8.test"
+    },
+    "record": {
+     "text": "a long enough post to be a wingman"
+    },
+    "likeCount": 1
+   }
+  }
+ ],
+ "cursor": "x"
+}

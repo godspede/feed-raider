@@ -2,15 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { metadataUrl } from '../../src/FeedRaider.Web/wwwroot/page.js';
+import { avatarCid, didDocUrl, metadataUrl } from '../../src/FeedRaider.Web/wwwroot/page.js';
 
 const wwwroot = new URL('../../src/FeedRaider.Web/wwwroot/', import.meta.url);
 const SITE = 'https://feed-raider.famelos.com';
 const PAGES = [`${SITE}/`, `${SITE}/index.html`, `${SITE}/?handle=bsky.app`, `${SITE}/?debug=feed#state=x`];
 
-test('client_id and redirect_uri match what make-client-metadata writes for the Pages URL', () => {
+test('client_id and redirect_uri match what make-client-metadata writes for the site URL', () => {
   const out = join(mkdtempSync(join(tmpdir(), 'fr-meta-')), 'client-metadata.json');
   execFileSync('node', [new URL('../make-client-metadata.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), SITE, out]);
   const meta = JSON.parse(readFileSync(out, 'utf8'));
@@ -51,7 +52,43 @@ test('nothing in the site code fetches an absolute localhost URL, and index.html
   }
   const html = readFileSync(new URL('index.html', wwwroot), 'utf8');
   const own = [...html.matchAll(/<(?:script|link)[^>]*(?:src|href)="([^"]+)"/g)].map((m) => m[1]);
-  for (const u of own.filter((u) => !u.startsWith('https://cdn.jsdelivr.net/') && !u.startsWith('data:image/svg+xml,'))) assert.doesNotMatch(u, /^(\/|[a-z]+:)/, u);
+  for (const u of own.filter((u) => !u.startsWith('data:image/svg+xml,'))) assert.doesNotMatch(u, /^(\/|[a-z]+:)/, u);
+});
+
+test('xterm is served with the page: the vendored files are the bytes the page used to pin from the CDN, with their licence', () => {
+  const pinned = {
+    'xterm.min.js': 'J4qzUjBl1FxyLsl/kQPQIOeINsmp17OHYXDOMpMxlKX53ZfYsL+aWHpgArvOuof9',
+    'xterm.min.css': 'tStR1zLfWgsiXCF3IgfB3lBa8KmBe/lG287CL9WCeKgQYcp1bjb4/+mwN6oti4Co',
+    'addon-fit.min.js': 'XGqKrV8Jrukp1NITJbOEHwg01tNkuXr6uB6YEj69ebpYU3v7FvoGgEg23C1Gcehk',
+    'addon-webgl.js': 'AkzdQDeATxpW8V7I2EPcwg17qAoLQMjEFHb//1QaAAIyIlbDAHGKno5+huH7RKxq',
+  };
+  for (const [f, sha] of Object.entries(pinned)) assert.equal(createHash('sha384').update(readFileSync(new URL('xterm/' + f, wwwroot))).digest('base64'), sha, f);
+  const licence = readFileSync(new URL('xterm/LICENSE', wwwroot), 'utf8');
+  for (const pkg of ['@xterm/xterm 5.5.0', '@xterm/addon-fit 0.10.0', '@xterm/addon-webgl 0.18.0']) assert.match(licence, new RegExp(pkg.replaceAll('.', '\\.')));
+  assert.match(licence, /Permission is hereby granted, free of charge/);
+  for (const f of ['main.js', 'index.html']) assert.doesNotMatch(readFileSync(new URL(f, wwwroot), 'utf8'), /cdn\.jsdelivr\.net/, f);
+  const html = readFileSync(new URL('index.html', wwwroot), 'utf8');
+  for (const f of ['xterm.min.css', 'xterm.min.js', 'addon-fit.min.js']) assert.ok(html.includes(`"./xterm/${f}"`), f);
+  assert.match(readFileSync(new URL('main.js', wwwroot), 'utf8'), /'\.\/xterm\/addon-webgl\.js'/);
+});
+
+test('a page opened on localhost moves to the loopback IP before any script or stylesheet loads', () => {
+  const html = readFileSync(new URL('index.html', wwwroot), 'utf8');
+  const redirect = html.indexOf("location.hostname === 'localhost'");
+  assert.ok(redirect > 0);
+  const firstLoad = html.search(/<(link rel="stylesheet"|script[^>]* src=)/);
+  assert.ok(redirect < firstLoad, 'the redirect runs before the first load');
+});
+
+test('an avatar is read from the author\'s PDS: the DID document is found, and the CDN URL gives the blob cid', () => {
+  assert.equal(didDocUrl('did:plc:abc123'), 'https://plc.directory/did:plc:abc123');
+  assert.equal(didDocUrl('did:web:pds.example.com'), 'https://pds.example.com/.well-known/did.json');
+  for (const bad of ['did:web:host.example.com%3A8080', 'did:web:', 'did:key:z6Mk', null, 7]) assert.equal(didDocUrl(bad), null, String(bad));
+  assert.equal(avatarCid('https://cdn.bsky.app/img/avatar/plain/did:plc:abc123/bafkreiabcdef@jpeg'), 'bafkreiabcdef');
+  assert.equal(avatarCid('https://cdn.bsky.app/img/avatar_thumbnail/plain/did:web:pds.example.com/bafkreiabcdef'), 'bafkreiabcdef');
+  for (const bad of ['https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:abc/bafk@jpeg', 'https://pds.example.com/', undefined]) assert.equal(avatarCid(bad), null, String(bad));
+  // the CDN sends no CORS headers, so the page never reads an avatar from it
+  assert.doesNotMatch(readFileSync(new URL('main.js', wwwroot), 'utf8'), /fetch\(url/);
 });
 
 test('the preview image is declared with absolute URLs on the site and og.png is 1200x630', () => {

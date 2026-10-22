@@ -31,7 +31,8 @@ public sealed class Screen
     {
         if ((uint)c >= (uint)Cols || (uint)r >= (uint)Rows) return;
         int i = r * Cols + c;
-        Ch[i] = ch; Fg[i] = fg;
+        // a char xterm draws 0 or 2 cells wide would shift the rest of the row; text should come through BubbleText.Sanitize
+        Ch[i] = ch < 0x300 || CellWidth.Single(ch) ? ch : '?'; Fg[i] = fg;
         if (bg is { } b) Bg[i] = b;
     }
 

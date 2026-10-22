@@ -19,20 +19,22 @@ const showError = (message) => {
 };
 
 // The start page is plain HTML and CSS, painted before any script runs. This wires it up while the runtime still downloads:
-// the game starts once the runtime is ready and a handle is picked (typed as a guest, or from a live sign-in session).
-let queued = null; // "play" or "guest" once a start was pressed before the runtime was ready
+// the game starts once the runtime is ready and a way in is picked (a typed handle, Random, or a live sign-in session).
+let queued = null; // "play", "guest" or "random" once a start was pressed before the runtime was ready
 const savedKey = 'feed-raider.handle';
 const $ = (id) => document.getElementById(id);
 const startScreen = $('start');
 const startHandle = $('start-handle');
-const needsStart = !spectatorMode && !handle;
+const randomFromUrl = (params.get('feed') || '').trim().toLowerCase() === 'random';
+const needsStart = !spectatorMode && !handle && !randomFromUrl;
 const finePointer = matchMedia('(pointer: fine)').matches;
-// ?handle= in the URL skips the panel: only the title and the load bar show until the game starts
+// ?handle= or ?feed=random in the URL skips the panel: only the title and the load bar show until the game starts
 if (!needsStart) startScreen.classList.add('booting');
 else startHandle.value = localStorage.getItem(savedKey) || '';
-// desktop: the handle box is the first thing to type in; touch: focus nothing, so no keyboard opens on load
-if (needsStart && finePointer) startHandle.focus();
-
+// The start page covers the whole window. What lies behind it (the header, the terminal and xterm's helper textarea, which
+// would take Tab and keep it) is inert until the game starts, so Tab walks the cards, the handle box and the buttons.
+const behindStart = spectatorMode ? [] : [...document.body.children].filter((n) => n !== startScreen && n.tagName !== 'SCRIPT');
+for (const n of behindStart) n.inert = true;
 
 const term = new Terminal({
   convertEol: false,
@@ -51,16 +53,12 @@ term.write('\x1b[?25l');
 fit.fit();
 
 // The default DOM renderer rebuilds spans for every changed cell, which is the slow part on a weak phone or old laptop. The
-// WebGL addon paints the same cells on the GPU. It comes from the same CDN as xterm (pinned, with SRI) and is loaded in the
-// background: with no WebGL, a blocked CDN, an offline page or a lost context the terminal keeps the DOM renderer.
+// WebGL addon paints the same cells on the GPU. It is served beside xterm (xterm/, or from memory in the single-file build) and
+// is loaded in the background: with no WebGL, a file that fails to load or a lost context the terminal keeps the DOM renderer.
 // ?renderer=dom forces the DOM renderer.
-const WEBGL_SRC = 'https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.js';
-const WEBGL_SRI = 'sha384-AkzdQDeATxpW8V7I2EPcwg17qAoLQMjEFHb//1QaAAIyIlbDAHGKno5+huH7RKxq';
 if (params.get('renderer') !== 'dom') {
   const tag = document.createElement('script');
-  tag.src = WEBGL_SRC;
-  tag.integrity = WEBGL_SRI;
-  tag.crossOrigin = 'anonymous';
+  tag.src = frBundle ? frBundle.webglUrl : './xterm/addon-webgl.js';
   tag.onload = () => {
     try {
       const gl = new WebglAddon.WebglAddon();
@@ -75,12 +73,14 @@ if (params.get('renderer') !== 'dom') {
 }
 
 // Sign-in (ATProto OAuth) needs crypto.subtle, which browsers expose only on HTTPS or localhost. The bundle loads only there, so a
-// plain-HTTP page still runs the game. A failed load or init leaves sign-in off and quietly signed out, not an error bar.
+// plain-HTTP page still runs the game. A bundle or client that fails to load leaves sign-in off, not an error bar; a callback or
+// restore that fails leaves sign-in on and says why on the start page.
 // It starts at once and runs beside the runtime download, so sign-in works while the game loads.
 let auth = null;
 let authPending = window.isSecureContext;
-// the page we land on after the OAuth redirect (or in the popup): the runtime waits for the callback to be handled first
-const oauthCallback = params.has('state') && (params.has('code') || params.has('error'));
+// the page we land on after the OAuth redirect (or in the popup; the answer comes in the fragment): the runtime waits for the
+// callback to be handled first
+const oauthCallback = page.isOAuthCallback(location.href);
 const authReady = (async () => {
   if (!window.isSecureContext) return;
   try {
@@ -155,11 +155,15 @@ if (needsStart) audioReady.then(() => musicCue('menu'));
 let pendingWrites = 0;
 const avatarCache = new Map();
 
-// Fetches an author's avatar and downsamples it to 8x8 as 64 comma-joined 0xRRGGBB values. Tries the avatar URL first, then
-// the author's own PDS (getRecord for the profile blob, then getBlob). If CORS blocks both the answer is null and the game
-// keeps its tinted placeholder.
-async function fetchAvatar(did, url) {
-  if (avatarCache.has(did)) return avatarCache.get(did);
+// Fetches an author's avatar and downsamples it to 8x8 as 64 comma-joined 0xRRGGBB values. The avatar URL is on Bluesky's CDN,
+// which sends no CORS headers (reading it only logs an error), so the blob comes from the author's own PDS: getBlob with the
+// CID the URL names, or with the one getRecord finds in the profile. If that fails too the answer is null and the game keeps
+// its tinted placeholder. One lookup per author, shared by every post of theirs.
+function fetchAvatar(did, url) {
+  if (!avatarCache.has(did)) avatarCache.set(did, loadAvatar(did, url));
+  return avatarCache.get(did);
+}
+async function loadAvatar(did, url) {
   const tryBlob = async (get) => {
     try {
       const r = await get();
@@ -174,34 +178,40 @@ async function fetchAvatar(did, url) {
       return out.join(',');
     } catch { return null; }
   };
-  let res = url ? await tryBlob(() => fetch(url)) : null;
-  if (!res && did.startsWith('did:plc:')) {
-    try {
-      const doc = await (await fetch('https://plc.directory/' + did)).json();
-      const pds = (doc.service || []).find((s) => s.id === '#atproto_pds')?.serviceEndpoint;
-      if (pds) {
-        const rec = await (await fetch(`${pds}/xrpc/com.atproto.repo.getRecord?repo=${did}&collection=app.bsky.actor.profile&rkey=self`)).json();
-        const cid = rec?.value?.avatar?.ref?.$link;
-        if (cid) res = await tryBlob(() => fetch(`${pds}/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${cid}`));
-      }
-    } catch { /* blocked or gone: no avatar */ }
-  }
-  avatarCache.set(did, res);
-  return res;
+  const docUrl = page.didDocUrl(did);
+  if (!docUrl) return null;
+  try {
+    const doc = await (await fetch(docUrl)).json();
+    const pds = (doc.service || []).find((s) => s.id === '#atproto_pds' || s.id === did + '#atproto_pds')?.serviceEndpoint;
+    if (!pds) return null;
+    const blob = (cid) => tryBlob(() => fetch(`${pds}/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${cid}`));
+    const named = page.avatarCid(url);
+    let res = named ? await blob(named) : null;
+    if (!res) {
+      // no CID in the URL, or the profile has a new avatar since the post was fetched
+      const rec = await (await fetch(`${pds}/xrpc/com.atproto.repo.getRecord?repo=${did}&collection=app.bsky.actor.profile&rkey=self`)).json();
+      const cid = rec?.value?.avatar?.ref?.$link;
+      if (cid && cid !== named) res = await blob(cid);
+    }
+    return res;
+  } catch { return null; /* blocked or gone: no avatar */ }
 }
 
-// --- start page: sign in or play as a guest from one handle box; a start pressed before the runtime is ready is queued ---
+// --- start page: sign in, play as someone (a typed handle) or play Random; a start pressed before the runtime is ready is queued ---
 let pickHandle;
-const handlePicked = new Promise((resolve) => { pickHandle = resolve; });
+const handlePicked = new Promise((resolve) => { pickHandle = resolve; }); // resolves { handle, feed }
 let busy = false;
 const startError = $('start-error');
+// the handle box's suggestion list; it opens under the box and would cover the error line
+let closeSuggestions = () => {};
 const startFail = (message) => {
+  closeSuggestions();
   startError.textContent = message;
   startError.style.display = 'block';
 };
 const startEls = {
   load: $('start-load'), loadText: $('start-load-text'), retry: $('start-retry'), bar: $('start-bar'), barFill: $('start-bar').firstElementChild,
-  form: $('start-handle-form'), signIn: $('start-login'), guest: $('start-guest'), hint: $('start-hint'),
+  cardSignIn: $('start-card-signin'), signIn: $('start-login'), guest: $('start-guest'), random: $('start-random'), hint: $('start-hint'),
   signed: $('start-signed'), play: $('start-play'), signOut: $('start-signout'),
 };
 const currentSession = () => (auth ? JSON.parse(auth.session() || 'null') : null);
@@ -226,55 +236,75 @@ renderStartPage = () => {
   showAvatar(s);
 };
 renderStartPage();
-// Saves the handle and writes it into the URL, so a reload or shared link skips this screen. An empty handle is the public
-// Discover feed and is not remembered. The page stays up until the game starts; before the runtime is ready the button counts.
-function pick(h, kind) {
+// Saves the handle and writes the choice into the URL, so a reload or shared link skips this screen. Random is ?feed=random with
+// no handle and is not remembered. The page stays up until the game starts; before the runtime is ready the button counts.
+function pick(h, kind, feed = '') {
   const p = new URLSearchParams(location.search);
   if (h) { localStorage.setItem(savedKey, h); p.set('handle', h); } else p.delete('handle');
+  if (feed) p.set('feed', feed); else if ((p.get('feed') || '').toLowerCase() === 'random') p.delete('feed');
   history.replaceState(null, '', location.pathname + '?' + p + location.hash);
   queued = kind;
   renderStartPage();
-  pickHandle(h);
+  pickHandle({ handle: h, feed });
 }
 if (needsStart) {
   startEls.retry.addEventListener('click', () => location.reload());
-  // sign in (the primary action, and what Enter does): popup, or redirect where a popup cannot work
-  $('start-handle-form').addEventListener('submit', async (ev) => {
-    ev.preventDefault();
+  // sign in: popup, or redirect where a popup cannot work; Bluesky's own page asks which account. Once the popup shows Bluesky
+  // the page is free again: a closed popup cannot be told from one that is still open, so pressing again starts over.
+  let pendingSignIn = null;
+  startEls.signIn.addEventListener('click', async () => {
     if (!auth || busy || queued) return;
     startError.style.display = 'none';
+    pendingSignIn?.abort();
+    const mine = pendingSignIn = new AbortController();
     busy = true;
     renderStartPage();
     try {
-      if (await auth.signIn(startHandle.value)) {
+      const onWaiting = () => { busy = false; renderStartPage(); };
+      if (await auth.signIn('', { onWaiting, signal: mine.signal })) {
         busy = false;
         renderStartPage();
         if (finePointer) startEls.play.focus();
       }
     } catch (e) {
-      if (e?.name !== 'SignInCancelled') startFail('sign in: ' + (e.message || e));
+      if (e?.name !== 'SignInCancelled') {
+        console.warn('sign-in failed: ' + (e?.message || e));
+        startFail(page.signInFailed(e));
+      }
     } finally {
-      busy = false;
-      renderStartPage();
+      // a press that started over owns busy now
+      if (pendingSignIn === mine) {
+        pendingSignIn = null;
+        busy = false;
+        renderStartPage();
+      }
     }
   });
-  // guest: wingmen from the follows of the typed handle; an empty box is the public Discover feed
-  startEls.guest.addEventListener('click', async () => {
+  // play as someone (also what Enter in the handle box does): wingmen from the follows of the typed handle
+  $('start-handle-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
     if (busy || queued) return;
-    const h = page.normalizeHandle(startHandle.value);
+    // a search still in flight must not open the list over the answer
+    closeSuggestions();
+    const t = page.guestTarget(startHandle.value);
     startError.style.display = 'none';
-    if (!h) return pick('', 'guest');
-    if (/^(did:|https?:)/i.test(h)) return startFail('Type a handle, e.g. you.bsky.social.');
+    if (t.error) { startFail(t.error); startHandle.focus(); return; }
     busy = true;
     renderStartPage();
     // the public API answers 400 (or 404) for a handle no account uses
-    const r = await fetch('https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle=' + encodeURIComponent(h)).catch(() => null);
+    const r = await fetch('https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle=' + encodeURIComponent(t.handle)).catch(() => null);
     busy = false;
     renderStartPage();
     if (!r) return startFail('could not reach Bluesky, check your connection');
-    if (r.status === 400 || r.status === 404) return startFail(`no Bluesky account is called @${h}`);
+    if (r.status === 400 || r.status === 404) return startFail(`no Bluesky account is called @${t.handle}`);
     if (!r.ok) return startFail(`Bluesky did not answer (${r.status}), try again`);
-    pick(h, 'guest');
+    pick(t.handle, 'guest');
+  });
+  // random: posts from public comedy feeds, one click
+  startEls.random.addEventListener('click', () => {
+    if (busy || queued) return;
+    startError.style.display = 'none';
+    pick('', 'random', 'random');
   });
   startEls.play.addEventListener('click', () => {
     const s = currentSession();
@@ -329,8 +359,9 @@ if (needsStart) {
     showSuggestions([]);
     startHandle.focus();
   };
+  closeSuggestions = () => { typeahead.cancel(); showSuggestions([]); };
   startHandle.addEventListener('input', () => typeahead.input(startHandle.value));
-  startHandle.addEventListener('blur', () => { typeahead.cancel(); showSuggestions([]); });
+  startHandle.addEventListener('blur', closeSuggestions);
   startHandle.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape' && actors.length) { ev.preventDefault(); showSuggestions([]); }
     else if ((ev.key === 'ArrowDown' || ev.key === 'ArrowUp') && actors.length) { ev.preventDefault(); setActive(page.stepActive(active, actors.length, ev.key)); }
@@ -340,10 +371,12 @@ if (needsStart) {
 // a restored session (or the one back from the redirect) turns the panel into "Play as @handle"
 authReady.then(() => {
   authPending = false;
+  const why = auth?.initError();
+  if (why && needsStart) startFail(why);
   // back from the redirect: restore the page we left (the callback URL has no query of its own)
   if (auth && auth.returnTo() !== null && auth.returnTo() !== location.search) location.replace(location.pathname + auth.returnTo());
   renderStartPage();
-  if (needsStart && finePointer) (currentSession() ? startEls.play : startHandle).focus();
+  if (needsStart && finePointer && currentSession()) startEls.play.focus();
 });
 
 const { setModuleImports, getAssemblyExports, getConfig } = await runtimeReady;
@@ -359,6 +392,7 @@ setModuleImports('main.js', {
   authSession: () => auth?.session() ?? null,
   authGetFeed: async (feed, cursor, limit) => liveAuth().getFeed(feed, cursor, limit),
   authGetTimeline: async (cursor, limit) => liveAuth().getTimeline(cursor, limit),
+  authGetPostThread: async (uri, depth, parentHeight) => liveAuth().getPostThread(uri, depth, parentHeight),
   authLike: async (uri, cid) => liveAuth().like(uri, cid),
 });
 
@@ -459,14 +493,18 @@ if (spectatorMode) {
   if (handle) await exports.Host.Start(handle, (params.get('darkness') || 'on').toLowerCase());
 } else {
   // waits here for the start screen's click (or a session) unless the URL already named a handle
-  const who = handle || await handlePicked;
+  const choice = handle || randomFromUrl ? { handle, feed: params.get('feed') || '' } : await handlePicked;
+  const who = choice.handle;
   await audioReady;
   pauseForTab();
+  for (const n of behindStart) n.inert = false;
   startScreen.hidden = true;
   installGameInput();
   // hides the header's sign-in and watch forms; StartGame runs the game, so this must come first
   document.body.classList.add('playing');
-  await exports.Host.StartGame(who, params.get('feed') || '', (params.get('darkness') || 'on').toLowerCase(), params.get('fps') === '1', params.get('quality') === 'adaptive');
+  await exports.Host.StartGame(who, choice.feed || params.get('feed') || '', (params.get('darkness') || 'on').toLowerCase(), params.get('fps') === '1', params.get('quality') === 'adaptive',
+    // development aid: ?stage=6 starts the run at stage 6, to see the later enemies without playing up to them
+    Number.parseInt(params.get('stage') || '1', 10) || 1);
 }
 
 // Keyboard, mouse and touch become the engine's input calls. Nothing here sends a like: E latches in the game, and a held

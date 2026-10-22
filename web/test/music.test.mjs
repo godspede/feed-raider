@@ -119,6 +119,20 @@ test('the shipped tracks.json lists existing files in the four roles, and the ro
   assert.deepEqual(list.filter((t) => t.role === 'gameplay').map((t) => t.file).sort(), ['fr-play-electro-house.mp3', 'fr-play-filter-house.mp3', 'fr-play-italo-night.mp3', 'fr-play-liquid-dnb.mp3', 'fr-play-tech-house.mp3', 'fr-play-uk-garage.mp3']);
 });
 
+test('the unlock clip is a whole WAV with samples in it (an empty data chunk will not decode in Firefox)', () => {
+  const b64 = readFileSync(wwwroot + 'music.js', 'utf8').match(/const SILENT = 'data:audio\/wav;base64,([^']+)'/)[1];
+  const wav = Buffer.from(b64, 'base64');
+  assert.equal(wav.toString('latin1', 0, 4), 'RIFF');
+  assert.equal(wav.readUInt32LE(4), wav.length - 8);
+  assert.equal(wav.toString('latin1', 8, 16), 'WAVEfmt ');
+  assert.equal(wav.readUInt16LE(20), 1, 'PCM');
+  assert.equal(wav.toString('latin1', 36, 40), 'data');
+  const samples = wav.readUInt32LE(40);
+  assert.ok(samples > 0);
+  assert.equal(wav.length, 44 + samples);
+  assert.ok(wav.subarray(44).every((v) => v === 0x80), 'silence in 8-bit PCM');
+});
+
 test('the rotation plays each track once, never the same one twice in a row', async () => {
   const c = await start({ gameplay: 3 });
   c.music.cue('gameplay');

@@ -11,6 +11,7 @@ test('the granular scope reads the timeline with the same aud as the feed, and c
   const aud = 'aud=did:web:api.bsky.app%23bsky_appview';
   assert.ok(parts.includes(`rpc:app.bsky.feed.getTimeline?${aud}`));
   assert.ok(parts.includes(`rpc:app.bsky.feed.getFeed?${aud}`));
+  assert.ok(parts.includes(`rpc:app.bsky.feed.getPostThread?${aud}`));
   assert.ok(scope.granular.includes('getTimeline'));
   assert.ok(!/app\.bsky\.feed\.post/.test(scope.granular));
   assert.ok(!/action=(create|update|delete)/.test(scope.granular.replace('app.bsky.feed.like?action=create', '')));

@@ -16,11 +16,15 @@ public static partial class Bridge
     [JSImport("authGetTimeline", "main.js")]
     private static partial Task<string> AuthGetTimeline(string? cursor, int limit);
 
+    [JSImport("authGetPostThread", "main.js")]
+    private static partial Task<string> AuthGetPostThread(string uri, int depth, int parentHeight);
+
     [JSImport("authLike", "main.js")]
     private static partial Task<string> AuthLike(string uri, string cid);
 
     private static readonly JsFeedSource Feed = new(AuthGetFeed);
     private static readonly JsFeedSource Timeline = new((_, cursor, limit) => AuthGetTimeline(cursor, limit));
+    private static readonly JsThreadSource Thread = new(AuthGetPostThread);
     private static readonly JsActions Actions = new(AuthLike);
     private static readonly JsSession Session = new();
     private static readonly Dictionary<string, FeedPost> Seen = new();
@@ -29,6 +33,7 @@ public static partial class Bridge
     internal static IFeedSource FeedSource => Feed;
     /// <summary>The signed-in player's Following timeline (app.bsky.feed.getTimeline); the feed URI is ignored.</summary>
     internal static IFeedSource TimelineSource => Timeline;
+    internal static IThreadSource ThreadSource => Thread;
     internal static IActions LikeActions => Actions;
     internal static ISession SessionSource => Session;
 
@@ -37,6 +42,7 @@ public static partial class Bridge
     public static async Task<string> FeedPage(string feed, string? cursor, int limit)
     {
         var uri = Feeds.Resolve(feed) ?? throw new ArgumentException("not a feed generator URI");
+        if (uri == Feeds.Random) uri = Feeds.Discover;
         var page = await Feed.GetPageAsync(uri, cursor, limit, default);
         foreach (var p in page.Posts) Seen[p.Uri] = p;
         return JsonSerializer.Serialize(page, WebJson.Default.FeedPage);

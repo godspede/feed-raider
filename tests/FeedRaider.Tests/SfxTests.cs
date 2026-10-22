@@ -228,7 +228,7 @@ public class SfxTests
     }
 
     [Fact]
-    public void Like_chimes_logged_in_and_blips_logged_out_or_when_the_call_fails()
+    public void Like_chimes_logged_in_or_out_and_blips_when_the_call_fails()
     {
         foreach (bool loggedIn in new[] { true, false })
         {
@@ -245,7 +245,7 @@ public class SfxTests
             foreach (var k in Enum.GetValues<GameKey>()) g.Input.Key(k, false);
             played.Clear();
             g.Input.Like(); g.Step();
-            Assert.Equal(loggedIn ? ["like"] : ["nolike"], played.Select(p => p.Name));
+            Assert.Equal(["like"], played.Select(p => p.Name));   // signed out it plays too, and writes nothing
             if (!loggedIn) continue;
             played.Clear();
             g.LikeFailed(w.Post.Uri);

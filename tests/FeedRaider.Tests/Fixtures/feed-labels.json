@@ -1,0 +1,258 @@
+{
+  "feed": [
+    {
+      "post": {
+        "uri": "at://did:plc:plain/app.bsky.feed.post/plain",
+        "cid": "bafyplain",
+        "author": {
+          "did": "did:plc:plain",
+          "handle": "plain.example.com"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon one",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:optout/app.bsky.feed.post/optout",
+        "cid": "bafyoptout",
+        "author": {
+          "did": "did:plc:optout",
+          "handle": "optout.example.com",
+          "labels": [
+            {
+              "val": "!no-unauthenticated"
+            }
+          ]
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon two",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:porn/app.bsky.feed.post/porn",
+        "cid": "bafyporn",
+        "author": {
+          "did": "did:plc:porn",
+          "handle": "porn.example.com"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon three",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10,
+        "labels": [
+          {
+            "val": "porn"
+          }
+        ]
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:sexual/app.bsky.feed.post/sexual",
+        "cid": "bafysexual",
+        "author": {
+          "did": "did:plc:sexual",
+          "handle": "sexual.example.com"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon four",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10,
+        "labels": [
+          {
+            "val": "sexual"
+          }
+        ]
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:nudity/app.bsky.feed.post/nudity",
+        "cid": "bafynudity",
+        "author": {
+          "did": "did:plc:nudity",
+          "handle": "nudity.example.com"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon five",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10,
+        "labels": [
+          {
+            "val": "nudity"
+          }
+        ]
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:graphic/app.bsky.feed.post/graphic",
+        "cid": "bafygraphic",
+        "author": {
+          "did": "did:plc:graphic",
+          "handle": "graphic.example.com"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon six",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10,
+        "labels": [
+          {
+            "val": "graphic-media"
+          }
+        ]
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:aporn/app.bsky.feed.post/aporn",
+        "cid": "bafyaporn",
+        "author": {
+          "did": "did:plc:aporn",
+          "handle": "aporn.example.com",
+          "labels": [
+            {
+              "val": "porn"
+            }
+          ]
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon seven",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:asexual/app.bsky.feed.post/asexual",
+        "cid": "bafyasexual",
+        "author": {
+          "did": "did:plc:asexual",
+          "handle": "asexual.example.com",
+          "labels": [
+            {
+              "val": "sexual"
+            }
+          ]
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon eight",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:anudity/app.bsky.feed.post/anudity",
+        "cid": "bafyanudity",
+        "author": {
+          "did": "did:plc:anudity",
+          "handle": "anudity.example.com",
+          "labels": [
+            {
+              "val": "nudity"
+            }
+          ]
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon nine",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:agraphic/app.bsky.feed.post/agraphic",
+        "cid": "bafyagraphic",
+        "author": {
+          "did": "did:plc:agraphic",
+          "handle": "agraphic.example.com",
+          "labels": [
+            {
+              "val": "graphic-media"
+            }
+          ]
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon ten",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:harmless/app.bsky.feed.post/harmless",
+        "cid": "bafyharmless",
+        "author": {
+          "did": "did:plc:harmless",
+          "handle": "harmless.example.com",
+          "labels": [
+            {
+              "val": "bot"
+            }
+          ]
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon eleven",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10,
+        "labels": [
+          {
+            "val": "spoiler"
+          }
+        ]
+      }
+    }
+  ],
+  "cursor": "c1"
+}

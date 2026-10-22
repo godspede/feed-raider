@@ -1,0 +1,141 @@
+{
+  "feed": [
+    {
+      "post": {
+        "uri": "at://did:plc:plainjoke/app.bsky.feed.post/plainjoke",
+        "cid": "bafyplainjoke",
+        "author": {
+          "did": "did:plc:plainjoke",
+          "handle": "plainjoke.example.com"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon, plainjoke",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:rude/app.bsky.feed.post/rude",
+        "cid": "bafyrude",
+        "author": {
+          "did": "did:plc:rude",
+          "handle": "rude.example.com"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon, rude",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10,
+        "labels": [
+          {
+            "val": "rude"
+          }
+        ]
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:intolerant/app.bsky.feed.post/intolerant",
+        "cid": "bafyintolerant",
+        "author": {
+          "did": "did:plc:intolerant",
+          "handle": "intolerant.example.com",
+          "labels": [
+            {
+              "val": "intolerant"
+            }
+          ]
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon, intolerant",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:selflabel/app.bsky.feed.post/selflabel",
+        "cid": "bafyselflabel",
+        "author": {
+          "did": "did:plc:selflabel",
+          "handle": "selflabel.example.com"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon, selflabel",
+          "createdAt": "2026-01-01T00:00:00Z",
+          "labels": {
+            "$type": "com.atproto.label.defs#selfLabels",
+            "values": [
+              {
+                "val": "spoiler"
+              }
+            ]
+          }
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:warned/app.bsky.feed.post/warned",
+        "cid": "bafywarned",
+        "author": {
+          "did": "did:plc:warned",
+          "handle": "warned.example.com"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon, warned",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10,
+        "labels": [
+          {
+            "val": "!warn"
+          }
+        ]
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:bridged/app.bsky.feed.post/bridged",
+        "cid": "bafybridged",
+        "author": {
+          "did": "did:plc:bridged",
+          "handle": "bridged.example.com",
+          "labels": [
+            {
+              "val": "bridged-from-bridgy-fed-activitypub"
+            }
+          ]
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "a plain joke about a very confused pigeon, bridged",
+          "createdAt": "2026-01-01T00:00:00Z"
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 10
+      }
+    }
+  ],
+  "cursor": "l2"
+}

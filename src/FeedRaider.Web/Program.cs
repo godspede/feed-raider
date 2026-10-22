@@ -70,9 +70,9 @@ public static partial class Host
 
     /// <summary>Runs Feed Raider. Signed in, wingmen come from the account's feed and a like goes out through the session;
     /// signed out they come from the public Discover feed (or the follows of <paramref name="handle"/>) and the prompt only
-    /// says to sign in.</summary>
+    /// says to sign in. <paramref name="stage"/> above 1 starts the difficulty ramp there: a development aid (<c>?stage=</c>).</summary>
     [JSExport]
-    public static async Task StartGame(string handle, string feed, string darkness, bool showFps, bool adaptive)
+    public static async Task StartGame(string handle, string feed, string darkness, bool showFps, bool adaptive, int stage)
     {
         _cts?.Cancel();
         var cts = _cts = new CancellationTokenSource();
@@ -80,9 +80,13 @@ public static partial class Host
         var game = new RaiderGame((ulong)Environment.TickCount64);
         var me = Bridge.SessionSource.Current;
         game.LoggedIn = me is not null;
+        if (stage > 1) game.StartAtStage(stage);
         if (me is not null) game.SetPlayer(me.Did);
         // The only write the game ever makes: the player pressed like on one post.
         game.OnLike = post => _ = RaiderFeeds.LikeAsync(game, Bridge.LikeActions, post, cts.Token);
+        // Reads only: the next post of the liked post's thread, through the session when signed in, else the public AppView.
+        IThreadSource threads = me is not null ? new FallbackThreadSource(Bridge.ThreadSource, new PublicThreadSource(http)) : new PublicThreadSource(http);
+        game.ThreadWanted = post => _ = RaiderFeeds.ThreadAsync(game, threads, post, cts.Token);
         game.AvatarWanted = post => _ = AvatarAsync(game, post);
         game.RecordToBeat = Safe(BestScore);
         game.OnBest = score => Safe(() => SaveBestScore(score));
@@ -95,6 +99,7 @@ public static partial class Host
         // Signed in, the wingmen are the player's Following timeline unless ?feed= names another; see FeedPlan.
         var plan = FeedPlan.Choose(feed, me is not null, handle, Bridge.TimelineSource, Bridge.FeedSource, new PublicFeedSource(http), h => new FollowsFeedSource(http, h));
         if (plan is null) { ShowError("unknown feed (following, discover, foryou or an at:// feed generator uri)"); return; }
+        game.PlainOnly = plan.FeedUri == Feeds.Random;
         var runner = new RaiderRunner(game, () => (_cols, _rows), new JsSink()) { ShowFps = showFps, Adaptive = adaptive, Pause = pause };
         var tasks = new List<Task> { runner.RunAsync(cts.Token, TermBusy), RaiderFeeds.WingmenAsync(game, plan.Primary, plan.Fallback, plan.FeedUri, cts.Token, onFallback: ShowError, sourceName: plan.Name, onTrouble: ShowError, pause: pause) };
         if (darkness != "off") tasks.Add(RaiderFeeds.DarknessAsync(game, http, cts.Token, pause: pause));

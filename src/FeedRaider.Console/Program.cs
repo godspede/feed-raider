@@ -5,7 +5,7 @@ using FeedRaider.Engine.Raider;
 using TUImation;
 
 const string Usage = """
-    usage: FeedRaider.Console [--mode game|spectator] [--handle <handle>] [--feed discover|foryou] [--seconds <n>] [--darkness on|off|demo]
+    usage: FeedRaider.Console [--mode game|spectator] [--handle <handle>] [--feed discover|foryou|random] [--seconds <n>] [--darkness on|off|demo]
            FeedRaider.Console --frames <n> [--out <dir>] [--size <cols>x<rows>] [--every <n>]   headless scripted run, a PNG every <n> frames
            FeedRaider.Console --bench <n> [--size <cols>x<rows>]                                headless render and encode timing over <n> frames
     """;

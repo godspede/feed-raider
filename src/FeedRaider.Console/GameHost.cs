@@ -9,7 +9,7 @@ static class GameHost
     public static async Task<int> RunAsync(string? handle, string feedName, int? seconds, bool darkness)
     {
         string? feed = Feeds.Resolve(feedName);
-        if (feed is null) { Console.Error.WriteLine("unknown --feed (discover, foryou or an at:// feed generator uri)"); return 2; }
+        if (feed is null) { Console.Error.WriteLine("unknown --feed (discover, foryou, random or an at:// feed generator uri)"); return 2; }
         Console.OutputEncoding = new UTF8Encoding(false);
         using var stdout = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false), 1 << 16) { AutoFlush = false };
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
@@ -19,8 +19,12 @@ static class GameHost
         if (seconds is { } secs) cts.CancelAfter(TimeSpan.FromSeconds(secs));
 
         var game = new RaiderGame((ulong)Environment.TickCount64);
+        game.PlainOnly = handle is null && feed == Feeds.Random;
+        var threads = new PublicThreadSource(http);
+        game.ThreadWanted = post => _ = RaiderFeeds.ThreadAsync(game, threads, post, cts.Token);
         var runner = new RaiderRunner(game, Size, new Sink(stdout));
-        IFeedSource primary = handle is null ? new PublicFeedSource(http) : new FollowsFeedSource(http, handle);
+        var pub = new PublicFeedSource(http);
+        IFeedSource primary = handle is not null ? new FollowsFeedSource(http, handle) : feed == Feeds.Random ? new RandomFeedSource(pub, pub) : pub;
         IFeedSource? fallback = handle is null ? null : new PublicFeedSource(http);
 
         stdout.Write("\x1b[?1049h\x1b[?25l\x1b[2J"); stdout.Flush();

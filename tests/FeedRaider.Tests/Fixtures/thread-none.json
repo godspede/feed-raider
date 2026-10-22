@@ -1,0 +1,55 @@
+{
+ "thread": {
+  "$type": "app.bsky.feed.defs#threadViewPost",
+  "post": {
+   "uri": "at://did:plc:ann111/app.bsky.feed.post/p1",
+   "cid": "cidp1",
+   "author": {
+    "did": "did:plc:ann111",
+    "handle": "ann.example.com"
+   },
+   "record": {
+    "$type": "app.bsky.feed.post",
+    "text": "first post of a small example thread about gardens and tomatoes",
+    "createdAt": "2026-10-01T10:00:00.000Z"
+   },
+   "replyCount": 4,
+   "repostCount": 0,
+   "likeCount": 3,
+   "indexedAt": "2026-10-01T10:00:00.000Z"
+  },
+  "replies": [
+   {
+    "$type": "app.bsky.feed.defs#threadViewPost",
+    "post": {
+     "uri": "at://did:plc:bob222/app.bsky.feed.post/b1",
+     "cid": "cidb1",
+     "author": {
+      "did": "did:plc:bob222",
+      "handle": "bob.example.com"
+     },
+     "record": {
+      "$type": "app.bsky.feed.post",
+      "text": "a reply from someone else, earlier than all of them, which is not the author",
+      "createdAt": "2026-10-01T10:00:30.000Z",
+      "reply": {
+       "root": {
+        "uri": "at://did:plc:ann111/app.bsky.feed.post/p1",
+        "cid": "cidp1"
+       },
+       "parent": {
+        "uri": "at://did:plc:ann111/app.bsky.feed.post/p1",
+        "cid": "cidp1"
+       }
+      }
+     },
+     "replyCount": 0,
+     "repostCount": 0,
+     "likeCount": 3,
+     "indexedAt": "2026-10-01T10:00:30.000Z"
+    },
+    "replies": []
+   }
+  ]
+ }
+}

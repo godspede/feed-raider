@@ -12,45 +12,71 @@
   <meta property="og:image" content="https://feed-raider.famelos.com/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Feed Raider: a pixel-art plane fighting in a Bluesky-style feed, beside the text Bluesky posts fly in as wingmen, AT Protocol OAuth sign-in, GitHub Pages static hosting.">
+  <meta property="og:image:alt" content="Feed Raider: pixel-art ships at stage 4 flying through a Bluesky-style feed, a lit mine and a pink splitter drifting down, a wingman's speech box with the author's self-thread opened in it, beside the text: Bluesky posts fly in as wingmen; AT Protocol OAuth sign-in; GitHub Pages, static, no server.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="https://feed-raider.famelos.com/og.png">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23101316'/%3E%3Cpath d='M16 5l9 21-9-5-9 5z' fill='%23a3b35f'/%3E%3Ccircle cx='16' cy='17' r='2' fill='%23eef2d6'/%3E%3C/svg%3E">
+  <!-- Sign-in on a local server needs the loopback IP, not "localhost", and the sign-in library would otherwise move the page
+       there while the runtime is loading. Moving before anything else loads keeps the path, the query and the fragment. -->
+  <script>if (location.hostname === 'localhost') { const u = new URL(location.href); u.hostname = '127.0.0.1'; window.stop(); location.replace(u.href); }</script>
   <script>if ((new URLSearchParams(location.search).get('mode') || '').toLowerCase() === 'spectator') document.documentElement.className = 'spectator';</script>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css"
-        integrity="sha384-tStR1zLfWgsiXCF3IgfB3lBa8KmBe/lG287CL9WCeKgQYcp1bjb4/+mwN6oti4Co" crossorigin="anonymous">
+  <!-- xterm.js is served with the page (xterm/, MIT, see xterm/LICENSE), not from a CDN -->
+  <link rel="stylesheet" href="./xterm/xterm.min.css">
   <style>
-    :root { --ground: #101316; --text: #d8cba3; --cream: #eef2d6; --olive: #a3b35f; --field: #18223a; --navy: #95a3cf; --wine: #a8324d; }
+    /* one look for the page and the game: the terminal's own monospace face, the game's palette, square pixel edges.
+       The ▌ bar is the game's mark for the wingman who is talking; the olive glow and faint scanlines give it a terminal look. */
+    :root {
+      --ground: #101316; --text: #d8cba3; --cream: #eef2d6; --olive: #a3b35f; --field: #18223a; --navy: #95a3cf; --wine: #a8324d;
+      --olive-light: #b9c76e; --olive-deep: #5d6a35; --frame: #4f5f8c; --sky: #b6c1e2;
+      --mono: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+      --glow: 0 0 10px rgba(163, 179, 95, .45);
+    }
     * { box-sizing: border-box; }
-    html, body { height: 100%; margin: 0; background: var(--ground); color: var(--text); font: 15px/1.4 system-ui, sans-serif; }
+    html, body { height: 100%; margin: 0; background: var(--ground); color: var(--text); font: 14px/1.5 var(--mono); }
     body { display: flex; flex-direction: column; }
-    header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; padding: 10px 16px; border-bottom: 1px solid #2b2f36; }
-    h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--cream); }
+    header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; min-height: 40px; padding: 4px 12px; border-bottom: 2px solid var(--field); }
+    /* the wordmark: bold, spaced capitals after the talking-wingman bar */
+    h1 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--cream); white-space: nowrap; }
+    h1::before { content: "▌"; color: var(--olive); margin-right: .35em; letter-spacing: 0; }
     form { display: flex; gap: 8px; }
-    input { background: var(--field); color: var(--cream); border: 1px solid #3a4468; border-radius: 4px; padding: 5px 8px; font: inherit; width: 16em; }
-    button { background: var(--olive); color: var(--ground); border: 0; border-radius: 4px; padding: 5px 12px; font: inherit; font-weight: 600; cursor: pointer; }
+    input { background: var(--ground); color: var(--cream); caret-color: var(--olive); border: 2px solid var(--frame); border-radius: 0; padding: 4px 8px; font: inherit; width: 16em; }
+    input::placeholder { color: var(--navy); opacity: 1; }
+    input:focus { border-color: var(--olive); }
+    button { background: var(--olive); color: var(--ground); border: 0; border-radius: 0; padding: 5px 12px; font: inherit; font-weight: 700; cursor: pointer; box-shadow: 0 3px 0 var(--olive-deep); }
+    button:hover:not(:disabled) { background: var(--olive-light); box-shadow: 0 3px 0 var(--olive-deep), var(--glow); }
+    button:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 1px 0 var(--olive-deep); }
+    :focus-visible { outline: 2px solid var(--cream); outline-offset: 2px; }
     #note { color: var(--text); font-size: 13px; }
     #note a { color: var(--navy); }
-    #error { color: #f4f8e4; background: var(--wine); padding: 6px 16px; display: none; }
+    #error { color: #f4f8e4; background: var(--wine); padding: 6px 16px; display: none; box-shadow: inset 4px 0 0 var(--cream); }
     #right { margin-left: auto; display: flex; gap: 8px 12px; align-items: center; }
     #who { display: flex; gap: 8px; align-items: center; color: var(--cream); }
     /* music: a speaker button and a volume slider; neither takes focus, so Space and the arrows stay with the game */
-    #mute { display: inline-flex; align-items: center; padding: 4px 8px; }
+    #mute { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 28px; padding: 0; }
     #mute[hidden], #vol[hidden] { display: none; }
-    #mute.muted { background: transparent; color: var(--text); box-shadow: inset 0 0 0 1px var(--olive); }
+    #mute.muted { background: transparent; color: var(--text); box-shadow: inset 0 0 0 2px var(--frame); }
+    #mute.muted:hover { color: var(--cream); box-shadow: inset 0 0 0 2px var(--olive); }
     #mute .wave { display: inline; }
     #mute.muted .wave { display: none; }
     #mute .cross { display: none; }
     #mute.muted .cross { display: inline; }
-    #vol { width: 6em; padding: 0; border: 0; background: transparent; accent-color: var(--olive); }
-    #debug { display: none; max-height: 40vh; overflow: auto; padding: 8px 16px; border-bottom: 1px solid #2b2f36; font-size: 13px; }
+    /* the volume slider as a HUD gauge: a framed track, olive fill, a square thumb */
+    #vol { -webkit-appearance: none; appearance: none; width: 7em; height: 20px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+    #vol::-webkit-slider-runnable-track { height: 8px; background: var(--field); border: 2px solid var(--frame); }
+    #vol::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 18px; margin-top: -7px; background: var(--olive); border: 0; border-radius: 0; box-shadow: 0 0 0 2px var(--ground); }
+    #vol::-moz-range-track { height: 4px; background: var(--field); border: 2px solid var(--frame); }
+    #vol::-moz-range-progress { height: 4px; background: var(--olive); }
+    #vol::-moz-range-thumb { width: 10px; height: 18px; background: var(--olive); border: 0; border-radius: 0; box-shadow: 0 0 0 2px var(--ground); }
+    #vol:hover::-webkit-slider-thumb { background: var(--olive-light); box-shadow: 0 0 0 2px var(--ground), var(--glow); }
+    #vol:hover::-moz-range-thumb { background: var(--olive-light); box-shadow: 0 0 0 2px var(--ground), var(--glow); }
+    #debug { display: none; max-height: 40vh; overflow: auto; padding: 8px 16px; border-bottom: 2px solid var(--field); font-size: 13px; }
     #debug h2 { margin: 0 0 6px; font-size: 14px; color: var(--cream); }
-    #debug .post { border-top: 1px solid #2b2f36; padding: 6px 0; }
+    #debug .post { border-top: 1px solid var(--field); padding: 6px 0; }
     #debug .meta { color: var(--navy); }
     #debug .text { color: var(--cream); white-space: pre-wrap; margin: 2px 0 4px; }
     #debug .result { margin-left: 8px; word-break: break-all; }
     #debug button { margin-right: 6px; padding: 2px 10px; }
-    #debug textarea { display: block; width: min(40em, 100%); background: var(--field); color: var(--cream); border: 1px solid #3a4468; border-radius: 4px; font: inherit; margin-bottom: 4px; }
+    #debug textarea { display: block; width: min(40em, 100%); background: var(--ground); color: var(--cream); border: 2px solid var(--frame); border-radius: 0; font: inherit; margin-bottom: 4px; }
     button:disabled { opacity: .5; cursor: default; }
     #term { flex: 1; min-height: 0; padding: 8px 12px; }
     /* game: the terminal is the playfield, so no scrolling, selecting or long-press menus on it */
@@ -64,51 +90,82 @@
     /* game: no text selection or highlight anywhere; inputs stay selectable so a handle can be typed and fixed */
     body.game { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
     body.game input, body.game textarea { user-select: text; -webkit-user-select: text; }
-    /* start page: plain HTML and CSS, painted before any script runs; it covers the page until the game starts */
-    #start { position: fixed; inset: 0; z-index: 5; background: var(--ground); overflow-y: auto; }
+    /* start page: plain HTML and CSS, painted before any script runs; it covers the page until the game starts.
+       A navy haze from the top and faint scanlines sit behind the content, never over it. */
+    #start { position: fixed; inset: 0; z-index: 5; overflow-y: auto; background:
+      repeating-linear-gradient(to bottom, transparent 0 2px, rgba(24, 34, 58, .45) 2px 3px),
+      radial-gradient(ellipse 90% 55% at 50% 0%, rgba(79, 95, 140, .28), transparent 70%),
+      var(--ground); }
     html.spectator #start { display: none; }
-    #start-form { min-height: 100%; max-width: 26em; margin: 0 auto; padding: 24px 20px; display: flex; flex-direction: column; justify-content: center; gap: 14px; }
-    #start h1 { font-size: 28px; }
-    #start .tagline { margin: -8px 0 4px; color: var(--text); }
-    #start button { min-height: 44px; padding: 10px 20px; font-size: 16px; }
-    #start :focus-visible { outline: 2px solid var(--cream); outline-offset: 2px; }
+    #start-form { min-height: 100%; max-width: 28em; margin: 0 auto; padding: 24px 18px; display: flex; flex-direction: column; justify-content: center; gap: 14px; }
+    #start h1 { font-size: 30px; letter-spacing: .14em; white-space: normal; text-shadow: 3px 3px 0 var(--olive-deep), var(--glow); animation: pulse 3.87s ease-in-out infinite; }
+    #start h1::before { text-shadow: var(--glow); }
+    /* eight beats at 124 bpm, the house tempo of the soundtrack: the glow swells on the one and settles */
+    @keyframes pulse { 0%, 100% { text-shadow: 3px 3px 0 var(--olive-deep), 0 0 6px rgba(163, 179, 95, .25); } 12% { text-shadow: 3px 3px 0 var(--olive-deep), 0 0 16px rgba(163, 179, 95, .6); } }
+    #start .tagline { margin: -6px 0 6px; color: var(--text); }
+    #start .tagline::before { content: "> "; color: var(--olive); }
+    #start button { min-height: 44px; padding: 10px 20px; font-size: 15px; }
     #start [hidden] { display: none !important; }
     #start-load { display: flex; flex-direction: column; gap: 8px; }
-    #start-bar { height: 8px; border-radius: 4px; background: var(--field); overflow: hidden; }
-    #start-bar span { display: block; height: 100%; width: 0; background: var(--olive); transition: width .2s; }
+    /* the load bar is segmented like the HUD's bomb pips */
+    #start-bar { height: 16px; padding: 2px; border: 2px solid var(--frame); background: var(--ground); overflow: hidden; }
+    #start-bar span { display: block; height: 100%; width: 0; background: repeating-linear-gradient(to right, var(--olive) 0 8px, transparent 8px 10px); transition: width .2s; }
     #start-bar.indeterminate span { width: 35%; animation: slide 1.2s ease-in-out infinite alternate; }
     @keyframes slide { from { margin-left: 0; } to { margin-left: 65%; } }
-    @media (prefers-reduced-motion: reduce) { #start-bar.indeterminate span { animation: none; width: 100%; opacity: .5; } #start-bar span { transition: none; } }
-    #start-load-text { margin: 0; font-size: 14px; }
+    #start-load-text { margin: 0; font-size: 13px; }
     #start-retry { align-self: flex-start; }
-    #start-load.failed #start-load-text { color: var(--cream); background: var(--wine); padding: 8px 12px; border-radius: 4px; }
+    #start-load.failed #start-load-text { color: #f4f8e4; background: var(--wine); padding: 8px 12px; box-shadow: inset 4px 0 0 var(--cream); }
     #start-handle-form, #start-signed { display: flex; flex-direction: column; gap: 10px; }
-    #start label { color: var(--cream); font-weight: 600; }
+    #start-choices { display: flex; flex-direction: column; gap: 12px; }
+    /* each choice is a comm panel: a navy field in a frame, with the talking bar down its left edge that lights up olive
+       on the one being pointed at or typed in */
+    #start .choice { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px 16px 20px; background: var(--field); border: 2px solid var(--frame); box-shadow: inset 4px 0 0 var(--frame); transition: box-shadow .15s; }
+    #start .choice:hover, #start .choice:focus-within { box-shadow: inset 4px 0 0 var(--olive), 0 0 14px rgba(163, 179, 95, .18); }
+    #start .choice h2 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: .04em; color: var(--cream); }
+    #start .blurb { margin: 0; font-size: 13px; flex: 1; }
+    @media (min-width: 900px) {
+      #start-form { max-width: 64em; gap: 16px; }
+      #start h1 { font-size: 46px; }
+      #start-choices { flex-direction: row; align-items: stretch; gap: 16px; }
+      #start .choice { flex: 1 1 0; min-width: 0; padding: 20px 20px 20px 24px; gap: 14px; }
+      #start .choice h2 { font-size: 18px; }
+      #start .blurb { font-size: 14px; }
+      #start .primary { padding: 10px 12px; letter-spacing: .05em; }
+    }
     .combo { position: relative; }
-    #start input { width: 100%; min-height: 48px; font-size: 17px; padding: 8px 12px; }
-    #start-suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 2; margin: 2px 0 0; padding: 0; list-style: none; background: var(--field); border: 1px solid #3a4468; border-radius: 4px; overflow: hidden; }
+    #start input { width: 100%; min-height: 48px; font-size: 16px; padding: 8px 12px; }
+    #start-suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 2; margin: 2px 0 0; padding: 0; list-style: none; background: var(--ground); border: 2px solid var(--frame); overflow: hidden; }
     #start-suggest li { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 6px 12px; cursor: pointer; color: var(--text); }
-    #start-suggest li[aria-selected="true"] { background: #4f5f8c; color: #ffffff; }
-    #start-suggest img, #start-avatar { width: 32px; height: 32px; border-radius: 50%; background: #3a4468; object-fit: cover; flex: none; }
-    #start-suggest .name { display: block; color: var(--cream); font-weight: 600; }
+    #start-suggest li + li { border-top: 1px solid var(--field); }
+    #start-suggest li:hover { background: var(--field); }
+    #start-suggest li[aria-selected="true"] { background: var(--frame); color: #ffffff; box-shadow: inset 4px 0 0 var(--olive); }
+    #start-suggest img, #start-avatar { width: 32px; height: 32px; border-radius: 0; background: var(--frame); object-fit: cover; flex: none; }
+    #start-suggest .name { display: block; color: var(--cream); font-weight: 700; }
     #start-suggest li[aria-selected="true"] .name { color: #ffffff; }
-    #start-suggest .at { display: block; font-size: 13px; }
-    #start .primary { width: 100%; min-height: 56px; font-size: 19px; }
-    #start .secondary { width: 100%; background: transparent; color: var(--cream); border: 1px solid var(--olive); }
-    #start .secondary.primary { background: var(--olive); color: var(--ground); }
+    #start-suggest .at { display: block; font-size: 12px; }
+    #start .primary { width: 100%; min-height: 50px; font-size: 15px; letter-spacing: .08em; text-transform: uppercase; box-shadow: 0 4px 0 var(--olive-deep); }
+    #start .primary:hover:not(:disabled) { box-shadow: 0 4px 0 var(--olive-deep), var(--glow); }
+    #start .primary:active:not(:disabled) { box-shadow: 0 1px 0 var(--olive-deep); transform: translateY(3px); }
     #start-signed { align-items: stretch; }
-    #start-who { display: flex; align-items: center; gap: 12px; color: var(--cream); font-weight: 600; }
-    #start-signout { align-self: center; background: transparent; color: #b6c1e2; font-weight: 400; text-decoration: underline; min-height: 44px; padding: 6px 8px; font-size: 14px; }
-    #start .hint { margin: 0; font-size: 13px; color: #b6c1e2; }
-    #start-error { display: none; color: #f4f8e4; background: var(--wine); padding: 8px 12px; border-radius: 4px; }
-    #start .controls { margin: 0; font-size: 14px; }
+    #start-who { display: flex; align-items: center; gap: 12px; color: var(--cream); font-weight: 700; }
+    #start-signout, #start-signout:hover:not(:disabled) { align-self: center; background: transparent; color: var(--sky); font-weight: 400; text-decoration: underline; text-underline-offset: 3px; min-height: 44px; padding: 6px 8px; font-size: 13px; box-shadow: none; }
+    #start .hint { margin: 0; font-size: 13px; color: var(--sky); }
+    #start-error { display: none; margin: 0; color: #f4f8e4; background: var(--wine); padding: 8px 12px 8px 16px; font-size: 14px; box-shadow: inset 4px 0 0 var(--cream); }
+    #start .controls { margin: 0; font-size: 13px; }
+    #start kbd { display: inline-block; padding: 0 4px; font: inherit; line-height: 1.3; color: var(--cream); background: var(--field); border: 1px solid var(--frame); border-bottom-width: 2px; }
     #start .alt { margin: 0; font-size: 13px; text-align: center; }
-    #start.booting #start-handle-form, #start.booting #start-signed, #start.booting .controls, #start.booting .alt { display: none !important; }
-    #start .alt a { color: #b6c1e2; display: inline-block; padding: 12px 8px; }
+    #start.booting #start-choices, #start.booting .hint, #start.booting .controls, #start.booting .alt { display: none !important; }
+    #start .alt a { color: var(--sky); display: inline-block; padding: 12px 8px; text-underline-offset: 3px; }
+    #start .alt a:hover { color: var(--cream); }
     @media (max-width: 640px) {
-      body.game header { padding: 4px 8px; gap: 4px 8px; }
+      body.game header { min-height: 36px; padding: 3px 8px; gap: 4px 8px; }
       body.game input { width: 11em; }
       body.game #vol { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+      button:active:not(:disabled), #start .primary:active:not(:disabled) { transform: none; }
+      #start-bar.indeterminate span { width: 100%; opacity: .5; }
     }
   </style>
 </head>
@@ -148,32 +205,43 @@
         <p id="start-load-text" role="status">Loading the game…</p>
         <button type="button" id="start-retry" hidden>Retry</button>
       </div>
-      <form id="start-handle-form" autocomplete="off">
-        <label for="start-handle">Your Bluesky handle</label>
-        <div class="combo">
-          <input id="start-handle" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="start-suggest" placeholder="you.bsky.social" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="email" enterkeyhint="go">
-          <ul id="start-suggest" role="listbox" aria-label="Matching accounts" hidden></ul>
-        </div>
-        <button type="submit" id="start-login" class="primary" disabled>Sign in with Bluesky</button>
-        <button type="button" id="start-guest" class="secondary">Play as guest</button>
-        <p class="hint" id="start-hint">Signing in lets you like posts. Nothing else is ever posted. As a guest, your wingmen come from the people you follow; leave the box empty for the public Discover feed.</p>
-      </form>
-      <div id="start-signed" hidden>
-        <div id="start-who"><img id="start-avatar" alt="" hidden><span id="start-who-name"></span></div>
-        <button type="button" id="start-play" class="primary">Play</button>
-        <button type="button" id="start-signout">not you? sign out</button>
-        <p class="hint">Signing in lets you like posts. Nothing else is ever posted.</p>
+      <div id="start-choices">
+        <section class="choice" id="start-card-signin" aria-labelledby="start-h-signin">
+          <h2 id="start-h-signin">Sign in with Bluesky</h2>
+          <p class="blurb">Fly your own feed and like posts for real. Nothing else is ever posted.</p>
+          <button type="button" id="start-login" class="primary" disabled>Sign in with Bluesky</button>
+          <div id="start-signed" hidden>
+            <div id="start-who"><img id="start-avatar" alt="" hidden><span id="start-who-name"></span></div>
+            <button type="button" id="start-play" class="primary">Play</button>
+            <button type="button" id="start-signout">not you? sign out</button>
+          </div>
+        </section>
+        <section class="choice" id="start-card-guest" aria-labelledby="start-h-guest">
+          <h2 id="start-h-guest">Play as someone</h2>
+          <p class="blurb">Type a handle. Your wingmen are the posts of the people they follow. No account needed.</p>
+          <form id="start-handle-form" autocomplete="off">
+            <div class="combo">
+              <input id="start-handle" role="combobox" aria-label="A Bluesky handle" aria-autocomplete="list" aria-expanded="false" aria-controls="start-suggest" placeholder="someone.bsky.social" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="email" enterkeyhint="go">
+              <ul id="start-suggest" role="listbox" aria-label="Matching accounts" hidden></ul>
+            </div>
+            <button type="submit" id="start-guest" class="primary">Play as someone</button>
+          </form>
+        </section>
+        <section class="choice" id="start-card-random" aria-labelledby="start-h-random">
+          <h2 id="start-h-random">Random</h2>
+          <p class="blurb">Posts from public Bluesky comedy feeds. No account, no typing.</p>
+          <button type="button" id="start-random" class="primary">Play random</button>
+        </section>
       </div>
+      <p class="hint" id="start-hint">Without signing in, liking is off.</p>
       <div id="start-error" role="alert"></div>
-      <p class="controls">WASD/arrows move, Space fires (F auto-fire), B bomb, E likes a wingman's post. Mouse or touch: hold on a wingman to like it (a tap never does), right click or two-finger tap bombs.</p>
+      <p class="controls"><kbd>WASD</kbd>/arrows move, <kbd>Space</kbd> fires (<kbd>F</kbd> auto-fire), <kbd>B</kbd> bomb, <kbd>E</kbd> likes a wingman's post. Mouse or touch: hold on a wingman to like it (a tap never does), right click or two-finger tap bombs.</p>
       <p class="alt"><a href="?mode=spectator">spectator view</a></p>
     </main>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"
-          integrity="sha384-J4qzUjBl1FxyLsl/kQPQIOeINsmp17OHYXDOMpMxlKX53ZfYsL+aWHpgArvOuof9" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"
-          integrity="sha384-XGqKrV8Jrukp1NITJbOEHwg01tNkuXr6uB6YEj69ebpYU3v7FvoGgEg23C1Gcehk" crossorigin="anonymous"></script>
+  <script src="./xterm/xterm.min.js"></script>
+  <script src="./xterm/addon-fit.min.js"></script>
   <script type="module" src="./main.js"></script>
 </body>
 </html>

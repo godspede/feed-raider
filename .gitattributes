@@ -1,0 +1,2 @@
+# vendored xterm.js: byte-exact, checked against pinned sha384 hashes
+src/FeedRaider.Web/wwwroot/xterm/* -text

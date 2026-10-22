@@ -13,7 +13,7 @@ public sealed class PublicFeedSource(HttpClient http) : IFeedSource
         using var resp = await http.GetAsync(url, ct).ConfigureAwait(false);
         string body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         if (!resp.IsSuccessStatusCode) throw new InvalidOperationException($"getFeed failed: {(int)resp.StatusCode}");
-        return FeedMapper.ParsePage(body);
+        return FeedMapper.ParsePage(body, signedOut: true); // read without a login, so authors who opted out of logged-out viewers are dropped
     }
 }
 
@@ -125,7 +125,7 @@ public sealed class FollowsFeedSource(HttpClient http, string handle, Func<TimeS
                 Cool(f, wait);
                 return null;
             }
-            var page = FeedMapper.ParsePage(await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false), skipReposts: true);
+            var page = FeedMapper.ParsePage(await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false), skipReposts: true, signedOut: true);
             return new FeedPage(page.Posts.Where(p => p.AuthorDid == f.Did).ToList(), null);
         }
         catch (Exception) when (!ct.IsCancellationRequested) { Cool(f, FailCooldownMs); return null; }
@@ -169,13 +169,27 @@ public static class RaiderFeeds
         }
     }
 
+    /// <summary>Looks up the post's next thread post off the game loop and hands it to the game. A failed or slow lookup (past
+    /// <see cref="Tuning.ThreadLookupMs"/>) ends the thread without a word: no toast, nothing for the frame to wait on.</summary>
+    public static async Task ThreadAsync(RaiderGame game, IThreadSource threads, FeedPost post, CancellationToken ct = default, int timeoutMs = Tuning.ThreadLookupMs)
+    {
+        FeedPost? next = null;
+        try { next = await threads.NextAsync(post, ct).WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), ct).ConfigureAwait(false); }
+        catch (Exception) { }
+        lock (game)
+        {
+            if (next is null) game.ThreadEnded(post.Uri); else game.ThreadOpened(post.Uri, next);
+        }
+    }
+
     /// <summary>Keeps the wingman queue topped up from <paramref name="primary"/> (falling back to <paramref name="fallback"/> when it
     /// throws). Fetches a page only when the queue runs low. Every post passes through a <see cref="FeedInterleaver"/>.</summary>
     public static async Task WingmenAsync(RaiderGame game, IFeedSource primary, IFeedSource? fallback, string feedUri, CancellationToken ct, int lowWater = 4, Action<string>? onFallback = null, int backoffMs = 2000, int failoverMs = 30_000, string sourceName = "the feed", Action<string>? onTrouble = null, PauseGate? pause = null)
     {
         string? cursor = null;
         bool usingFallback = false;
-        var mix = new FeedInterleaver();
+        var mix = new FeedInterleaver(signedOut: !game.LoggedIn);
+        lock (game) game.Queue.SignedOut = !game.LoggedIn;
         long stuckSince = 0, failingSince = 0;
         int failures = 0;
         try

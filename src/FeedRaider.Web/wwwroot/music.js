@@ -11,7 +11,8 @@
 
 const FADE_MS = 1500, CROSSFADE_MS = 2000, WATCH_MS = 250;
 const VOLUME_KEY = 'feed-raider.music.volume', MUTED_KEY = 'feed-raider.music.muted';
-const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+// the unlock clip: 10 ms of 8 kHz 8-bit mono silence (80 samples of 0x80); a WAV with no samples will not decode in Firefox
+const SILENT = 'data:audio/wav;base64,UklGRnQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
 const ROLES = ['menu', 'gameplay', 'boss', 'gameover'];
 
 const store = {
