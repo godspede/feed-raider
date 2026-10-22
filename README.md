@@ -2,7 +2,7 @@
 
 A vertical shoot-'em-up that plays like scrolling Bluesky. It runs in your browser, which draws the game in a terminal-style emulator (xterm.js); you don't need a terminal. There is also a real terminal version.
 
-**Play: <https://godspede.github.io/feed-raider/>**
+**Play: <https://feed-raider.famelos.com/>**
 
 Spam and rude replies attack in waves. Posts from your Bluesky feed fly in as wingmen and talk to you. Fly to one and press like to like the post for real and get a power-up. A post with 1000+ likes drops a screen-clearing bomb.
 

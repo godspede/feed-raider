@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { metadataUrl } from '../../src/FeedRaider.Web/wwwroot/page.js';
 
 const wwwroot = new URL('../../src/FeedRaider.Web/wwwroot/', import.meta.url);
-const SITE = 'https://godspede.github.io/feed-raider';
+const SITE = 'https://feed-raider.famelos.com';
 const PAGES = [`${SITE}/`, `${SITE}/index.html`, `${SITE}/?handle=bsky.app`, `${SITE}/?debug=feed#state=x`];
 
 test('client_id and redirect_uri match what make-client-metadata writes for the Pages URL', () => {
@@ -52,4 +52,21 @@ test('nothing in the site code fetches an absolute localhost URL, and index.html
   const html = readFileSync(new URL('index.html', wwwroot), 'utf8');
   const own = [...html.matchAll(/<(?:script|link)[^>]*(?:src|href)="([^"]+)"/g)].map((m) => m[1]);
   for (const u of own.filter((u) => !u.startsWith('https://cdn.jsdelivr.net/') && !u.startsWith('data:image/svg+xml,'))) assert.doesNotMatch(u, /^(\/|[a-z]+:)/, u);
+});
+
+test('the preview image is declared with absolute URLs on the site and og.png is 1200x630', () => {
+  const html = readFileSync(new URL('index.html', wwwroot), 'utf8');
+  const tag = (attr, key) => html.match(new RegExp(`<meta ${attr}="${key}" content="([^"]*)"`))?.[1];
+  const image = `${SITE}/og.png`;
+  assert.equal(tag('property', 'og:image'), image);
+  assert.equal(tag('name', 'twitter:image'), image);
+  assert.equal(tag('name', 'twitter:card'), 'summary_large_image');
+  assert.equal(tag('property', 'og:image:width'), '1200');
+  assert.equal(tag('property', 'og:image:height'), '630');
+  assert.ok(tag('property', 'og:image:alt')?.length > 20);
+  const png = readFileSync(new URL('og.png', wwwroot));
+  assert.equal(png.subarray(1, 4).toString(), 'PNG');
+  assert.equal(png.toString('latin1', 12, 16), 'IHDR');
+  assert.equal(png.readUInt32BE(16), 1200);
+  assert.equal(png.readUInt32BE(20), 630);
 });

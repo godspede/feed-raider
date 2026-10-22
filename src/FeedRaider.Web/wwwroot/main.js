@@ -1,5 +1,5 @@
 // Browser glue: xterm.js on one side, the .NET engine (via JS interop) on the other.
-// All URLs are relative so the site works from a subpath such as https://<user>.github.io/feed-raider/.
+// All URLs are relative so the page keeps working at a root or a subpath.
 // Single-file build seam: web/bundle-single-file.mjs sets globalThis.__frBundle to an object holding dotnetUrl, atprotoUrl and loadBootResource
 // before loading this file from memory. Without it (the normal site) everything loads from sibling files as usual.
 const frBundle = globalThis.__frBundle;

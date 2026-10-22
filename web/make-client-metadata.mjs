@@ -1,4 +1,4 @@
-// Usage: node make-client-metadata.mjs <site origin and path, e.g. https://owner.github.io/feed-raider> <out file>
+// Usage: node make-client-metadata.mjs <site origin, e.g. https://feed-raider.famelos.com> <out file>
 // Writes the ATProto OAuth client metadata document that is served beside index.html on GitHub Pages.
 import { readFileSync, writeFileSync } from 'node:fs';
 
