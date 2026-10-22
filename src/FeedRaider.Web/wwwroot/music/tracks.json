@@ -1,0 +1,11 @@
+[
+  { "file": "fr-start.mp3", "role": "menu" },
+  { "file": "fr-play-filter-house.mp3", "role": "gameplay" },
+  { "file": "fr-play-tech-house.mp3", "role": "gameplay" },
+  { "file": "fr-play-uk-garage.mp3", "role": "gameplay" },
+  { "file": "fr-play-electro-house.mp3", "role": "gameplay" },
+  { "file": "fr-play-italo-night.mp3", "role": "gameplay" },
+  { "file": "fr-play-liquid-dnb.mp3", "role": "gameplay" },
+  { "file": "fr-boss.mp3", "role": "boss" },
+  { "file": "fr-gameover.mp3", "role": "gameover" }
+]

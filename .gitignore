@@ -1,0 +1,18 @@
+# .NET build output
+bin/
+obj/
+publish/
+
+# IDE / local
+*.user
+.vs/
+.idea/
+
+# scratch frame dumps
+*.ppm
+
+# JS deps
+web/node_modules/
+
+# built by web/build.mjs (npm run build in web/); CI builds it before publishing
+src/FeedRaider.Web/wwwroot/atproto.js

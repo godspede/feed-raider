@@ -1,0 +1,32 @@
+{
+  "cursor": "1760000000::bafyabc",
+  "feed": [
+    {
+      "post": {
+        "uri": "at://did:plc:aaaa/app.bsky.feed.post/3top",
+        "cid": "bafytop",
+        "author": { "did": "did:plc:aaaa", "handle": "alice.test" },
+        "record": { "$type": "app.bsky.feed.post", "text": "a top-level post", "createdAt": "2026-01-01T00:00:00Z" },
+        "replyCount": 3, "repostCount": 2, "likeCount": 17
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:bbbb/app.bsky.feed.post/3rep",
+        "cid": "bafyrep",
+        "author": { "did": "did:plc:bbbb", "handle": "bob.test" },
+        "record": {
+          "text": "a reply deep in a thread",
+          "reply": {
+            "root": { "uri": "at://did:plc:aaaa/app.bsky.feed.post/3top", "cid": "bafytop" },
+            "parent": { "uri": "at://did:plc:cccc/app.bsky.feed.post/3mid", "cid": "bafymid" }
+          }
+        },
+        "replyCount": 0, "repostCount": 0, "likeCount": 1
+      },
+      "reason": { "$type": "app.bsky.feed.defs#reasonRepost" }
+    },
+    { "post": { "uri": "at://did:plc:dddd/app.bsky.feed.post/3bad", "cid": "bafybad", "record": { "text": "no author" } } },
+    { "post": { "uri": "at://did:plc:eeee/app.bsky.feed.post/3min", "cid": "bafymin", "author": { "did": "did:plc:eeee" } } }
+  ]
+}

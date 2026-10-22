@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Formats.Cbor" Version="9.0.0" />
+    <ProjectReference Include="..\..\vendor\TUImation.Core\Core.csproj" />
+  </ItemGroup>
+
+</Project>

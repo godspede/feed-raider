@@ -1,0 +1,1 @@
+{"subject":{"did":"did:plc:me","handle":"me.test"},"cursor":"abc123","follows":[{"did":"did:plc:alice111","handle":"alice.test","displayName":"Alice"},{"did":"did:plc:bob22222","handle":"bob.test"},{"handle":"no-did.test"}]}

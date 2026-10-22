@@ -1,0 +1,18 @@
+{
+  "name": "feed-raider-web",
+  "private": true,
+  "description": "ATProto OAuth + XRPC glue, bundled by esbuild into ../src/FeedRaider.Web/wwwroot/atproto.js",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "@atproto/api": "^0.29.1",
+    "@atproto/oauth-client-browser": "^0.5.10",
+    "@atproto/oauth-types": "^0.7.7"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

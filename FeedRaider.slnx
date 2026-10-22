@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FeedRaider.Engine/FeedRaider.Engine.csproj" />
+    <Project Path="src/FeedRaider.Console/FeedRaider.Console.csproj" />
+    <Project Path="src/FeedRaider.Web/FeedRaider.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FeedRaider.Tests/FeedRaider.Tests.csproj" />
+  </Folder>
+  <Folder Name="/vendor/">
+    <Project Path="vendor/TUImation.Core/Core.csproj" />
+  </Folder>
+</Solution>

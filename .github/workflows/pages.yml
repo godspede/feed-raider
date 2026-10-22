@@ -1,0 +1,60 @@
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Test
+        run: dotnet test FeedRaider.slnx -c Release
+      # atproto.js is not committed; it is bundled from web/ with the lockfile's versions before the web host is published
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build atproto.js bundle
+        run: npm ci && npm run build
+        working-directory: web
+      - name: Web tests
+        run: npm test
+        working-directory: web
+      - name: Publish web host
+        run: dotnet publish src/FeedRaider.Web -c Release -o out
+      # OAuth client metadata, served beside index.html; client_id and redirect live under this Pages URL
+      - name: Write client-metadata.json
+        env:
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: node web/make-client-metadata.mjs "https://${OWNER,,}.github.io/${REPO}" out/wwwroot/client-metadata.json
+      # the static site (index.html, main.js, _framework/) is the wwwroot folder of the publish output
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out/wwwroot
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

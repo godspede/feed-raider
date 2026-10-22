@@ -1,0 +1,4 @@
+# Every fixture is invented for the tests: handles end in .test, the DIDs, CIDs and post text are made up.
+[[data]]
+path = "tests/FeedRaider.Tests/Fixtures/*"
+provenance = "synthetic"

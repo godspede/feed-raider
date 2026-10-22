@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Feed Raider</title>
+  <meta name="description" content="A vertical shoot-'em-up that plays like scrolling Bluesky. Fly through your feed and shoot it down, in your browser.">
+  <meta property="og:title" content="Feed Raider">
+  <meta property="og:description" content="A vertical shoot-'em-up that plays like scrolling Bluesky. Fly through your feed and shoot it down, in your browser.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://godspede.github.io/feed-raider/">
+  <meta name="twitter:card" content="summary">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23101316'/%3E%3Cpath d='M16 5l9 21-9-5-9 5z' fill='%23a3b35f'/%3E%3Ccircle cx='16' cy='17' r='2' fill='%23eef2d6'/%3E%3C/svg%3E">
+  <script>if ((new URLSearchParams(location.search).get('mode') || '').toLowerCase() === 'spectator') document.documentElement.className = 'spectator';</script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css"
+        integrity="sha384-tStR1zLfWgsiXCF3IgfB3lBa8KmBe/lG287CL9WCeKgQYcp1bjb4/+mwN6oti4Co" crossorigin="anonymous">
+  <style>
+    :root { --ground: #101316; --text: #d8cba3; --cream: #eef2d6; --olive: #a3b35f; --field: #18223a; --navy: #95a3cf; --wine: #a8324d; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; background: var(--ground); color: var(--text); font: 15px/1.4 system-ui, sans-serif; }
+    body { display: flex; flex-direction: column; }
+    header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; padding: 10px 16px; border-bottom: 1px solid #2b2f36; }
+    h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--cream); }
+    form { display: flex; gap: 8px; }
+    input { background: var(--field); color: var(--cream); border: 1px solid #3a4468; border-radius: 4px; padding: 5px 8px; font: inherit; width: 16em; }
+    button { background: var(--olive); color: var(--ground); border: 0; border-radius: 4px; padding: 5px 12px; font: inherit; font-weight: 600; cursor: pointer; }
+    #note { color: var(--text); font-size: 13px; }
+    #note a { color: var(--navy); }
+    #error { color: #f4f8e4; background: var(--wine); padding: 6px 16px; display: none; }
+    #right { margin-left: auto; display: flex; gap: 8px 12px; align-items: center; }
+    #who { display: flex; gap: 8px; align-items: center; color: var(--cream); }
+    /* music: a speaker button and a volume slider; neither takes focus, so Space and the arrows stay with the game */
+    #mute { display: inline-flex; align-items: center; padding: 4px 8px; }
+    #mute[hidden], #vol[hidden] { display: none; }
+    #mute.muted { background: transparent; color: var(--text); box-shadow: inset 0 0 0 1px var(--olive); }
+    #mute .wave { display: inline; }
+    #mute.muted .wave { display: none; }
+    #mute .cross { display: none; }
+    #mute.muted .cross { display: inline; }
+    #vol { width: 6em; padding: 0; border: 0; background: transparent; accent-color: var(--olive); }
+    #debug { display: none; max-height: 40vh; overflow: auto; padding: 8px 16px; border-bottom: 1px solid #2b2f36; font-size: 13px; }
+    #debug h2 { margin: 0 0 6px; font-size: 14px; color: var(--cream); }
+    #debug .post { border-top: 1px solid #2b2f36; padding: 6px 0; }
+    #debug .meta { color: var(--navy); }
+    #debug .text { color: var(--cream); white-space: pre-wrap; margin: 2px 0 4px; }
+    #debug .result { margin-left: 8px; word-break: break-all; }
+    #debug button { margin-right: 6px; padding: 2px 10px; }
+    #debug textarea { display: block; width: min(40em, 100%); background: var(--field); color: var(--cream); border: 1px solid #3a4468; border-radius: 4px; font: inherit; margin-bottom: 4px; }
+    button:disabled { opacity: .5; cursor: default; }
+    #term { flex: 1; min-height: 0; padding: 8px 12px; }
+    /* game: the terminal is the playfield, so no scrolling, selecting or long-press menus on it */
+    body.game { overscroll-behavior: none; position: fixed; inset: 0; }
+    body.game #term, body.game #term * { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+    body.game #term { cursor: crosshair; padding: 0; }
+    /* game: the start screen names the handle and lists the controls, so the header keeps only sign-in */
+    body.game header form:not(#login), body.game #note { display: none; }
+    /* game: once the game has started, the header keeps only the signed-in #who box (with Sign out) */
+    body.playing #login { display: none; }
+    /* game: no text selection or highlight anywhere; inputs stay selectable so a handle can be typed and fixed */
+    body.game { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+    body.game input, body.game textarea { user-select: text; -webkit-user-select: text; }
+    /* start page: plain HTML and CSS, painted before any script runs; it covers the page until the game starts */
+    #start { position: fixed; inset: 0; z-index: 5; background: var(--ground); overflow-y: auto; }
+    html.spectator #start { display: none; }
+    #start-form { min-height: 100%; max-width: 26em; margin: 0 auto; padding: 24px 20px; display: flex; flex-direction: column; justify-content: center; gap: 14px; }
+    #start h1 { font-size: 28px; }
+    #start .tagline { margin: -8px 0 4px; color: var(--text); }
+    #start button { min-height: 44px; padding: 10px 20px; font-size: 16px; }
+    #start :focus-visible { outline: 2px solid var(--cream); outline-offset: 2px; }
+    #start [hidden] { display: none !important; }
+    #start-load { display: flex; flex-direction: column; gap: 8px; }
+    #start-bar { height: 8px; border-radius: 4px; background: var(--field); overflow: hidden; }
+    #start-bar span { display: block; height: 100%; width: 0; background: var(--olive); transition: width .2s; }
+    #start-bar.indeterminate span { width: 35%; animation: slide 1.2s ease-in-out infinite alternate; }
+    @keyframes slide { from { margin-left: 0; } to { margin-left: 65%; } }
+    @media (prefers-reduced-motion: reduce) { #start-bar.indeterminate span { animation: none; width: 100%; opacity: .5; } #start-bar span { transition: none; } }
+    #start-load-text { margin: 0; font-size: 14px; }
+    #start-retry { align-self: flex-start; }
+    #start-load.failed #start-load-text { color: var(--cream); background: var(--wine); padding: 8px 12px; border-radius: 4px; }
+    #start-handle-form, #start-signed { display: flex; flex-direction: column; gap: 10px; }
+    #start label { color: var(--cream); font-weight: 600; }
+    .combo { position: relative; }
+    #start input { width: 100%; min-height: 48px; font-size: 17px; padding: 8px 12px; }
+    #start-suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 2; margin: 2px 0 0; padding: 0; list-style: none; background: var(--field); border: 1px solid #3a4468; border-radius: 4px; overflow: hidden; }
+    #start-suggest li { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 6px 12px; cursor: pointer; color: var(--text); }
+    #start-suggest li[aria-selected="true"] { background: #4f5f8c; color: #ffffff; }
+    #start-suggest img, #start-avatar { width: 32px; height: 32px; border-radius: 50%; background: #3a4468; object-fit: cover; flex: none; }
+    #start-suggest .name { display: block; color: var(--cream); font-weight: 600; }
+    #start-suggest li[aria-selected="true"] .name { color: #ffffff; }
+    #start-suggest .at { display: block; font-size: 13px; }
+    #start .primary { width: 100%; min-height: 56px; font-size: 19px; }
+    #start .secondary { width: 100%; background: transparent; color: var(--cream); border: 1px solid var(--olive); }
+    #start .secondary.primary { background: var(--olive); color: var(--ground); }
+    #start-signed { align-items: stretch; }
+    #start-who { display: flex; align-items: center; gap: 12px; color: var(--cream); font-weight: 600; }
+    #start-signout { align-self: center; background: transparent; color: #b6c1e2; font-weight: 400; text-decoration: underline; min-height: 44px; padding: 6px 8px; font-size: 14px; }
+    #start .hint { margin: 0; font-size: 13px; color: #b6c1e2; }
+    #start-error { display: none; color: #f4f8e4; background: var(--wine); padding: 8px 12px; border-radius: 4px; }
+    #start .controls { margin: 0; font-size: 14px; }
+    #start .alt { margin: 0; font-size: 13px; text-align: center; }
+    #start.booting #start-handle-form, #start.booting #start-signed, #start.booting .controls, #start.booting .alt { display: none !important; }
+    #start .alt a { color: #b6c1e2; display: inline-block; padding: 12px 8px; }
+    @media (max-width: 640px) {
+      body.game header { padding: 4px 8px; gap: 4px 8px; }
+      body.game input { width: 11em; }
+      body.game #vol { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Feed Raider</h1>
+    <form method="get">
+      <input name="handle" placeholder="handle, e.g. bsky.app" aria-label="Bluesky handle" autocomplete="off" spellcheck="false">
+      <button type="submit">watch</button>
+    </form>
+    <span id="note">A watch-only view of a feed, nothing to fly. <a href="./">Play the game</a></span>
+    <div id="right">
+    <input id="vol" type="range" min="0" max="100" step="5" value="50" aria-label="Music volume" hidden>
+    <button id="mute" type="button" aria-label="Music" aria-pressed="false" title="Music (M)" hidden>
+      <svg width="20" height="16" viewBox="0 0 20 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2 6h3l4-3.5v11L5 10H2z" fill="currentColor"/>
+        <path class="wave" d="M12 5.5a3.5 3.5 0 0 1 0 5M14.5 3a7 7 0 0 1 0 10"/>
+        <path class="cross" d="M12.5 5.5l5 5m0-5l-5 5"/>
+      </svg>
+    </button>
+    <form id="login">
+      <input name="login-handle" placeholder="your handle, e.g. you.bsky.social" aria-label="Your Bluesky handle" autocomplete="username" spellcheck="false">
+      <button type="submit">Sign in with Bluesky</button>
+    </form>
+    <div id="who" style="display:none"><span></span> <button id="logout" type="button">Sign out</button></div>
+    </div>
+  </header>
+  <div id="debug"></div>
+  <div id="error" role="alert"></div>
+  <div id="term"></div>
+  <div id="start">
+    <main id="start-form">
+      <h1>Feed Raider</h1>
+      <p class="tagline">Fly through your Bluesky feed and shoot it down.</p>
+      <div id="start-load">
+        <div id="start-bar" class="indeterminate" role="progressbar" aria-label="Loading the game" aria-valuemin="0" aria-valuemax="100"><span></span></div>
+        <p id="start-load-text" role="status">Loading the game…</p>
+        <button type="button" id="start-retry" hidden>Retry</button>
+      </div>
+      <form id="start-handle-form" autocomplete="off">
+        <label for="start-handle">Your Bluesky handle</label>
+        <div class="combo">
+          <input id="start-handle" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="start-suggest" placeholder="you.bsky.social" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="email" enterkeyhint="go">
+          <ul id="start-suggest" role="listbox" aria-label="Matching accounts" hidden></ul>
+        </div>
+        <button type="submit" id="start-login" class="primary" disabled>Sign in with Bluesky</button>
+        <button type="button" id="start-guest" class="secondary">Play as guest</button>
+        <p class="hint" id="start-hint">Signing in lets you like posts. Nothing else is ever posted. As a guest, your wingmen come from the people you follow; leave the box empty for the public Discover feed.</p>
+      </form>
+      <div id="start-signed" hidden>
+        <div id="start-who"><img id="start-avatar" alt="" hidden><span id="start-who-name"></span></div>
+        <button type="button" id="start-play" class="primary">Play</button>
+        <button type="button" id="start-signout">not you? sign out</button>
+        <p class="hint">Signing in lets you like posts. Nothing else is ever posted.</p>
+      </div>
+      <div id="start-error" role="alert"></div>
+      <p class="controls">WASD/arrows move, Space fires (F auto-fire), B bomb, E likes a wingman's post. Mouse or touch: hold on a wingman to like it (a tap never does), right click or two-finger tap bombs.</p>
+      <p class="alt"><a href="?mode=spectator">spectator view</a></p>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"
+          integrity="sha384-J4qzUjBl1FxyLsl/kQPQIOeINsmp17OHYXDOMpMxlKX53ZfYsL+aWHpgArvOuof9" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"
+          integrity="sha384-XGqKrV8Jrukp1NITJbOEHwg01tNkuXr6uB6YEj69ebpYU3v7FvoGgEg23C1Gcehk" crossorigin="anonymous"></script>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
