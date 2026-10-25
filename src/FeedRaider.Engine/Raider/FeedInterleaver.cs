@@ -21,7 +21,7 @@ public sealed class FeedInterleaver(int capacity = 300, bool signedOut = false)
             if (!WingQueue.Eligible(p, signedOut) || !_seen.Add(p.Uri)) continue;
             _buf.Add(p);
         }
-        if (_seen.Count > 4000) { _seen.Clear(); foreach (var p in _buf) _seen.Add(p.Uri); }
+        if (_seen.Count > Tuning.SeenPostsMax) { _seen.Clear(); foreach (var p in _buf) _seen.Add(p.Uri); }
     }
 
     /// <summary>True when <paramref name="next"/> is a reply in the thread of <paramref name="prev"/>.</summary>

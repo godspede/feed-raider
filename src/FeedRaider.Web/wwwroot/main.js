@@ -19,9 +19,19 @@ else {
 // ?debug=feed keeps the header bar for its own sign-in
 if (debug === 'feed') document.body.classList.add('debug');
 const errorBox = document.getElementById('error');
+// The game's messages (the error bar, the terminal's toasts) are drawn where a screen reader cannot read them, so each one is also
+// written to a visually hidden status element. The spectator view has no toasts and keeps its error bar as the alert.
+const announceBox = document.getElementById('announce');
+const announce = (message) => {
+  announceBox.textContent = '';
+  // an empty node first, so the same sentence twice in a row is announced twice
+  setTimeout(() => { announceBox.textContent = message; }, 50);
+};
+if (!spectatorMode) errorBox.removeAttribute('role');
 const showError = (message) => {
   errorBox.textContent = message;
   errorBox.style.display = 'block';
+  if (!spectatorMode) announce(message);
 };
 
 // The start page is plain HTML and CSS, painted before any script runs. This wires it up while the runtime still downloads:
@@ -55,6 +65,11 @@ const term = new Terminal({
 const fit = new FitAddon.FitAddon();
 term.loadAddon(fit);
 term.open(document.getElementById('term'));
+// Tab belongs to the page, not the terminal: no game control uses it, so xterm lets it through and focus can leave the terminal.
+// While playing, the helper textarea is also taken out of the tab order (the game reads its keys at window level), so Tab goes
+// from the page to the gear and the side panel's link without stopping there. The spectator view keeps it a normal stop.
+term.attachCustomKeyEventHandler((e) => e.key !== 'Tab');
+const helperTextarea = term.textarea;
 term.write('\x1b[?25l');
 fit.fit();
 
@@ -62,16 +77,15 @@ fit.fit();
 // WebGL addon paints the same cells on the GPU. It is served beside xterm (xterm/, or from memory in the single-file build) and
 // is loaded in the background: with no WebGL, a file that fails to load or a lost context the terminal keeps the DOM renderer.
 // ?renderer=dom forces the DOM renderer.
-// Before the glyph atlas fills to where the addon merges pages and starts drawing stale glyphs (page.watchAtlas), the addon is
-// swapped for a fresh one. The old one goes first, as the atlas is cached per terminal, and its GL context is let go at once.
+// Before the glyph atlas fills to where the addon merges pages and starts drawing stale glyphs (page.watchAtlas), the atlas is
+// started afresh in place: flipping an option the game never shows (it draws only true colour, never bold) makes xterm drop its
+// atlas and make a one-page one in the same addon. The GL context stays, so there is no new-context hitch.
 const loadWebgl = () => {
   try {
     const gl = new WebglAddon.WebglAddon();
     gl.onContextLoss(() => gl.dispose());
     page.watchAtlas(gl, () => setTimeout(() => {
-      const canvases = [...term.element.querySelectorAll('canvas')];
-      gl.dispose(); loadWebgl();
-      for (const c of canvases) if (!c.isConnected) c.getContext('webgl2')?.getExtension('WEBGL_lose_context')?.loseContext();
+      term.options.drawBoldTextInBrightColors = !term.options.drawBoldTextInBrightColors;
     }));
     term.loadAddon(gl);
   } catch (e) {
@@ -158,11 +172,11 @@ const audioReady = (async () => {
     console.warn('audio unavailable: ' + (e.message || e));
   }
 })();
-const musicCue = (name) => { try { music?.cue(name); } catch { /* the game never waits on music */ } };
-const sfxPlay = (name, pan, step, size) => { try { sfx?.play(name, pan, step, size); } catch { /* nor on sound effects */ } };
+const musicCue = (name) => { try { music?.cue(name); } catch { /* audio is best effort: a failed cue must not stop the game */ } };
+const sfxPlay = (name, pan, step, size) => { try { sfx?.play(name, pan, step, size); } catch { /* audio is best effort: a failed effect must not stop the game */ } };
 const bestKey = 'feed-raider.best';
-const bestScore = () => { try { return Number.parseInt(localStorage.getItem(bestKey), 10) || 0; } catch { return 0; } };
-const saveBestScore = (n) => { try { localStorage.setItem(bestKey, String(n)); } catch { /* not persisted */ } };
+const bestScore = () => { try { return Number.parseInt(localStorage.getItem(bestKey), 10) || 0; } catch { return 0; /* storage unavailable: no best score kept */ } };
+const saveBestScore = (n) => { try { localStorage.setItem(bestKey, String(n)); } catch { /* storage unavailable: the score is just not kept */ } };
 if (needsStart) audioReady.then(() => musicCue('menu'));
 
 // Frames the terminal has not drawn yet; the game skips drawing while the terminal is behind.
@@ -190,7 +204,7 @@ async function loadAvatar(did, url) {
       const out = [];
       for (let i = 0; i < 64; i++) out.push((px[i * 4] << 16) | (px[i * 4 + 1] << 8) | px[i * 4 + 2]);
       return out.join(',');
-    } catch { return null; }
+    } catch { return null; /* the blob is blocked, gone or not an image: no avatar */ }
   };
   const docUrl = page.didDocUrl(did);
   if (!docUrl) return null;
@@ -225,8 +239,20 @@ const startFail = (message) => {
   startError.textContent = message;
   startError.style.display = 'block';
 };
+// the callback page's own line: wait while it finishes, then whether it saved the session
+// The note shows, in this order: what is in flight (checking, signing in), the typeahead's line, the callback page's line.
+const startNote = $('start-note');
+let pageNote = '', suggestNote = '', busyNote = '';
+const drawNote = () => {
+  const message = busyNote || suggestNote || pageNote;
+  startNote.textContent = message;
+  startNote.hidden = !message;
+};
+const showNote = (message) => { pageNote = message || ''; drawNote(); };
+const showSuggestNote = (message) => { suggestNote = message; drawNote(); };
+if (oauthCallback && needsStart) showNote(page.CALLBACK_WAIT_NOTE);
 const startEls = {
-  load: $('start-load'), loadText: $('start-load-text'), retry: $('start-retry'), bar: $('start-bar'), barFill: $('start-bar').firstElementChild,
+  form: $('start-handle-form'), load: $('start-load'), loadText: $('start-load-text'), retry: $('start-retry'), bar: $('start-bar'), barFill: $('start-bar').firstElementChild,
   cardSignIn: $('start-card-signin'), signIn: $('start-login'), guest: $('start-guest'), random: $('start-random'), hint: $('start-hint'),
   signed: $('start-signed'), play: $('start-play'), signOut: $('start-signout'),
 };
@@ -234,20 +260,29 @@ const currentSession = () => (auth ? JSON.parse(auth.session() || 'null') : null
 let avatarFor = null;
 // The signed-in player's face; best effort, the name shows without it.
 async function showAvatar(s) {
-  const img = $('start-avatar');
   if (!s || avatarFor === s.did) return;
   avatarFor = s.did;
-  img.hidden = true;
+  $('start-avatar')?.remove();
   try {
-    const r = await fetch('https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=' + encodeURIComponent(s.did));
+    const r = await fetch(`${page.PUBLIC_API}/xrpc/app.bsky.actor.getProfile?actor=` + encodeURIComponent(s.did));
     const url = r.ok ? (await r.json()).avatar : null;
-    if (url && avatarFor === s.did) { img.src = url; img.hidden = false; }
+    if (url && avatarFor === s.did) {
+      // made here, with its source, so the page never carries an image without one
+      const img = document.createElement('img');
+      img.id = 'start-avatar';
+      img.alt = '';
+      img.src = url;
+      $('start-who').prepend(img);
+    }
   } catch { /* no avatar */ }
 }
 renderStartPage = () => {
   if (spectatorMode) return;
   const s = currentSession();
-  page.renderStart(startEls, page.startView({ loginAvailable: authPending || !!auth, handle: s?.handle ?? null, load: loadState, queued, busy, authPending }));
+  const view = page.startView({ loginAvailable: authPending || !!auth, handle: s?.handle ?? null, load: loadState, queued, busy, authPending });
+  page.renderStart(startEls, view);
+  busyNote = view.busyNote;
+  drawNote();
   $('start-who-name').textContent = s ? '@' + s.handle : '';
   showAvatar(s);
 };
@@ -274,7 +309,7 @@ if (!spectatorMode) {
     startError.style.display = 'none';
     pendingSignIn?.abort();
     const mine = pendingSignIn = new AbortController();
-    busy = true;
+    busy = 'signin';
     renderStartPage();
     try {
       const onWaiting = () => { busy = false; renderStartPage(); };
@@ -306,10 +341,10 @@ if (!spectatorMode) {
     const t = page.guestTarget(startHandle.value);
     startError.style.display = 'none';
     if (t.error) { startFail(t.error); startHandle.focus(); return; }
-    busy = true;
+    busy = 'check';
     renderStartPage();
     // the public API answers 400 (or 404) for a handle no account uses
-    const r = await fetch('https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle=' + encodeURIComponent(t.handle)).catch(() => null);
+    const r = await fetch(`${page.PUBLIC_API}/xrpc/com.atproto.identity.resolveHandle?handle=` + encodeURIComponent(t.handle)).catch(() => null);
     busy = false;
     renderStartPage();
     if (!r) return startFail('could not reach Bluesky, check your connection');
@@ -369,15 +404,22 @@ if (!spectatorMode) {
     startHandle.setAttribute('aria-expanded', String(found.length > 0));
     setActive(-1);
   };
-  const typeahead = page.createTypeahead({ onResults: showSuggestions });
+  // an answer with no accounts, or a search that failed, says so in the start page's status line; any list clears it
+  const typeahead = page.createTypeahead({
+    onSearching: () => showSuggestNote('Searching…'),
+    onResults: (found, info) => {
+      showSuggestions(found);
+      showSuggestNote(!found.length && info?.answered ? 'No matching accounts' : '');
+    },
+    onError: () => showSuggestNote('Suggestions unavailable, type the full handle'),
+  });
   const choose = (i) => {
     startHandle.value = actors[i].handle;
-    typeahead.cancel();
-    showSuggestions([]);
+    closeSuggestions();
     startHandle.focus();
   };
-  closeSuggestions = () => { typeahead.cancel(); showSuggestions([]); };
-  startHandle.addEventListener('input', () => typeahead.input(startHandle.value));
+  closeSuggestions = () => { typeahead.cancel(); showSuggestions([]); showSuggestNote(''); };
+  startHandle.addEventListener('input', () => { showSuggestNote(''); typeahead.input(startHandle.value); });
   startHandle.addEventListener('blur', closeSuggestions);
   startHandle.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape' && actors.length) { ev.preventDefault(); showSuggestions([]); }
@@ -390,6 +432,7 @@ authReady.then(() => {
   authPending = false;
   const why = auth?.initError();
   if (why && needsStart) startFail(why);
+  if (needsStart) showNote(auth?.initNote());
   // back from the redirect: restore the page we left (the callback URL has no query of its own)
   if (auth && auth.returnTo() !== null && auth.returnTo() !== location.search) location.replace(location.pathname + auth.returnTo());
   renderStartPage();
@@ -414,6 +457,7 @@ setModuleImports('main.js', {
   termBusy: () => pendingWrites > 1,
   fetchAvatar,
   showError,
+  announce,
   musicCue,
   sfxPlay,
   bestScore,
@@ -512,7 +556,7 @@ let releaseKeys = () => {};   // lets go of the held game keys and presses; inst
 function pauseForTab() {
   const hidden = document.hidden;
   try { exports.Host.SetHidden(hidden); } catch { /* the engine is not up yet */ }
-  try { music?.setPaused(hidden); } catch { /* the game never waits on music */ }
+  try { music?.setPaused(hidden); } catch { /* audio is best effort: a failed pause must not stop the game */ }
 }
 document.addEventListener('visibilitychange', pauseForTab);
 // the runtime is up: a start queued on the start page goes now, and the page lets go of its "loading" label
@@ -522,7 +566,13 @@ if (spectatorMode) {
     term.write('\x1b[38;2;216;203;163menter a Bluesky handle above (or add ?handle=bsky.app to the URL)\x1b[0m');
   }
   // Main is empty; the exports are usable straight after create(), so dotnet.run() is not needed.
-  if (handle) await exports.Host.Start(handle, (params.get('darkness') || 'on').toLowerCase());
+  if (handle) {
+    try { await exports.Host.Start(handle, (params.get('darkness') || 'on').toLowerCase()); }
+    catch (e) {
+      console.warn('spectator failed: ' + (e?.message || e));
+      showError(`could not reach Bluesky for @${handle}, check your connection and try again`);
+    }
+  }
 } else {
   // waits here for the start screen's click (or a session) unless the URL already named a handle
   let choice = handle || randomFromUrl ? { handle, feed: params.get('feed') || '' } : await handlePicked;
@@ -543,6 +593,7 @@ function startRun(choice) {
   startScreen.hidden = true;
   // hides the header's sign-in and watch forms; StartGame runs the game, so this must come first
   document.body.classList.add('playing');
+  helperTextarea.tabIndex = -1;
   menu.started();
   renderMenuWho();
   gear.hidden = false;
@@ -599,22 +650,23 @@ function renderMenuWho() {
   $('menu-signout').hidden = !s;
 }
 
-// The gear beside the Stage readout and, on a wide window, the help in the empty margin right of the field.
+// The gear in the HUD beside the Stage readout and, on a wide window, the help in the margin right of the field.
 function placeChrome() {
   if (!menu?.isPlaying()) { gear.hidden = true; side.hidden = true; return; }
   const r = term.element.querySelector('.xterm-screen').getBoundingClientRect();
-  const l = page.chromeLayout({ cols: term.cols, rows: term.rows, cellW: r.width / term.cols, cellH: r.height / term.rows, left: r.left, top: r.top, width: document.documentElement.clientWidth });
+  const l = page.chromeLayout({ cols: term.cols, rows: term.rows, cellW: r.width / term.cols, cellH: r.height / term.rows, left: r.left, top: r.top });
   const g = l.gear, left = g.x - (g.size - g.w) / 2, top = Math.max(0, g.y - (g.size - g.h) / 2);
   Object.assign(gear.style, { left: left + 'px', top: top + 'px', width: g.size + 'px', height: g.size + 'px' });
   Object.assign(gear.firstElementChild.style, { left: g.x - left + 'px', top: g.y - top + 'px', width: g.w + 'px', height: g.h + 'px' });
   side.hidden = !l.side;
-  if (l.side) Object.assign(side.style, { left: l.side.x + 'px', top: l.side.y + 'px', width: l.side.w + 'px', maxHeight: l.side.h + 'px' });
+  if (l.side) Object.assign(side.style, { left: l.side.x + 'px', top: l.side.y + 'px', width: l.side.w + 'px', height: l.side.h + 'px' });
 }
 
 // Back to main menu: the run is over (Host.Quit), so the page goes back to how it looked before the pick: the three choices,
 // the menu theme, an address with no handle in it (a reload lands here too) and nothing of the old run on screen.
 function showStartPage() {
   document.body.classList.remove('playing');
+  helperTextarea.removeAttribute('tabindex');
   placeChrome();
   const p = new URLSearchParams(location.search);
   p.delete('handle');

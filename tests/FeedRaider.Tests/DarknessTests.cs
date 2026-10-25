@@ -202,7 +202,7 @@ public class DarknessTests
         Assert.Equal("you absolute muppet", post.Text);
 
         var room = new Room(Enumerable.Range(0, 6).Select(i => new Follow($"did:plc:guy{i}aaaaaaaaaaaaaaaa", $"guy{i}.test")));
-        room.Haunt(post);
+        room.Dark.Offer(post);
         string everything = "";
         for (long ms = 0; ms < 20000; ms += 250) everything += room.Render(100, 40, ms);
         Assert.True(room.Dark.Spawned > 0);
@@ -211,7 +211,7 @@ public class DarknessTests
             Assert.DoesNotContain(leak, everything, StringComparison.OrdinalIgnoreCase);
         // ...and the monster itself holds nothing but a hash, a kind and the cleaned words
         Assert.All(room.Dark.Monsters, m => Assert.Equal("you absolute muppet", m.Text));
-        Assert.DoesNotContain(post.ToString(), AuthorDid);
+        Assert.DoesNotContain(AuthorDid, post.ToString());
     }
 
     // ---- monsters ----------------------------------------------------------------------------

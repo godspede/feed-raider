@@ -75,7 +75,7 @@ public class FeedInterleaverTests
         var game = new RaiderGame(1);
         using var cts = new CancellationTokenSource();
         var run = RaiderFeeds.WingmenAsync(game, new Once(posts), null, "", cts.Token);
-        await Task.Delay(1500);
+        await Wait.UntilAsync(() => { lock (game) return game.Queue.Count >= 10; }, "ten wingmen in the queue");
         cts.Cancel();
         await run.WaitAsync(TimeSpan.FromSeconds(10));
         var served = new List<FeedPost>();

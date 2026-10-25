@@ -8,15 +8,14 @@ public sealed class RaiderView
     public static readonly uint Ground = Surface.Pack(0x05, 0x07, 0x11);
     public static readonly uint Rail = Surface.Pack(0x1c, 0x3a, 0x6e);
     public static readonly uint Blue = Surface.Pack(0x00, 0x85, 0xff);
-    private const uint HudBg = 0x0a1224, PanelBg = 0x0c1830, PanelEdge = 0x1c3a6e, Dim = 0x6f86ad, Pink = 0xff5a8a, Ice = 0xbfe9ff;
-    private const int PanelW = 26;
+    private const uint HudBg = 0x0a1224, PanelBg = CommPainter.PanelBg, PanelEdge = 0x1c3a6e, Dim = 0x6f86ad, Pink = 0xff5a8a, Ice = 0xbfe9ff;
+    private int PanelW = Tuning.SidePanelMinCols;
 
     private readonly QuadComposer _quad = new();
     private readonly QuadComposer _avQuad = new();
     private readonly Surface _avSurface = new(8, 8);
     private readonly CommPainter _comms = new();
     private Surface? _field;
-    private uint[] _backdrop = [];
     private Background? _bg;
     private FieldLayout _lay;
     private readonly ulong _seed;
@@ -44,16 +43,7 @@ public sealed class RaiderView
         }
         var f = _field;
         _bg!.Draw(f, g.ScrollFrames);
-        if (_backdrop.Length != f.P.Length) _backdrop = new uint[f.P.Length];
-        Array.Copy(f.P, _backdrop, f.P.Length);
         DrawWorld(g, f);
-        if (g.ScreenFlash > 0)
-        {
-            // the backdrop copy takes the same flash, so the comms still see only the action as covering them
-            double a = 0.5 * g.ScreenFlash / Tuning.ScreenFlashFrames;
-            var px = f.P;
-            for (int i = 0; i < px.Length; i++) { px[i] = Surface.Mix(px[i], 0xFFFFFF, a); _backdrop[i] = Surface.Mix(_backdrop[i], 0xFFFFFF, a); }
-        }
         var (sx, sy) = g.ShakeOffset();
         _quad.Compose(f, sx, sy, scr, lay.Col0, 0);
         for (int r = 0; r < scr.Rows; r++)
@@ -61,7 +51,7 @@ public sealed class RaiderView
             scr.Put(lay.Col0 - 1, r, '│', Rail, Ground);
             scr.Put(lay.Col0 + lay.PCols, r, '│', Rail, Ground);
         }
-        DrawText(g, scr, lay, debug, new Foreground(f.P, _backdrop, f.W, f.H, sx, sy, lay.Col0));
+        DrawText(g, scr, lay, debug);
     }
 
     // ---------------------------------------------------------------- pixels
@@ -171,6 +161,12 @@ public sealed class RaiderView
             if (p.Kind == ParticleKind.Heart) { f.Set(x - 1, y, c); f.Set(x + 1, y, c); f.Rect(x - 1, y + 1, 3, 1, c); f.Set(x, y + 2, c); }
             else f.Rect(x, y, p.Size, p.Size, c);
         }
+        if (g.ScreenFlash > 0)
+        {
+            double a = 0.5 * g.ScreenFlash / Tuning.ScreenFlashFrames;
+            var px = f.P;
+            for (int i = 0; i < px.Length; i++) px[i] = Surface.Mix(px[i], 0xFFFFFF, a);
+        }
     }
 
     private static void DrawWing(RaiderGame g, Surface f, Wingman w)
@@ -235,8 +231,9 @@ public sealed class RaiderView
     {
         double pulse = 0.5 + 0.5 * Math.Sin(g.Frame * 0.2);
         double a = 0.25 + 0.12 * g.Shield + 0.1 * pulse;
-        f.Ring(g.PX, g.PY, 8.5, 0x4fe8ff, a);
-        f.Ring(g.PX, g.PY, 7.5, 0x4fe8ff, a * 0.4);
+        uint shield = RaiderGame.PickupColor(PickupKind.Shield);
+        f.Ring(g.PX, g.PY, 8.5, shield, a);
+        f.Ring(g.PX, g.PY, 7.5, shield, a * 0.4);
         long since = g.Frame - g.ShieldHitFrame;
         if (since < 6) f.Ring(g.PX, g.PY, 8.5 + since, 0xffffff, 0.9 - since * 0.13);
     }
@@ -281,14 +278,11 @@ public sealed class RaiderView
 
     private static string Hearts(int n) => new('\u2665', Math.Max(0, n));   // \u2665 heart suit
 
-    private void DrawText(RaiderGame g, Screen scr, FieldLayout lay, string? debug, Foreground fore)
+    private void DrawText(RaiderGame g, Screen scr, FieldLayout lay, string? debug)
     {
         int c0 = lay.Col0, cols = lay.PCols;
         int Cx(double x) => c0 + (int)(x / 2);
         int Cy(double y) => (int)(y / 2);
-
-        // the comms first: they are background, under every other overlay and around the action
-        _comms.Draw(g, scr, lay, fore);
 
         // HUD
         scr.Blank(c0, 0, cols, 0xffffff, HudBg);
@@ -313,7 +307,7 @@ public sealed class RaiderView
         // text carried by the darkness
         foreach (var e in g.Enemies)
         {
-            if (e.Text is not { Length: > 0 } t || e.Y < 4) continue;
+            if (e.Text is not { Length: > 0 } t || e.Y < 4 || e.Header is not null) continue;   // a labelled enemy speaks in a comm box
             if (e.Kind == EnemyKind.Carrier)
             {
                 int col = Math.Clamp(Cx(e.X) - t.Length / 2, c0, c0 + cols - t.Length);
@@ -334,14 +328,6 @@ public sealed class RaiderView
             }
         }
 
-        // label badge over every darkness enemy
-        foreach (var e in g.Enemies)
-        {
-            if (e.Badge is not { } badge || e.Source is not { } kind || e.Y + e.Sprite.H / 2.0 <= 0) continue;
-            var (bc, br) = EnemyBadge.Place(e, c0, cols, badge.Length);
-            scr.Text(bc, br, badge, EnemyBadge.Ink, EnemyBadge.Background(kind));
-        }
-
         foreach (var p in g.Popups)
             scr.Text(Math.Clamp(Cx(p.X) - p.Text.Length / 2, c0, c0 + cols - p.Text.Length), Math.Max(2, Cy(p.Y)), p.Text, p.Color);
 
@@ -357,6 +343,8 @@ public sealed class RaiderView
                 scr.Text(hc, row + 1, hint, Art.Body(Ramp.Introduces(g.StageShown)!.Value), 0x1a1030);
             }
         }
+
+        _comms.Draw(g, scr, lay);
 
         // like prompt
         if (g.Prompt is { } w2)
@@ -397,8 +385,9 @@ public sealed class RaiderView
 
     private void DrawPanels(RaiderGame g, Screen scr, FieldLayout lay)
     {
-        bool wide = lay.Margin >= PanelW + 3;
-        if (wide) DrawLog(g, scr, Math.Max(1, lay.Col0 - PanelW - 2), 2, lay.Rows - 2);
+        PanelW = lay.PanelCols;
+        bool wide = PanelW > 0;
+        if (wide) DrawLog(g, scr, lay.Col0 - Tuning.SideGapCols - PanelW, 2, lay.Rows - 2);
         else
         {
             // the speaker, else the one still fighting with the lowest age (else the youngest leaver)
@@ -456,12 +445,12 @@ public sealed class RaiderView
     private int _logRows = -1, _scrollRows;
     private long _scrollAt;
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Wingman, LogText> _logText = new();
-    private sealed record LogText(string Text, int Earlier, (string Line, int Kind)[] Lines);
+    private sealed record LogText(string Text, int Earlier, int Width, (string Line, int Kind)[] Lines);
 
     /// <summary>The wingman's whole thread wrapped to the column: each earlier post, a rule, then the newest; wrapped once per post.</summary>
     private (string Line, int Kind)[] LogLines(Wingman w)
     {
-        if (_logText.TryGetValue(w, out var t) && ReferenceEquals(t.Text, w.Text) && t.Earlier == w.Earlier.Count) return t.Lines;
+        if (_logText.TryGetValue(w, out var t) && ReferenceEquals(t.Text, w.Text) && t.Earlier == w.Earlier.Count && t.Width == PanelW - 2) return t.Lines;
         int width = PanelW - 2;
         var lines = new List<(string, int)>();
         foreach (var e in w.Earlier)
@@ -471,7 +460,7 @@ public sealed class RaiderView
         }
         foreach (var l in BubbleText.Format(w.Text, width, 200)) lines.Add((l, LogNewest));
         var arr = lines.ToArray();
-        _logText.AddOrUpdate(w, new LogText(w.Text, w.Earlier.Count, arr));
+        _logText.AddOrUpdate(w, new LogText(w.Text, w.Earlier.Count, width, arr));
         return arr;
     }
 
@@ -481,9 +470,11 @@ public sealed class RaiderView
     {
         bool speaking = w == g.Comms.Speaker, gone = !FeedLog.OnScreen(w, g.Wings);
         double fade = gone ? 0.6 : speaking ? 0 : 0.2;
-        uint text = Surface.Mix(0xe6eefc, PanelBg, fade), older = Surface.Mix(0xe6eefc, PanelBg, 0.45 + fade / 2);
-        uint handle = gone ? Surface.Mix(Ice, PanelBg, 0.55) : Ice, bar = speaking ? w.Accent : gone ? PanelEdge : Blue;
-        uint likesFg = Surface.Mix(w.Liked ? Pink : Dim, PanelBg, gone ? 0.4 : 0);
+        // dimmed, but never below the contrast body text needs: a gone entry sits at that floor, not under it
+        uint text = Surface.Legible(Surface.Mix(CommPainter.TextFg, PanelBg, fade), PanelBg);
+        uint older = Surface.Legible(Surface.Mix(CommPainter.TextFg, PanelBg, 0.45 + fade / 2), PanelBg);
+        uint handle = Surface.Legible(gone ? Surface.Mix(Ice, PanelBg, 0.55) : Ice, PanelBg), bar = speaking ? w.Accent : gone ? PanelEdge : Blue;
+        uint likesFg = Surface.Legible(Surface.Mix(w.Liked ? Pink : Dim, PanelBg, gone ? 0.4 : 0), PanelBg);
         int height = LogHeader + lines.Length;
         for (int r = Math.Max(row, top); r < Math.Min(row + height, bottom + 1); r++)
         {
@@ -531,7 +522,7 @@ public sealed class RaiderView
         if (w.Avatar is { } av) { Array.Copy(av, s.P, 64); return; }
         // no picture (the host could not fetch one): a tinted disc from the author's DID
         ulong h = Hashing.Fnv64(w.Post.AuthorDid);
-        uint bg = Surface.Mix(0x0c1830, Surface.Pack((int)(Hashing.Unit(h, 1) * 160), (int)(Hashing.Unit(h, 2) * 160), (int)(Hashing.Unit(h, 3) * 220)), 0.45);
+        uint bg = Surface.Mix(PanelBg, Surface.Pack((int)(Hashing.Unit(h, 1) * 160), (int)(Hashing.Unit(h, 2) * 160), (int)(Hashing.Unit(h, 3) * 220)), 0.45);
         uint fg = Surface.Mix(bg, 0xffffff, 0.45);
         s.Fill(bg);
         s.Disc(4, 4, 3, fg);

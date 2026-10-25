@@ -44,7 +44,15 @@ public sealed class Spectator
         var loading = new Room([]) { Status = $"fetching who @{handle} follows..." };
         DrawFrame(loading);
 
-        var follows = await BskyClient.FetchFollowsAsync(_http, handle, ct: ct);
+        List<Follow> follows;
+        try { follows = await BskyClient.FetchFollowsAsync(_http, handle, ct: ct); }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            // the host shows the error bar; this replaces the stale "fetching" line and says what to do (nothing retries here)
+            loading.Status = $"could not load who @{handle} follows, reload to try again";
+            DrawFrame(loading);
+            throw;
+        }
         if (follows.Count == 0)
         {
             loading.Status = $"@{handle} follows nobody (or the account is private)";
@@ -76,7 +84,7 @@ public sealed class Spectator
         {
             var labels = LabelSource ?? new LabelSource().ReadAsync(pumpCts.Token);
             dark = Task.Run(() => DarknessFeed.RunAsync(labels, (uri, c) => PostTextFetcher.FetchAsync(_http, uri, c),
-                post => { lock (room) { room.Haunt(post); DarkStats.Haunted++; } }, DarkStats, pumpCts.Token), pumpCts.Token);
+                post => { lock (room) { room.Dark.Offer(post); DarkStats.Haunted++; } }, DarkStats, pumpCts.Token), pumpCts.Token);
         }
 
         Task? hidden = null;
@@ -85,7 +93,7 @@ public sealed class Spectator
             var gates = HiddenSource;
             if (gates is null) { _threadgates = new ThreadgateSource(); gates = _threadgates.ReadAsync(pumpCts.Token); }
             hidden = Task.Run(() => DarknessFeed.RunHiddenAsync(gates, (uri, c) => PostTextFetcher.FetchAsync(_http, uri, c),
-                post => { lock (room) { room.Haunt(post); DarkStats.Haunted++; } }, DarkStats, pumpCts.Token), pumpCts.Token);
+                post => { lock (room) { room.Dark.Offer(post); DarkStats.Haunted++; } }, DarkStats, pumpCts.Token), pumpCts.Token);
         }
 
         Task? demo = null;
@@ -97,7 +105,7 @@ public sealed class Spectator
                     await Task.Delay(i == 0 ? 3000 : 5000, pumpCts.Token).ConfigureAwait(false);
                     lock (room)
                         if (DarkStats.Haunted == 0 || room.Dark.Pending == 0 && room.Dark.Monsters.Count < 3)
-                            room.Haunt(DarknessDemoPosts.Next(i));
+                            room.Dark.Offer(DarknessDemoPosts.Next(i));
                 }
             }, pumpCts.Token);
 

@@ -21,7 +21,7 @@ public sealed class MusicDirector(Action<string> emit)
 
     private bool _ended;
 
-    public void Update(in MusicSnapshot s, double t)
+    public void Update(in MusicSnapshot s)
     {
         if (_ended) return;
         Switch(s.Boss ? MusicCues.Boss : MusicCues.Gameplay);

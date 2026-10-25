@@ -1,7 +1,8 @@
 // Page logic that needs no DOM or network of its own, so node can test it. main.js and the atproto.js bundle both import it.
 
 export const ENTRYWAY = 'https://bsky.social';
-export const TYPEAHEAD_URL = 'https://public.api.bsky.app/xrpc/app.bsky.actor.searchActorsTypeahead';
+export const PUBLIC_API = 'https://public.api.bsky.app';
+export const TYPEAHEAD_URL = `${PUBLIC_API}/xrpc/app.bsky.actor.searchActorsTypeahead`;
 
 // What a typed handle means: "@Alice", " alice " and "alice" all become alice.bsky.social; a dotted name, a DID or a URL stays
 // as typed (bar the @, spaces and case of a handle). Empty stays empty.
@@ -27,7 +28,7 @@ const NO_LIKES_NOTE = 'Without signing in, liking is off.';
 // What the start page shows: three equal choices. Sign in with Bluesky (or, once signed in, Play as @handle), Play as someone (a
 // typed handle; its follows are the wingmen) and Random (posts from public comedy feeds). `load` is { status: 'loading' | 'ready' |
 // 'failed', percent: number | null }; `queued` is 'play', 'guest' or 'random' once a start was pressed before the runtime was ready.
-// `busy` is a handle check in flight; `authPending` is the OAuth client still starting; `handle` is the signed-in account (restored
+// `busy` is false, or what is in flight: 'signin' (the sign-in started) or any other truthy value (a handle check); `authPending` is the OAuth client still starting; `handle` is the signed-in account (restored
 // session or back from the redirect), or null.
 export function startView({ loginAvailable, handle, load = { status: 'ready', percent: null }, queued = null, busy = false, authPending = false }) {
   const mode = !loginAvailable ? 'guest-only' : handle ? 'signed-in' : 'signed-out';
@@ -47,7 +48,10 @@ export function startView({ loginAvailable, handle, load = { status: 'ready', pe
     cardSignIn: mode !== 'guest-only',
     signIn: mode === 'signed-out',
     signInDisabled: authPending || busy || !!queued,
-    guestLabel: queued === 'guest' ? loadingLabel : 'Play as someone',
+    signInLabel: busy === 'signin' ? 'signing in…' : 'Sign in with Bluesky',
+    guestLabel: queued === 'guest' ? loadingLabel : busy && busy !== 'signin' ? 'checking…' : 'Play as someone',
+    formBusy: !!busy,
+    busyNote: busy === 'signin' ? 'Waiting for Bluesky…' : busy ? 'Checking the handle…' : '',
     guestDisabled: startDisabled,
     randomLabel: queued === 'random' ? loadingLabel : 'Play random',
     randomDisabled: startDisabled,
@@ -68,7 +72,7 @@ export function guestTarget(raw) {
 }
 
 // els: the start page's elements. Each takes `hidden`; load and bar take `className`; the bar `setAttribute`/`removeAttribute`
-// and its fill `style`; the buttons `disabled` and `textContent`.
+// and its fill `style`; the optional form takes `setAttribute`; the buttons `disabled` and `textContent`.
 export function renderStart(els, view) {
   els.load.hidden = view.load.hidden;
   els.load.className = view.load.failed ? 'failed' : '';
@@ -82,6 +86,8 @@ export function renderStart(els, view) {
   els.cardSignIn.hidden = !view.cardSignIn;
   els.signIn.hidden = !view.signIn;
   els.signIn.disabled = view.signInDisabled;
+  els.signIn.textContent = view.signInLabel;
+  if (els.form) els.form.setAttribute('aria-busy', String(view.formBusy));
   els.guest.textContent = view.guestLabel;
   els.guest.disabled = view.guestDisabled;
   els.random.textContent = view.randomLabel;
@@ -95,8 +101,9 @@ export function renderStart(els, view) {
 
 // Typeahead over the public actor search. input(text) waits `delay` ms of quiet, then asks once; text under `minLength`
 // characters asks nothing and clears. A slower, older answer never replaces a newer one. Results are
-// { handle, displayName, avatar } and arrive through onResults (an empty list when there is nothing to show).
-export function createTypeahead({ fetchImpl = (...a) => fetch(...a), onResults, onError = () => {}, delay = 200, limit = 6, minLength = 2, setTimer = setTimeout, clearTimer = clearTimeout, url = TYPEAHEAD_URL }) {
+// { handle, displayName, avatar } and arrive through onResults (an empty list when there is nothing to show). A list that came from a search is
+// passed with a second argument { answered: true }, so an empty answer can be told from a cleared box; a failed search calls onResults([]) and then onError.
+export function createTypeahead({ fetchImpl = (...a) => fetch(...a), onResults, onError = () => {}, onSearching = () => {}, delay = 200, limit = 6, minLength = 2, setTimer = setTimeout, clearTimer = clearTimeout, url = TYPEAHEAD_URL }) {
   let timer = null, seq = 0, ctl = null;
   const cancel = () => {
     if (timer !== null) { clearTimer(timer); timer = null; }
@@ -104,13 +111,14 @@ export function createTypeahead({ fetchImpl = (...a) => fetch(...a), onResults, 
     seq++;
   };
   async function search(q, mine) {
+    onSearching();
     ctl = typeof AbortController === 'function' ? new AbortController() : null;
     try {
       const res = await fetchImpl(`${url}?q=${encodeURIComponent(q)}&limit=${limit}`, ctl ? { signal: ctl.signal } : undefined);
       if (!res.ok) throw new Error(`typeahead answered ${res.status}`);
       const body = await res.json();
       if (mine !== seq) return;
-      onResults((body.actors || []).slice(0, limit).map((a) => ({ handle: a.handle, displayName: a.displayName || '', avatar: a.avatar || '' })));
+      onResults((body.actors || []).slice(0, limit).map((a) => ({ handle: a.handle, displayName: a.displayName || '', avatar: a.avatar || '' })), { answered: true });
     } catch (e) {
       if (mine === seq && e?.name !== 'AbortError') { onResults([]); onError(e); }
     }
@@ -139,10 +147,17 @@ export class SignInCancelled extends Error {
   constructor() { super('The sign-in window was closed.'); this.name = 'SignInCancelled'; }
 }
 
+// A reason this page wrote itself, already in plain words.
+const signInLine = (reason) => `Sign-in didn't finish: ${String(reason).trim().replace(/[.\s]+$/, '')}. Try again.`;
 // The start page's line for a sign-in that failed: the callback, the token exchange or the session restore.
 export function signInFailed(e) {
-  const reason = String((e instanceof Error ? e.message : e) || 'unknown error').trim().replace(/[.\s]+$/, '') || 'unknown error';
-  return `Sign-in didn't finish: ${reason}. Try again.`;
+  const raw = String((e instanceof Error ? e.message : e) || '');
+  const has = (re) => re.test(raw) || re.test(e?.name || '');
+  let reason = "something went wrong. Try again.";
+  if (has(/resolve|metadata|fetch|network|timed? ?out/i)) reason = "couldn't reach your Bluesky account's server. Check the handle and your connection, then try again.";
+  else if (has(/popup|window|cancel|closed/i)) reason = 'the sign-in window was closed. Try again.';
+  else if (has(/access_denied|denied|declin/i)) reason = 'Bluesky did not allow it. Try again when you are ready to approve.';
+  return `Sign-in didn't finish: ${reason}`;
 }
 
 // True when the page URL carries an OAuth answer (state with code or error). The library asks for it in the fragment; the
@@ -180,24 +195,89 @@ export function handOff(key, result, { channel = makeChannel, waitMs = 500, setT
 }
 
 // The callback page's work once the authorization server has answered: `callback()` exchanges the code and saves the session
-// (resolving { state }), `adopt()` restores and shows it (resolving the account's DID). A popup's callback hands the result, or
-// the reason it failed at any step, back to the page that opened it and closes once that page answers; without the reason
-// that page would wait on a session that never comes. A redirect's callback hands nothing back. Resolves callback()'s result, or
-// rejects with the step's error, after handing it back.
-export async function completeCallback({ callback, adopt, handOff: hand = handOff, close = () => globalThis.window?.close() }) {
+// (resolving { state, session: { sub } }), `adopt()` restores and shows it (resolving the account's DID). A popup's callback hands
+// the result, or the reason it failed at any step, back to the page that opened it and closes once that page answers; without the
+// reason that page would wait on a session that never comes. A redirect's callback hands nothing back. `report(step, extra)` notes
+// each step reached in the sign-in report. Resolves callback()'s result, or rejects with the step's error, after handing it back.
+export async function completeCallback({ callback, adopt, report = () => {}, handOff: hand = handOff, close = () => globalThis.window?.close() }) {
   let key = null;
   try {
+    report('answered');
     const result = await callback();
     key = popupKey(result?.state);
+    report('saved', { sub: result?.session?.sub });
     const sub = await adopt();
+    report('restored', { sub });
     if (key && await hand(key, { sub })) close();
     return result;
   } catch (e) {
     key ??= popupKey(e?.state);
-    if (key && await hand(key, { error: e instanceof Error ? e.message : String(e) })) close();
+    const error = e instanceof Error ? e.message : String(e);
+    report('failed', { error });
+    if (key && await hand(key, { error })) close();
     throw e;
   }
 }
+
+// --- the sign-in report: how far the last sign-in got, in this browser's storage, so a page that finds no session can say why ---
+
+// The page that opens the popup notes 'started'. The callback page notes 'answered' once the authorization server's answer
+// arrives, 'saved' once the code is exchanged and the session stored with its sub, 'restored' once it shows as signed in, or
+// 'failed' with the reason. Every page that shows the account notes 'restored' again, so a load soon after still knows which
+// account to restore; a sign-out clears it. A report older than REPORT_MS is no longer about this sign-in.
+export const SIGNIN_REPORT = 'feed-raider(signin-report)';
+export const REPORT_MS = 30 * 60e3;
+export function noteSignIn(storage, step, extra = {}, now = Date.now()) {
+  try { storage?.setItem(SIGNIN_REPORT, JSON.stringify({ ...extra, step, at: now })); } catch { /* storage unavailable: best effort, the sign-in works without the report */ }
+}
+export function readSignIn(storage, now = Date.now()) {
+  try {
+    const r = JSON.parse(storage?.getItem(SIGNIN_REPORT) || 'null');
+    return r && typeof r.step === 'string' && now - r.at >= 0 && now - r.at < REPORT_MS ? r : null;
+  } catch { return null; }
+}
+export function clearSignIn(storage) {
+  try { storage?.removeItem(SIGNIN_REPORT); } catch { /* storage unavailable: best effort, nothing to clear */ }
+}
+
+const SAVED_STEPS = ['saved', 'restored'];
+
+// The saved session, as a page load or a waiting page asks for it: `initRestore()` (the library's: the account this browser
+// signed in with last, or undefined when it keeps none) and, when it keeps none but the sign-in report names an account a
+// callback saved, `restore(sub)`. The library forgets which account is current when a callback page is closed between saving
+// the session and restoring it, and whenever any restore of that account fails, even one that raced the callback saving a fresh
+// session; the session itself stays saved. Resolves { session, report, error }: session null when none was found, report the
+// recent sign-in report (or null), error why the reported account's restore failed. Rejects with initRestore's own error.
+export async function restoreSaved({ initRestore, restore, storage, now = Date.now() }) {
+  const restored = await initRestore();
+  if (restored?.session) return { session: restored.session, report: null, error: null };
+  const report = readSignIn(storage, now);
+  if (!report?.sub || !SAVED_STEPS.includes(report.step)) return { session: null, report, error: null };
+  try {
+    return { session: await restore(report.sub), report, error: null };
+  } catch (e) {
+    return { session: null, report, error: e };
+  }
+}
+
+// The start page's line for a page load that found no session while a sign-in report was recent: how far that sign-in got.
+// Null when there is nothing to say (no report).
+export function signInLost(report, error) {
+  if (!report) return null;
+  if (error) return signInLine(`the sign-in window saved your session, but restoring it here failed (${(error instanceof Error ? error.message : String(error)).replace(/[.\s]+$/, '')})`);
+  switch (report.step) {
+    case 'started': return signInLine('no answer from Bluesky reached this browser. The sign-in window was closed before Bluesky sent it back, or it opened where this page cannot see its storage');
+    case 'answered': return signInLine('the sign-in window was closed before it saved your session. Leave it open until it says you are signed in');
+    case 'failed': return signInFailed(report.error || 'unknown error');
+    default: return signInLine('no saved session was found in this browser');
+  }
+}
+
+// What the callback page says once it is done: the popup that saved the session and stays open (no opener answered) says so.
+export function callbackNote({ popup, handle }) {
+  return popup && handle ? `Signed in as @${handle} and saved in this browser. You can close this window; reload the game page if it still shows Sign in.` : null;
+}
+export const CALLBACK_WAIT_NOTE = 'Finishing sign-in… keep this window open until it says you are signed in.';
 
 // Calls wake() when the page comes back to the front (window focus, or the document turning visible: a phone tab switch) or
 // another page of the site writes storage, as the callback page does when it restores the session it saved.
@@ -227,7 +307,7 @@ export function watchSaved({ restore, onSession, signedIn = () => false, target 
         try {
           const s = await restore();
           if (s && !stopped) return onSession(s);
-        } catch { /* nothing usable was saved */ }
+        } catch { /* a failed restore leaves the page as it is; restoreSaved already keeps the reason for initError */ }
       } while (again && !stopped && !signedIn());
     } finally {
       checking = false;
@@ -452,43 +532,39 @@ export function createMenu(host) {
 // re-uploads a slot only when the page there has a different version number: a page that lands in a slot whose old page had
 // the same number keeps the old texture, and cells draw pieces of other glyphs until the page is cleared. The game's
 // true-colour cells (avatars, the dimmed log, the backdrop) fill the cap in two to four minutes of play. watchAtlas counts
-// the pages from the addon's events and calls renew once, at ATLAS_PAGE_LIMIT pages or at the first merge; the page then
-// swaps in a fresh addon, which starts with a one-page atlas.
+// the pages from the addon's events and calls renew once, at ATLAS_PAGE_LIMIT pages or at the first merge. renew starts a
+// fresh one-page atlas in the same addon (no new GL context); its change event re-arms the watch.
 export const ATLAS_PAGE_LIMIT = 14;
 export function watchAtlas(addon, renew, limit = ATLAS_PAGE_LIMIT) {
   let pages = 1, asked = false;
   const ask = () => { if (!asked) { asked = true; renew(); } };
-  addon.onChangeTextureAtlas(() => { pages = 1; });
+  addon.onChangeTextureAtlas(() => { pages = 1; asked = false; });
   addon.onAddTextureAtlasCanvas(() => { if (++pages >= limit) ask(); });
   addon.onRemoveTextureAtlasCanvas(() => { pages--; ask(); });
 }
 
 export const FIELD_MAX_COLS = 64; // the engine's Tuning.FieldMaxCols: the playfield is centred, at most this many columns
+export const SIDE_MAX_COLS = 44;  // the engine's Tuning.SidePanelMaxCols: the widest a side column gets
+export const SIDE_MIN_COLS = 30;  // the engine's Tuning.SidePanelMinCols: the narrowest, below which neither column shows
+export const SIDE_GAP_COLS = 2;   // the engine's Tuning.SideGapCols: the gap between a side column and the field
 export const GEAR_PX = 44;        // the gear's touch target, in CSS pixels
-const SIDE_MIN_PX = 260;          // the narrowest right margin that takes the how-to-play panel
 
-// Where the gear and the widescreen side panel go, in page pixels, from the terminal's grid: cols x rows cells of cellW x cellH
-// from (left, top), in a window `width` wide. The field sits as the engine puts it (FieldLayout). With room right of the field
-// the gear sits there beside the Stage readout and, with more room, the panel below it; otherwise the gear goes into the HUD
-// just left of the longest readout ("STAGE 10") and there is no panel.
-export function chromeLayout({ cols, rows, cellW, cellH, left, top, width }) {
+// Where the gear and the how-to-play panel go, in page pixels, from the terminal's grid: cols x rows cells of cellW x cellH
+// from (left, top). The field sits as the engine puts it (FieldLayout). The gear is always on the field, in the HUD row just
+// left of the longest readout ("STAGE 10"). The panel mirrors the engine's feed log (FieldLayout.PanelCols): the same cell
+// width, the same gap from the field, the same rows (2 to rows - 2); with too little margin both go and there is no panel.
+export function chromeLayout({ cols, rows, cellW, cellH, left, top }) {
   const pc = Math.min(cols, FIELD_MAX_COLS) & ~1;
   const c0 = Math.floor((cols - pc) / 2);
   const fieldRight = left + (c0 + pc) * cellW;
-  const room = width - fieldRight;
-  let gear;
-  if (room >= GEAR_PX + 8) {
-    const s = Math.max(28, Math.min(40, Math.round(2 * cellH)));
-    gear = { x: fieldRight + 4, y: top, w: s, h: s, size: Math.max(GEAR_PX, s), inField: false };
-  } else {
-    const stageLeft = left + (c0 + pc - 1 - 'STAGE 10'.length) * cellW;
-    const h = Math.round(cellH), w = Math.round(cellH * 1.6);
-    gear = { x: stageLeft - cellW - w, y: top, w, h, size: GEAR_PX, inField: true };
-  }
+  const stageLeft = left + (c0 + pc - 1 - 'STAGE 10'.length) * cellW;
+  const h = Math.round(cellH), w = Math.round(cellH * 1.6);
+  const gear = { x: stageLeft - 2 * cellW - w, y: top, w, h, size: GEAR_PX, inField: true };
+  const panelCols = Math.min(SIDE_MAX_COLS, c0 - SIDE_GAP_COLS - 1);
   let side = null;
-  if (room >= SIDE_MIN_PX) {
-    const y = top + gear.h + 16;
-    side = { x: fieldRight + 16, y, w: Math.min(room - 32, 440), h: top + rows * cellH - y - 16 };
+  if (panelCols >= SIDE_MIN_COLS) {
+    const y = top + 2 * cellH;
+    side = { x: fieldRight + SIDE_GAP_COLS * cellW, y, w: panelCols * cellW, h: top + (rows - 1) * cellH - y, cols: panelCols };
   }
   return { fieldRight, gear, side };
 }

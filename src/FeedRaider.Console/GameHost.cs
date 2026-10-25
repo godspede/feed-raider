@@ -11,8 +11,8 @@ static class GameHost
         string? feed = Feeds.Resolve(feedName);
         if (feed is null) { Console.Error.WriteLine("unknown --feed (discover, foryou, random or an at:// feed generator uri)"); return 2; }
         Console.OutputEncoding = new UTF8Encoding(false);
-        using var stdout = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false), 1 << 16) { AutoFlush = false };
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        using var stdout = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false), StdoutBuffer) { AutoFlush = false };
+        using var http = new HttpClient { Timeout = HttpTimeout };
         http.DefaultRequestHeaders.UserAgent.ParseAdd("feed-raider/0.1 (read-only)");
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
@@ -30,20 +30,25 @@ static class GameHost
         stdout.Write("\x1b[?1049h\x1b[?25l\x1b[2J"); stdout.Flush();
         var tasks = new List<Task> { runner.RunAsync(cts.Token), RaiderFeeds.WingmenAsync(game, primary, fallback, feed, cts.Token, onFallback: m => { lock (game) game.Say(m); }) };
         if (darkness) tasks.Add(RaiderFeeds.DarknessAsync(game, http, cts.Token).ContinueWith(_ => { }, CancellationToken.None));
-        var keys = Task.Run(() => KeyLoop(game, cts));
-        try { await Task.WhenAny(Task.WhenAll(tasks), keys); cts.Cancel(); await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(2)); }
-        catch { }
-        stdout.Write("\x1b[0m\x1b[?25h\x1b[?1049l"); stdout.Flush();
+        var keys = Task.Factory.StartNew(() => KeyLoop(game, cts), TaskCreationOptions.LongRunning);
+        try
+        {
+            await Task.WhenAny(Task.WhenAll(tasks), keys);
+            cts.Cancel();
+            await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException) { }
+        finally { stdout.Write("\x1b[0m\x1b[?25h\x1b[?1049l"); stdout.Flush(); }
         if (seconds is not null) Console.Error.WriteLine($"score {game.Score}, {game.LiveWavesSpawned} live waves of {game.WavesSpawned}, {runner.Fps:F0} fps, {runner.FrameMs:F2} ms/frame");
         return 0;
     }
 
     // A terminal reports presses but never releases, so each press holds for KeyHoldMs (see InputState.Press).
+    // ReadKey blocks, so a quit from elsewhere leaves this loop parked on a background thread until the process exits.
     private static void KeyLoop(RaiderGame game, CancellationTokenSource cts)
     {
         while (!cts.IsCancellationRequested)
         {
-            if (!Console.KeyAvailable) { Thread.Sleep(5); continue; }
             var k = Console.ReadKey(true);
             lock (game)
             {
@@ -64,9 +69,16 @@ static class GameHost
         }
     }
 
-    private static (int, int) Size()
+    public const int StdoutBuffer = 1 << 16;
+    public static readonly TimeSpan HttpTimeout = TimeSpan.FromSeconds(20);
+
+    private const int FallbackCols = 80, FallbackRows = 24;
+
+    /// <summary>The window size, or 80x24 when there is no console to ask (output redirected); the game still renders to a pipe.</summary>
+    public static (int, int) Size()
     {
-        try { return (Console.WindowWidth, Console.WindowHeight); } catch { return (80, 24); }
+        try { return (Console.WindowWidth, Console.WindowHeight); }
+        catch (IOException) { return (FallbackCols, FallbackRows); }
     }
 
     private sealed class Sink(StreamWriter w) : IFrameSink

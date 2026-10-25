@@ -22,6 +22,9 @@ public static partial class Host
     [JSImport("showError", "main.js")]
     private static partial void ShowError(string message);
 
+    [JSImport("announce", "main.js")]
+    private static partial void Announce(string message);
+
     [JSImport("termBusy", "main.js")]
     private static partial bool TermBusy();
 
@@ -48,9 +51,7 @@ public static partial class Host
     }
 
     [JSExport]
-    public static async Task Start(string handle, string darkness) => await Spectate(handle, darkness);
-
-    private static async Task Spectate(string handle, string darkness)
+    public static async Task Start(string handle, string darkness)
     {
         _cts?.Cancel();
         _cts = new CancellationTokenSource();
@@ -64,7 +65,7 @@ public static partial class Host
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            ShowError(ex.Message);
+            ShowError(Plain.Feed(ex, "@" + handle));
         }
     }
 
@@ -90,6 +91,7 @@ public static partial class Host
         game.AvatarWanted = post => _ = AvatarAsync(game, post);
         game.RecordToBeat = Safe(BestScore);
         game.OnBest = score => Safe(() => SaveBestScore(score));
+        game.Said = message => Safe(() => Announce(message));
         game.Music = new MusicDirector(SafeCue);
         game.Sfx = new SfxBus((name, pan, step, size) => Safe(() => SfxPlay(name, pan, step, size)));
         lock (game) _game = game;
@@ -102,7 +104,7 @@ public static partial class Host
         if (plan is null) { ShowError("unknown feed (following, discover, foryou or an at:// feed generator uri)"); return; }
         game.PlainOnly = plan.FeedUri == Feeds.Random;
         var runner = new RaiderRunner(game, () => (_cols, _rows), new JsSink()) { ShowFps = showFps, Adaptive = adaptive, Pause = pause };
-        var tasks = new List<Task> { runner.RunAsync(cts.Token, TermBusy), RaiderFeeds.WingmenAsync(game, plan.Primary, plan.Fallback, plan.FeedUri, cts.Token, onFallback: ShowError, sourceName: plan.Name, onTrouble: ShowError, pause: pause) };
+        var tasks = new List<Task> { runner.RunAsync(cts.Token, TermBusy), RaiderFeeds.WingmenAsync(game, plan.Primary, plan.Fallback, plan.FeedUri, cts.Token, onFallback: ShowError, sourceName: plan.Name, onTrouble: ShowError, pause: pause, onStatus: message => { lock (game) game.Say(message); }) };
         if (darkness != "off") tasks.Add(RaiderFeeds.DarknessAsync(game, http, cts.Token, pause: pause));
         try { await Task.WhenAll(tasks); }
         catch (OperationCanceledException) { }
@@ -111,8 +113,8 @@ public static partial class Host
 
     // Music and sound effects are never allowed to break the game: a JS error from a cue or the best-score store is dropped.
     private static void SafeCue(string cue) => Safe(() => MusicCue(cue));
-    private static void Safe(Action act) { try { act(); } catch { } }
-    private static int Safe(Func<int> get) { try { return get(); } catch { return 0; } }
+    private static void Safe(Action act) { try { act(); } catch (JSException) { } }
+    private static int Safe(Func<int> get) { try { return get(); } catch (JSException) { return 0; } }
 
     // The avatar is fetched and downsampled to 8x8 in JS (canvas); a CORS failure just leaves the tinted fallback.
     private static async Task AvatarAsync(RaiderGame game, FeedPost post)
@@ -124,7 +126,7 @@ public static partial class Host
             var px = csv.Split(',').Select(uint.Parse).ToArray();
             if (px.Length == 64) lock (game) game.SetAvatar(post.AuthorDid, px);
         }
-        catch { }
+        catch (Exception ex) when (ex is JSException or FormatException or OverflowException) { }
     }
 
     /// <summary>The page's tab went to the background (or came back): the game loop, feed paging and both sockets stop, then resume.</summary>

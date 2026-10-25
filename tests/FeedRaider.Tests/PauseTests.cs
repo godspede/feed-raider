@@ -71,7 +71,7 @@ public class PauseTests
         var runner = new RaiderRunner(game, () => (60, 20), new CountSink()) { Adaptive = false, Pause = gate };
         using var cts = new CancellationTokenSource();
         var run = runner.RunAsync(cts.Token);
-        await Task.Delay(300);
+        await Wait.UntilAsync(() => { lock (game) return game.Tick > 3; }, "the loop to run");
 
         gate.Hold("menu", true);
         await Task.Delay(100);
@@ -81,7 +81,7 @@ public class PauseTests
         Assert.Equal(atPause, whilePaused);
 
         gate.Hold("menu", false);
-        await Task.Delay(300);
+        await Wait.UntilAsync(() => { lock (game) return game.Tick > whilePaused; }, "the loop to carry on");
         long after; lock (game) after = game.Tick;
         Assert.True(after > whilePaused, "the run goes on once the menu closes");
 
@@ -108,9 +108,7 @@ public class PauseTests
         using var cts = new CancellationTokenSource();
         var run = runner.RunAsync(cts.Token);
 
-        await Task.Delay(400);
-        long ran; lock (game) ran = game.Tick;
-        Assert.True(ran > 3, $"the loop runs before the pause ({ran} ticks)");
+        await Wait.UntilAsync(() => { lock (game) return game.Tick > 3; }, "the loop to run before the pause");
 
         gate.Pause();
         await Task.Delay(100);   // let a tick in flight finish
@@ -122,7 +120,7 @@ public class PauseTests
         Assert.Equal(framesAtPause, sink.Frames);
 
         gate.Resume();
-        await Task.Delay(500);
+        await Wait.UntilAsync(() => { lock (game) return game.Tick - whilePaused >= 3; }, "the loop to resume");
         long after; lock (game) after = game.Tick;
         Assert.InRange(after - whilePaused, 3, 40);   // resumed, and did not replay the 0.5 s it sat out in one burst
 
@@ -144,8 +142,7 @@ public class PauseTests
         Assert.Equal(0, feed.Calls);
 
         gate.Resume();
-        await Task.Delay(300);
-        Assert.True(feed.Calls > 0, "paging starts once resumed");
+        await Wait.UntilAsync(() => feed.Calls > 0, "paging to start");
 
         cts.Cancel();
         await run.WaitAsync(TimeSpan.FromSeconds(10));

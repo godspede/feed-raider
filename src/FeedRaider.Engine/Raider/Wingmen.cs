@@ -74,7 +74,7 @@ public sealed class WingQueue
     public bool Offer(FeedPost p)
     {
         if (!Eligible(p, SignedOut) || _seen.Contains(p.Uri) || _q.Count >= Tuning.WingQueueMax) return false;
-        if (_seen.Count > 4000) _seen.Clear();
+        if (_seen.Count > Tuning.SeenPostsMax) _seen.Clear();
         _seen.Add(p.Uri);
         _q.Enqueue(p);
         return true;

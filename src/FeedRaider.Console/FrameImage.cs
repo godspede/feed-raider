@@ -4,8 +4,8 @@ using TUImation;
 
 /// <summary>
 /// Rasterises a <see cref="Screen"/> to a PNG so a frame can be judged without a terminal or a browser: each cell is 8x16
-/// pixels, quadrant glyphs become four 4x8 blocks, text uses a built-in 5x8 bitmap font. The Ppm path in TUImation does the
-/// same job for canvases; this one needs no python (tools/ppm2png.py) because the PNG is written directly.
+/// pixels, quadrant glyphs become four 4x8 blocks, text uses a built-in 5x8 bitmap font. The PNG is written directly, so no
+/// converter is needed.
 /// </summary>
 static class FrameImage
 {

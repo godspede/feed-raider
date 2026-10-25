@@ -256,7 +256,7 @@ public class EnemyKindsTests
             foreach (var e in g.Enemies) h = (h ^ (ulong)(long)Math.Round(e.X * 100 + e.Y * 7919)) * 1099511628211UL;
             h = (h ^ (ulong)g.Bullets.Count) * 1099511628211UL;
         }
-        Assert.Equal("4300/16/1/7/2/8/17/8debd48e319d9a18",
+        Assert.Equal("4300/16/1/7/2/8/17/e33fdc2be4fb0502",
             $"{g.Score}/{g.Kills}/{g.Deaths}/{g.WavesSpawned}/{g.LiveWavesSpawned}/{g.Enemies.Count}/{g.Bullets.Count}/{h:x16}");
     }
 
@@ -382,7 +382,7 @@ public class EnemyKindsTests
         for (int i = 0; i < 600 && g.Enemies.Count(e => e.Live) < 5; i++) g.Step();
         var live = g.Enemies.Where(e => e.Live).ToList();
         Assert.Contains(live, e => e.Kind >= EnemyKind.Mine);
-        Assert.All(live, e => Assert.NotNull(e.Badge));
+        Assert.All(live, e => Assert.NotNull(e.Header));
         Assert.Single(live, e => e.Kind == EnemyKind.Carrier);
     }
 
@@ -410,7 +410,7 @@ public class EnemyKindsTests
     {
         var g = new RaiderGame(5) { LoggedIn = true, MaxWings = 1 };
         g.SetLayout(FieldLayout.Compute(48, 60));
-        g.OfferPost(new FeedPost("at://did:plc:t1/app.bsky.feed.post/1", "cid1", "did:plc:t1", "t1.example.com",
+        g.Queue.Offer(new FeedPost("at://did:plc:t1/app.bsky.feed.post/1", "cid1", "did:plc:t1", "t1.example.com",
             "this is a perfectly ordinary post with enough words in it to run well past three short lines of comm text", 10, 0, 0, null, null));
         for (int i = 0; i < 3000 && g.Comms.Speaker is null; i++) g.Step();
         var sp = g.Comms.Speaker!;
@@ -429,5 +429,42 @@ public class EnemyKindsTests
         var box = CommPainter.Box(sp, g.Layout);        // still pinned under the ship, not pushed aside by the banner
         Assert.Equal(g.Layout.Col0 + (int)Math.Floor(sp.X / 2) - WingComms.CommW(sp) / 2, box.C);
         Assert.Contains(sp.HandleTag[..6], Row(scr, box.R + 1));   // the new enemies cover the rest of it
+    }
+
+    [Fact]
+    public void A_diver_in_its_windup_draws_a_dotted_aim_line_to_its_locked_spot()
+    {
+        // the diver's sprite is 16 tall, so the line starts at y 28 and runs to y 80 in dots three pixels apart, at 28, 31, 34 and so on, and
+        // two pixel rows to a cell, so the dots land on screen rows 14, 15, 17, 18 ... and the cross at the end on row 40
+        int[] dots = [14, 15, 17, 18, 20, 21, 23, 24, 26, 27, 29, 30, 32, 33, 35, 36, 38, 39, 40];
+        Assert.Equal(dots, AimRows(EnemyKind.Diver));
+    }
+
+    [Fact]
+    public void A_diver_draws_no_aim_line_before_its_windup_or_once_it_dashes()
+    {
+        // the sprite's own lime sits on rows 9 to 11; nothing below it
+        Assert.Equal([9, 10, 11], AimRows(EnemyKind.Diver, windup: 0));
+        Assert.Equal([9, 10, 11], AimRows(EnemyKind.Diver, dashing: true));
+    }
+
+    [Fact]
+    public void A_turret_in_its_windup_closes_a_reticle_but_draws_no_aim_line()
+    {
+        Assert.Empty(AimRows(EnemyKind.Turret));
+    }
+
+    /// <summary>A diver winding up at (40, 20) with its aim locked straight down to (40, 80), rendered; the screen rows that carry the aim colour in its column.</summary>
+    private static List<int> AimRows(EnemyKind kind, int windup = 10, bool dashing = false)
+    {
+        var g = NewGame();
+        g.Enemies.Clear(); g.Bullets.Clear(); g.Particles.Clear(); g.Rings.Clear();
+        var e = g.SpawnKind(kind, 40.0 / g.PW);
+        e.X = 40; e.Y = 20; e.Windup = windup; e.Dashing = dashing; e.Grace = 0; e.AimX = 40; e.AimY = 80;
+        var scr = new Screen(120, 46);
+        new RaiderView().Render(g, scr);
+        uint lime = Art.DiverLime;
+        int col = g.Layout.Col0 + 20;
+        return Enumerable.Range(0, scr.Rows).Where(r => scr.Fg[r * scr.Cols + col] == lime || scr.Bg[r * scr.Cols + col] == lime).ToList();
     }
 }

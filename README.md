@@ -4,7 +4,11 @@ A vertical shoot-'em-up that plays like scrolling Bluesky. It runs in your brows
 
 **Play: <https://feed-raider.famelos.com/>**
 
-Spam and rude replies attack in waves. Posts from your Bluesky feed fly in as wingmen and talk to you. Fly to one and press like to like the post for real and get a power-up. If the author replied to it in their own thread, the reply opens in the same bubble under the post, and the next press likes that one, so you can read the thread as long as it goes on. Signed out, the press plays the same effects and opens the next post but writes nothing; the first one says to sign in, later ones stay quiet. A post with 1000+ likes drops a screen-clearing bomb.
+It is for Bluesky users who would like their feed to fly at them, and for anyone who wants a small arcade game made of real posts. Playing in the browser needs no install. To run the terminal version you need the .NET 10 SDK and a truecolor terminal of about 80x24 or larger:
+
+    git clone https://github.com/godspede/feed-raider && cd feed-raider && dotnet run --project src/FeedRaider.Console
+
+Spam and rude replies attack in waves. The ones that carry text (a spam carrier, a rude gunship) speak in the same comm box the wingmen use, but above them, in red on black, with the label (SPAM, RUDE, the labeler's own word, or HIDDEN REPLY) where a wingman's name would be. Posts from your Bluesky feed fly in as wingmen and talk to you. Fly to one and press like to like the post for real and get a power-up. If the author replied to it in their own thread, the reply opens in the same bubble under the post, and the next press likes that one, so you can read the thread as long as it goes on. Signed out, the press plays the same effects and opens the next post but writes nothing; the first one says to sign in, later ones stay quiet. A post with 1000+ likes drops a screen-clearing bomb.
 
 The game gets harder in stages, shown at the top right. A stage lasts about 50 seconds of flying, less if you shoot a lot. Each new stage brings more enemies, tougher ones and faster bullets, up to stage 10, and stages 2 to 5 each bring a new kind of enemy, named on screen when it arrives:
 
@@ -26,7 +30,7 @@ Losing your last heart keeps the stage you reached and only sets back half your 
 | Pause | Esc, or the gear beside the stage: the pause menu holds the sound controls, sign-in and the way back to the main menu |
 | Sound | M mutes all sound; the volume slider is in the pause menu |
 
-Address options: `?sfx=off` turns the sound effects off, `?music=off` the music. `?mode=spectator` shows a watch-only crowd view of a handle's feed. `?debug=feed` lists the first posts of a feed with a like button each, for checking the sign-in. `?stage=6` starts at a later stage, for trying out the later enemies.
+Address options: `?sfx=off` turns the sound effects off, `?music=off` the music. `?mode=spectator` shows a watch-only crowd view of a handle's feed. The spectator view has its own cast: the people the handle follows are guys, and the stranger posts drawn from the label stream are monsters, where the game has wingmen and enemies. `?debug=feed` lists the first posts of a feed with a like button each, for checking the sign-in. `?stage=6` starts at a later stage, for trying out the later enemies.
 
 ## Signing in
 

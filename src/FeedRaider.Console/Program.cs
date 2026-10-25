@@ -30,6 +30,9 @@ for (int i = 0; i < args.Length; i++)
         case "--out" when i + 1 < args.Length: outDir = args[++i]; break;
         case "--size" when i + 1 < args.Length && args[i + 1].Split('x') is [var fc, var fr] && int.TryParse(fc, out fcols) && int.TryParse(fr, out frows): i++; break;
         case "--every" when i + 1 < args.Length && int.TryParse(args[i + 1], out every): i++; break;
+        case "--help" or "-h":
+            Console.WriteLine(Usage);
+            return 0;
         default:
             Console.Error.WriteLine(Usage);
             return 2;
@@ -52,31 +55,22 @@ if (handle is null)
 }
 
 Console.OutputEncoding = new UTF8Encoding(false);
-using var stdout = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false), 1 << 16) { AutoFlush = false };
+using var stdout = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false), GameHost.StdoutBuffer) { AutoFlush = false };
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 if (seconds is { } secs) cts.CancelAfter(TimeSpan.FromSeconds(secs));
 QuitWatcher.Start();
-var quitPoll = Task.Run(async () =>
+var quitWait = Task.Run(() =>
 {
-    while (!cts.IsCancellationRequested)
-    {
-        if (QuitWatcher.Quit) { cts.Cancel(); return; }
-        await Task.Delay(50);
-    }
+    WaitHandle.WaitAny([QuitWatcher.Signal.WaitHandle, cts.Token.WaitHandle]);
+    if (QuitWatcher.Quit) cts.Cancel();
 });
 
-(int, int) Size()
-{
-    try { return (Console.WindowWidth, Console.WindowHeight); }
-    catch { return (80, 24); }
-}
-
 var sink = new ConsoleSink(stdout);
-using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+using var http = new HttpClient { Timeout = GameHost.HttpTimeout };
 http.DefaultRequestHeaders.UserAgent.ParseAdd("feed-raider/0.1 (read-only spectator)");
-var spectator = new Spectator(http, Size, sink) { Hint = "q quits", Darkness = darkness, DarknessDemo = demo };
+var spectator = new Spectator(http, GameHost.Size, sink) { Hint = "q quits", Darkness = darkness, DarknessDemo = demo };
 
 stdout.Write("\x1b[?1049h\x1b[?25l\x1b[2J");
 stdout.Flush();

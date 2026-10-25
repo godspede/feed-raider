@@ -28,7 +28,7 @@ public class CommTests
     private static RaiderGame TwoWingmen()
     {
         var g = NewGame();
-        g.OfferPost(Post(1)); g.OfferPost(Post(2));
+        g.Queue.Offer(Post(1)); g.Queue.Offer(Post(2));
         RunUntil(g, () => g.Wings.Count == 2 && g.Comms.Speaker is not null);
         return g;
     }
@@ -92,7 +92,7 @@ public class CommTests
     {
         var g = NewGame();
         string text = string.Join(' ', Enumerable.Repeat("word wordier wordiest", 20))[..300];
-        g.OfferPost(Post(1, text));
+        g.Queue.Offer(Post(1, text));
         RunUntil(g, () => g.Comms.Speaker is not null);
         var w = g.Comms.Speaker!;
         Assert.Equal(WingComms.MaxTextW, w.CommTextW);
@@ -109,7 +109,7 @@ public class CommTests
     {
         var g = NewGame();
         string text = string.Join(' ', Enumerable.Repeat("sixteencharwords", 18))[..300];
-        g.OfferPost(Post(1, text));
+        g.Queue.Offer(Post(1, text));
         RunUntil(g, () => g.Comms.Speaker is not null);
         var w = g.Comms.Speaker!;
         Assert.True(WingComms.Pages(w) > 1);
@@ -129,12 +129,12 @@ public class CommTests
         Assert.Equal(WingComms.MinTextW, WingComms.TextWidth(30));
         Assert.Equal(WingComms.MaxTextW, WingComms.TextWidth(64));
         var g = NewGame(30, 40);
-        g.OfferPost(Post(1));
+        g.Queue.Offer(Post(1));
         RunUntil(g, () => g.Comms.Speaker is not null);
         var w = g.Comms.Speaker!;
         Assert.True(WingComms.CommW(w) <= 30);
         var g2 = NewGame();
-        g2.OfferPost(Post(1, "just a short little post here"));
+        g2.Queue.Offer(Post(1, "just a short little post here"));
         RunUntil(g2, () => g2.Comms.Speaker is not null);
         Assert.Equal(WingComms.CommChrome + 1, WingComms.CommH(g2.Comms.Speaker!));
     }
@@ -143,7 +143,7 @@ public class CommTests
     public void A_short_post_keeps_its_words_without_an_ellipsis()
     {
         var g = NewGame();
-        g.OfferPost(Post(1, "just a short little post here"));
+        g.Queue.Offer(Post(1, "just a short little post here"));
         RunUntil(g, () => g.Comms.Speaker is not null);
         Assert.DoesNotContain(g.Comms.Speaker!.CommLines, l => l.Contains('…'));
     }
@@ -192,14 +192,12 @@ public class CommTests
         Assert.DoesNotContain("\u2665", Row(phone, 4));   // \u2665 heart suit
         var wide = new Screen(130, 46);
         var gw = NewGame(130, 46);
-        gw.OfferPost(Post(1)); gw.OfferPost(Post(2));
+        gw.Queue.Offer(Post(1)); gw.Queue.Offer(Post(2));
         RunUntil(gw, () => gw.Wings.Count == 2 && gw.Comms.Speaker is not null);
         view.Render(gw, wide);
         var s2 = gw.Comms.Speaker!;
-        int mx = gw.Layout.Col0 - 26 - 2;
-        int top = Enumerable.Range(2, 40).First(r => wide.CharAt(mx, r) == '▌' && wide.Fg[r * wide.Cols + mx] == s2.Accent);
-        Assert.Equal('▌', wide.CharAt((gw.Layout.Col0 - 26 - 2), top));
-        Assert.Equal(s2.Accent, wide.Fg[top * wide.Cols + (gw.Layout.Col0 - 26 - 2)]);
+        int mx = gw.Layout.Col0 - gw.Layout.PanelCols - 2;
+        Assert.Contains(Enumerable.Range(2, 40), r => wide.CharAt(mx, r) == '▌' && wide.Fg[r * wide.Cols + mx] == s2.Accent);
     }
 
     [Fact]

@@ -153,6 +153,7 @@ public static class RaiderFeeds
     }
 
     private const int RepeatWaitMs = 4000;
+    private const int MaxBackoffMs = 15_000, RetryAfterUnexpectedMs = 8000, QueueFullWaitMs = 1000, EmptyPageWaitMs = 5000, NextPageWaitMs = 400;
 
     /// <summary>The one like call: the host's session writes it, then the game says "liked @author" or why it failed.</summary>
     public static async Task LikeAsync(RaiderGame game, IActions actions, FeedPost post, CancellationToken ct = default)
@@ -175,7 +176,7 @@ public static class RaiderFeeds
     {
         FeedPost? next = null;
         try { next = await threads.NextAsync(post, ct).WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), ct).ConfigureAwait(false); }
-        catch (Exception) { }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or JsonException or TimeoutException or OperationCanceledException) { }
         lock (game)
         {
             if (next is null) game.ThreadEnded(post.Uri); else game.ThreadOpened(post.Uri, next);
@@ -183,8 +184,8 @@ public static class RaiderFeeds
     }
 
     /// <summary>Keeps the wingman queue topped up from <paramref name="primary"/> (falling back to <paramref name="fallback"/> when it
-    /// throws). Fetches a page only when the queue runs low. Every post passes through a <see cref="FeedInterleaver"/>.</summary>
-    public static async Task WingmenAsync(RaiderGame game, IFeedSource primary, IFeedSource? fallback, string feedUri, CancellationToken ct, int lowWater = 4, Action<string>? onFallback = null, int backoffMs = 2000, int failoverMs = 30_000, string sourceName = "the feed", Action<string>? onTrouble = null, PauseGate? pause = null)
+    /// throws). <paramref name="onStatus"/> hears "loading" at the start and "empty" when a page has no posts. Fetches a page only when the queue runs low. Every post passes through a <see cref="FeedInterleaver"/>.</summary>
+    public static async Task WingmenAsync(RaiderGame game, IFeedSource primary, IFeedSource? fallback, string feedUri, CancellationToken ct, int lowWater = 4, Action<string>? onFallback = null, int backoffMs = 2000, int failoverMs = 30_000, string sourceName = "the feed", Action<string>? onTrouble = null, PauseGate? pause = null, Action<string>? onStatus = null)
     {
         string? cursor = null;
         bool usingFallback = false;
@@ -192,6 +193,8 @@ public static class RaiderFeeds
         lock (game) game.Queue.SignedOut = !game.LoggedIn;
         long stuckSince = 0, failingSince = 0;
         int failures = 0;
+        bool toldEmpty = false;
+        onStatus?.Invoke(FeedStatus.Loading);
         try
         {
             while (!ct.IsCancellationRequested)
@@ -201,17 +204,17 @@ public static class RaiderFeeds
                 lock (game)
                 {
                     bool moved = false;
-                    while (game.Queue.Count < Tuning.WingQueueMax && mix.TryTake(out var next)) { game.OfferPost(next); moved = true; }
+                    while (game.Queue.Count < Tuning.WingQueueMax && mix.TryTake(out var next)) { game.Queue.Offer(next); moved = true; }
                     if (moved) stuckSince = 0;
                     queued = game.Queue.Count;
                     // Only one author is buffered: pull more from others first; repeat after a short wait.
                     if (queued < lowWater && mix.Count > 0)
                     {
                         if (stuckSince == 0) stuckSince = Environment.TickCount64;
-                        else if (Environment.TickCount64 - stuckSince >= RepeatWaitMs && mix.TryTake(out var rep, allowRepeat: true)) { game.OfferPost(rep); stuckSince = 0; queued = game.Queue.Count; }
+                        else if (Environment.TickCount64 - stuckSince >= RepeatWaitMs && mix.TryTake(out var rep, allowRepeat: true)) { game.Queue.Offer(rep); stuckSince = 0; queued = game.Queue.Count; }
                     }
                 }
-                if (queued >= lowWater) { await Task.Delay(1000, ct).ConfigureAwait(false); continue; }
+                if (queued >= lowWater) { await Task.Delay(QueueFullWaitMs, ct).ConfigureAwait(false); continue; }
                 FeedPage page;
                 try { page = await (usingFallback ? fallback! : primary).GetPageAsync(feedUri, cursor, 30, ct).ConfigureAwait(false); }
                 catch (OperationCanceledException) { throw; }
@@ -241,14 +244,22 @@ public static class RaiderFeeds
                         onFallback?.Invoke($"{Plain.Feed(ex, sourceName)}; showing Discover");
                         continue;
                     }
-                    await Task.Delay(Math.Min(15_000, backoffMs << Math.Min(failures - 1, 4)), ct).ConfigureAwait(false);
+                    await Task.Delay(Math.Min(MaxBackoffMs, backoffMs << Math.Min(failures - 1, 4)), ct).ConfigureAwait(false);
                     continue;
                 }
-                catch { await Task.Delay(8000, ct).ConfigureAwait(false); continue; }
+                catch (Exception ex)
+                {
+                    // the fallback failing too: say so once, then keep retrying it
+                    if (failures++ == 0) onTrouble?.Invoke($"{Plain.Feed(ex, "Discover")}; trying again");
+                    await Task.Delay(RetryAfterUnexpectedMs, ct).ConfigureAwait(false);
+                    continue;
+                }
                 failures = 0;
+                if (page.Posts.Count == 0) { if (!toldEmpty) onStatus?.Invoke(FeedStatus.Empty); toldEmpty = true; }
+                else toldEmpty = false;
                 mix.Add(page.Posts);
                 cursor = page.Cursor;
-                await Task.Delay(page.Posts.Count == 0 ? 5000 : 400, ct).ConfigureAwait(false);
+                await Task.Delay(page.Posts.Count == 0 ? EmptyPageWaitMs : NextPageWaitMs, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) { }
@@ -328,7 +339,9 @@ public sealed class RaiderRunner
     private readonly Func<(int Cols, int Rows)> _size;
     private readonly IFrameSink _sink;
     private readonly Screen[] _screens = new Screen[1];
-    private readonly DiffEncoder _enc = new();
+    // snapped, so a glyph-atlas renderer sees a bounded set of colours (see ColourSnap)
+    private readonly DiffEncoder _enc = DiffEncoder.Snapped();
+    internal DiffEncoder Encoder => _enc;
 
     /// <summary>Frames drawn per second over the last second, and the mean milliseconds one step + render + encode took.</summary>
     public double Fps { get; private set; }
@@ -417,4 +430,11 @@ public sealed class RaiderRunner
         }
         catch (OperationCanceledException) { }
     }
+}
+
+/// <summary>What the feed loader says about its own state, for the host to show and announce.</summary>
+public static class FeedStatus
+{
+    public const string Loading = "loading your feed…";
+    public const string Empty = "no posts to show";
 }

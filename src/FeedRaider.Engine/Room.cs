@@ -30,6 +30,7 @@ public sealed class Room
 {
     public const long BubbleMs = 5000;
     private const int MaxPending = 3;
+    private const int DefaultCols = 80, DefaultPixelHeight = 46;
 
     private sealed class Guy
     {
@@ -46,15 +47,13 @@ public sealed class Room
     private readonly Dictionary<string, Guy> _guys = new(StringComparer.Ordinal);
     private readonly List<Guy> _order;
     private readonly List<Guy> _slots = [];
-    private int _cols = 80, _pixelHeight = 46;
+    private int _cols = DefaultCols, _pixelHeight = DefaultPixelHeight;
     private (double X, double Y)[] _homes = [];
 
     public string Status { get; set; } = "";
-    /// <summary>The forces of darkness. Always present; it stays empty unless something calls <see cref="Haunt"/>.</summary>
+    /// <summary>The forces of darkness. Always present; it stays empty unless something calls <see cref="Darkness.Offer"/>.</summary>
     public Darkness Dark { get; } = new();
 
-    /// <summary>Summon a monster from an anonymous labelled post.</summary>
-    public void Haunt(DarkPost post) => Dark.Offer(post);
     public int GuyCount => _guys.Count;
 
     public Room(IEnumerable<Follow> follows)
@@ -64,7 +63,7 @@ public sealed class Room
                 _guys[f.Did] = new Guy { Follow = f, Look = Look.From(f.Did, f.Handle) };
         // sorted by DID so every client gives everybody the same seat
         _order = _guys.Values.OrderBy(g => g.Follow.Did, StringComparer.Ordinal).ToList();
-        SetSize(80, 46);
+        SetSize(DefaultCols, DefaultPixelHeight);
     }
 
     public bool Contains(string did) => _guys.ContainsKey(did);

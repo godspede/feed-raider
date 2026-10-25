@@ -23,6 +23,38 @@ public sealed class Surface
         return Pack((int)(ar + (br - ar) * t), (int)(ag + (bg - ag) * t), (int)(ab + (bb - ab) * t));
     }
 
+    /// <summary>The WCAG contrast ratio for body text.</summary>
+    public const double BodyTextContrast = 4.5;
+
+    /// <summary><paramref name="fg"/>, moved toward white (or black, on a light <paramref name="bg"/>) only as far as it takes
+    /// to read at <see cref="BodyTextContrast"/>:1 against <paramref name="bg"/>.</summary>
+    public static uint Legible(uint fg, uint bg)
+    {
+        // asked every frame for a handful of pairs, so remembered: the interpreter in the browser is slow at Math.Pow
+        ulong key = (ulong)fg << 32 | bg;
+        if (LegibleSeen.TryGetValue(key, out uint seen)) return seen;
+        uint pole = Luminance(bg) > 0.18 ? 0u : 0xffffffu;
+        uint c = fg;
+        for (int i = 1; i <= 20 && Contrast(c, bg) < BodyTextContrast; i++) c = Mix(fg, pole, i / 20.0);
+        if (LegibleSeen.Count > 4096) LegibleSeen.Clear();
+        LegibleSeen[key] = c;
+        return c;
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, uint> LegibleSeen = new();
+
+    public static double Contrast(uint a, uint b)
+    {
+        double la = Luminance(a), lb = Luminance(b);
+        return (Math.Max(la, lb) + 0.05) / (Math.Min(la, lb) + 0.05);
+    }
+
+    private static double Luminance(uint c)
+    {
+        static double Lin(uint v) { double s = v / 255.0; return s <= 0.03928 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4); }
+        return 0.2126 * Lin(c >> 16 & 255) + 0.7152 * Lin(c >> 8 & 255) + 0.0722 * Lin(c & 255);
+    }
+
     public void Fill(uint c) => Array.Fill(P, c);
 
     public void Set(int x, int y, uint c)

@@ -324,7 +324,7 @@ function rearm() {
 function changed() {
   if (masterNode) masterNode.gain.setTargetAtTime(master.gain, ctx.currentTime, 0.03);
   else for (const s of slots) if (s.el) setLevel(s, s.level);
-  for (const fn of listeners) { try { fn(master); } catch { /* a listener's problem */ } }
+  for (const fn of listeners) { try { fn(master); } catch { /* one listener's failure must not stop the others hearing the change */ } }
   syncUi();
 }
 
@@ -345,7 +345,7 @@ export function setMuted(m) {
 export const toggleMute = () => setMuted(!muted);
 
 /** Dips the music (not the effects) by `db` for a big sound: 40 ms down, held `holdMs`, then 400 ms back up. */
-export function duck(db = -6, holdMs = 200) {
+export function duck(db, holdMs = 200) {
   if (!musicBus || !ctx) return;
   try {
     const g = musicBus.gain, t = ctx.currentTime, low = 10 ** (Math.min(0, db) / 20);
@@ -354,7 +354,7 @@ export function duck(db = -6, holdMs = 200) {
     g.linearRampToValueAtTime(low, t + 0.04);
     g.setValueAtTime(low, t + 0.04 + holdMs / 1000);
     g.linearRampToValueAtTime(1, t + 0.04 + holdMs / 1000 + 0.4);
-  } catch { /* a missed duck is not worth a warning */ }
+  } catch { /* best effort: a missed duck leaves the music at full volume, which harms nothing */ }
 }
 
 let button = null, slider = null;
@@ -375,12 +375,13 @@ function installControls() {
     el.hidden = false;
     // a focused control would eat the game's Space and arrow keys (the page ignores keys while an input has focus); in the
     // pause menu the game is paused and the controls keep focus like any dialog's
-    if (el.closest('dialog')) continue;
+    // in the spectator view they sit in the header with no game to disturb, so they stay in the tab order
+    if (el.closest('dialog') || el.closest('header')) continue;
     el.tabIndex = -1;
     el.addEventListener('mousedown', () => setTimeout(() => el.blur(), 0));
     el.addEventListener('change', () => el.blur());
   }
-  button?.addEventListener('click', () => { toggleMute(); if (!button.closest('dialog')) button.blur(); });
+  button?.addEventListener('click', () => { toggleMute(); if (!button.closest('dialog') && !button.closest('header')) button.blur(); });
   slider?.addEventListener('input', () => { setVolume(Number(slider.value) / 100); if (muted && Number(slider.value) > 0) setMuted(false); });
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'KeyM' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;

@@ -10,6 +10,10 @@ public static class Tuning
     public const int Fps = 30;
     public const int FieldMaxCols = 64;
     public const int FieldMinCols = 30, FieldMinRows = 16;
+    /// <summary>The two side columns (feed log left, how-to-play right) are mirror images: each is at most
+    /// <c>SidePanelMaxCols</c> wide, starts <c>SideGapCols</c> from the field, keeps one column from the window edge, and
+    /// shows only when it can be <c>SidePanelMinCols</c> wide.</summary>
+    public const int SidePanelMaxCols = 44, SidePanelMinCols = 30, SideGapCols = 2;
 
     // --- background: scroll-the-feed pace (pixels per frame; 0.45 px/frame is about 13 px/s) ---
     public const double ScrollNear = 0.45;
@@ -27,7 +31,6 @@ public static class Tuning
     public const int RespawnFrames = 40;
     public const int FireInterval = 4;
     public const double PlayerBulletSpeed = 3.2;
-    public const double PlayerBulletDamage = 1.0;
     public const int KeyHoldMs = 150;                 // console: a key press counts as held this long
 
     // --- power-up from a like ---
@@ -58,12 +61,17 @@ public static class Tuning
 
     // --- enemies and waves ---
     public const int GruntHp = 3, CarrierHp = 5, GunshipHp = 70;
+    public const int GunshipStayFrames = 640, GunshipVolleyFrames = 38;   // a gunship leaves after this long; one volley per this many frames
     public const int SpamMin = 5, SpamMax = 12;
     public const int WaveGapFrames = 75;
     public const int FillerGapFrames = 100;           // between filler waves at stage 1; the ramp shortens it to FillerGapCap
     public const int EmptyScreenFrames = 18;
+    public const int MinWaveGapFrames = 24;           // a wave never follows another sooner than this
+    public const int MaxParticles = 420;
+    public const int SeenPostsMax = 4000;             // a wingman feed forgets the posts it has seen past this many
     public const int MaxPendingWaves = 6;
     public const double EnemyBulletSpeed = 0.95;
+    public const int EnemyFireGapLive = 90, EnemyFireGapIdle = 140, EnemyFireGapJitter = 80;   // frames between shots: base by kind, plus up to the jitter
     public const int ScoreGrunt = 100, ScoreCarrier = 400, ScoreGunship = 3000;
 
     // --- the newer kinds; each unlocks at a stage (see Ramp.UnlockStage) and every danger is telegraphed first ---

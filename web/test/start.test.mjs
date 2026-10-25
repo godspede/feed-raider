@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { startView, renderStart, normalizeHandle, guestTarget, signInTarget, loadPercent, createTypeahead, stepActive, signIn, SignInCancelled, signInFailed, isOAuthCallback, popupKey, handOff, POPUP_STATE, watchSaved, completeCallback } from '../../src/FeedRaider.Web/wwwroot/page.js';
+import { startView, renderStart, normalizeHandle, guestTarget, signInTarget, loadPercent, createTypeahead, stepActive, signIn, SignInCancelled, signInFailed, isOAuthCallback, popupKey, handOff, POPUP_STATE, watchSaved, completeCallback, noteSignIn, readSignIn, clearSignIn, SIGNIN_REPORT, REPORT_MS, restoreSaved, signInLost, callbackNote, CALLBACK_WAIT_NOTE } from '../../src/FeedRaider.Web/wwwroot/page.js';
 
 const el = (extra = {}) => ({ hidden: true, disabled: false, textContent: '', className: '', style: {}, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; }, ...extra });
-const fakeEls = () => ({ load: el(), loadText: el(), retry: el(), bar: el(), barFill: el(), cardSignIn: el(), signIn: el(), guest: el(), random: el(), hint: el(), signed: el(), play: el(), signOut: el() });
+const fakeEls = () => ({ form: el(), load: el(), loadText: el(), retry: el(), bar: el(), barFill: el(), cardSignIn: el(), signIn: el(), guest: el(), random: el(), hint: el(), signed: el(), play: el(), signOut: el() });
 const draw = (state) => { const els = fakeEls(); renderStart(els, startView(state)); return els; };
 const LOADING = { status: 'loading', percent: 63 };
 
@@ -294,16 +294,23 @@ test('sign-in: the popup is opened in the click, then pointed at the authorizati
   assert.equal(wake.count(), 0, 'focus and visibility are no longer watched');
 });
 
-test('sign-in: the authorization server cuts the popup off (closed reads true at once), which is no cancel', async () => {
+test('sign-in: the authorization server cuts the popup off (closed reads true at once), which is no cancel', async (t) => {
+  // on a mocked clock: with real timers a stall of the machine longer than the 200ms timeout made the run settle before the check
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const flush = () => new Promise((r) => setImmediate(r));
+  const pass = async (ms) => { await flush(); t.mock.timers.tick(ms); await flush(); };
   const client = fakeClient(), win = fakeWindow();
   let settled = false, restores = 0;
   const run = signIn(client, 'carol', { open: () => win, restore: async () => { restores++; return null; }, channel: fakeBus().channel, watch: fakeWake().watch, pollMs: 5, timeoutMs: 200 });
   run.then(() => { settled = true; }, () => { settled = true; });
-  await tick(10);
+  await pass(10);
   win.closed = true; // what Cross-Origin-Opener-Policy: same-origin on the authorization page does to the opener's handle
-  await tick(60);
+  await pass(60);
   assert.equal(settled, false, 'still waiting for the callback');
   assert.equal(restores, 1, 'a closed popup asks for a saved session once');
+  await pass(129);
+  assert.equal(settled, false, 'one millisecond short of the timeout');
+  await pass(1);
   await assert.rejects(run, (e) => e instanceof SignInCancelled, 'only the timeout gives up');
 });
 
@@ -348,7 +355,7 @@ test('sign-in: a callback that failed in the popup rejects with its reason, whic
   const run = signIn(client, 'gus', { open: () => fakeWindow(), channel: bus.channel, watch: fakeWake().watch, pollMs: 5 });
   await tick(10);
   assert.equal(await handOff(keyOf(client), { error: 'Issuer mismatch' }, { channel: bus.channel }), true);
-  await assert.rejects(run, (e) => signInFailed(e) === "Sign-in didn't finish: Issuer mismatch. Try again.");
+  await assert.rejects(run, (e) => signInFailed(e) === "Sign-in didn't finish: something went wrong. Try again.");
 });
 
 test('sign-in: a restore that throws rejects with its error', async () => {
@@ -510,6 +517,96 @@ test('completeCallback: a failed exchange hands back its reason; a redirect call
   assert.equal(closed.length, 0);
 });
 
+test('completeCallback: each step reached goes in the sign-in report, a failure with its reason', async () => {
+  const steps = [];
+  const report = (step, extra = {}) => steps.push({ step, ...extra });
+  await completeCallback({ callback: async () => ({ state: '?', session: { sub: 'did:plc:me' } }), adopt: async () => 'did:plc:me', report, handOff: async () => false });
+  assert.deepEqual(steps, [{ step: 'answered' }, { step: 'saved', sub: 'did:plc:me' }, { step: 'restored', sub: 'did:plc:me' }]);
+  steps.length = 0;
+  await assert.rejects(completeCallback({ callback: async () => ({ state: '?', session: { sub: 'did:plc:me' } }), adopt: async () => { throw new Error('session was deleted'); }, report, handOff: async () => false }));
+  assert.deepEqual(steps, [{ step: 'answered' }, { step: 'saved', sub: 'did:plc:me' }, { step: 'failed', error: 'session was deleted' }]);
+});
+
+const fakeStorage = () => {
+  const m = new Map();
+  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), map: m };
+};
+
+test('sign-in report: written with its step and time, read back while recent, gone once stale, garbled or cleared; no storage is no error', () => {
+  const s = fakeStorage();
+  noteSignIn(s, 'saved', { sub: 'did:plc:me' }, 1000);
+  assert.deepEqual(readSignIn(s, 1000 + 60e3), { sub: 'did:plc:me', step: 'saved', at: 1000 });
+  assert.equal(readSignIn(s, 1000 + REPORT_MS), null, 'a report from an old sign-in says nothing about this one');
+  assert.equal(readSignIn(s, 500), null, 'a clock that went back');
+  s.setItem(SIGNIN_REPORT, '{not json');
+  assert.equal(readSignIn(s, 1000), null);
+  noteSignIn(s, 'started', {}, 1000);
+  clearSignIn(s);
+  assert.equal(readSignIn(s, 1000), null);
+  noteSignIn(null, 'started');
+  assert.equal(readSignIn(null), null);
+  const broken = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }, removeItem() { throw new Error('denied'); } };
+  noteSignIn(broken, 'started');
+  clearSignIn(broken);
+  assert.equal(readSignIn(broken), null);
+});
+
+test('restoreSaved: the library\'s current account first; the report is not asked when it has one', async () => {
+  const s = fakeStorage();
+  noteSignIn(s, 'saved', { sub: 'did:plc:other' }, 1000);
+  const asked = [];
+  const out = await restoreSaved({ initRestore: async () => ({ session: { did: 'did:plc:me' } }), restore: async (sub) => asked.push(sub), storage: s, now: 2000 });
+  assert.deepEqual(out, { session: { did: 'did:plc:me' }, report: null, error: null });
+  assert.deepEqual(asked, []);
+});
+
+test('restoreSaved: the library forgot its current account but a callback saved one; that account is restored by its sub', async () => {
+  // the operator's case: the popup saved the session, the opener never heard, and the reload found the library's pointer gone
+  const s = fakeStorage();
+  noteSignIn(s, 'saved', { sub: 'did:plc:me' }, 1000);
+  const asked = [];
+  const out = await restoreSaved({ initRestore: async () => undefined, restore: async (sub) => { asked.push(sub); return { did: sub }; }, storage: s, now: 2000 });
+  assert.deepEqual(asked, ['did:plc:me']);
+  assert.deepEqual(out.session, { did: 'did:plc:me' });
+  assert.equal(out.report.step, 'saved');
+  noteSignIn(s, 'restored', { sub: 'did:plc:me' }, 1000);
+  assert.deepEqual((await restoreSaved({ initRestore: async () => undefined, restore: async (sub) => ({ did: sub }), storage: s, now: 2000 })).session, { did: 'did:plc:me' });
+});
+
+test('restoreSaved: a restore of the reported account that fails is given back as the error, not thrown; no saved step, no restore', async () => {
+  const s = fakeStorage();
+  noteSignIn(s, 'saved', { sub: 'did:plc:me' }, 1000);
+  const out = await restoreSaved({ initRestore: async () => undefined, restore: async () => { throw new Error('The session was deleted by another process'); }, storage: s, now: 2000 });
+  assert.equal(out.session, null);
+  assert.match(out.error.message, /deleted by another process/);
+  for (const step of ['started', 'answered', 'failed']) {
+    noteSignIn(s, step, {}, 1000);
+    const asked = [];
+    const r = await restoreSaved({ initRestore: async () => undefined, restore: async (sub) => asked.push(sub), storage: s, now: 2000 });
+    assert.deepEqual([r.session, r.report.step, r.error, asked], [null, step, null, []]);
+  }
+  clearSignIn(s);
+  assert.deepEqual(await restoreSaved({ initRestore: async () => undefined, restore: async () => { throw new Error('no'); }, storage: s, now: 2000 }), { session: null, report: null, error: null });
+  await assert.rejects(restoreSaved({ initRestore: async () => { throw new Error('IndexedDB is off'); }, restore: async () => null, storage: s }), /IndexedDB is off/);
+});
+
+test('signInLost: the start page says how far the last sign-in got, as one line; nothing without a report', () => {
+  assert.equal(signInLost(null), null);
+  assert.match(signInLost({ step: 'started' }), /^Sign-in didn't finish: no answer from Bluesky reached this browser\..*Try again\.$/);
+  assert.match(signInLost({ step: 'answered' }), /closed before it saved your session/);
+  assert.equal(signInLost({ step: 'failed', error: 'Issuer mismatch' }), "Sign-in didn't finish: something went wrong. Try again.");
+  assert.match(signInLost({ step: 'saved', sub: 'did:plc:me' }), /no saved session was found in this browser/);
+  assert.equal(signInLost({ step: 'saved', sub: 'did:plc:me' }, new Error('The session was deleted.')),
+    "Sign-in didn't finish: the sign-in window saved your session, but restoring it here failed (The session was deleted). Try again.");
+});
+
+test('callbackNote: a popup that saved the session says so and that it may be closed; a redirect or no account says nothing', () => {
+  assert.match(callbackNote({ popup: true, handle: 'me.bsky.social' }), /^Signed in as @me\.bsky\.social and saved in this browser\. You can close this window/);
+  assert.equal(callbackNote({ popup: false, handle: 'me.bsky.social' }), null);
+  assert.equal(callbackNote({ popup: true, handle: null }), null);
+  assert.match(CALLBACK_WAIT_NOTE, /keep this window open/);
+});
+
 test('handOff: false when no opener answers in time, so the callback page stays as a signed-in page', async () => {
   const bus = fakeBus();
   assert.equal(await handOff('k', { sub: 'did:plc:me' }, { channel: bus.channel, waitMs: 20 }), false);
@@ -533,10 +630,30 @@ test('isOAuthCallback: the answer comes in the fragment (the library default) an
   assert.equal(isOAuthCallback('https://site.example/#state=s'), false);
 });
 
-test('signInFailed: a short line with the reason, one full stop, and a way on', () => {
-  assert.equal(signInFailed(new Error('Unknown authorization session "x".')), 'Sign-in didn\'t finish: Unknown authorization session "x". Try again.');
-  assert.equal(signInFailed('access_denied'), "Sign-in didn't finish: access_denied. Try again.");
-  assert.equal(signInFailed(new Error('')), "Sign-in didn't finish: unknown error. Try again.");
+test('signInFailed: plain words for the known library failures, a generic line otherwise, no library text', () => {
+  const unreach = "Sign-in didn't finish: couldn't reach your Bluesky account's server. Check the handle and your connection, then try again.";
+  assert.equal(signInFailed(new Error('Failed to resolve OAuth server metadata for resource "https://x"')), unreach);
+  assert.equal(signInFailed(new SignInCancelled()), "Sign-in didn't finish: the sign-in window was closed. Try again.");
+  assert.equal(signInFailed('access_denied'), "Sign-in didn't finish: Bluesky did not allow it. Try again when you are ready to approve.");
+  assert.equal(signInFailed(new Error('Unknown authorization session "x".')), "Sign-in didn't finish: something went wrong. Try again.");
+  assert.equal(signInFailed(new Error('')), "Sign-in didn't finish: something went wrong. Try again.");
+});
+
+test('typeahead: onSearching fires when the request goes out, not on each keystroke', async () => {
+  const c = clock(), events = [];
+  const fetchImpl = async () => ({ ok: true, json: async () => actorsBody(1) });
+  const ta = createTypeahead({ fetchImpl, onResults: () => events.push('results'), onSearching: () => events.push('searching'), setTimer: c.setTimer, clearTimer: c.clearTimer });
+  ta.input('al'); ta.input('ali');
+  assert.deepEqual(events, []);
+  c.tick(200);
+  assert.deepEqual(events, ['searching']);
+  await flush();
+  assert.deepEqual(events, ['searching', 'results']);
+});
+
+test('main.js: the handle search says Searching… in the status note while it runs', () => {
+  const js = readFileSync(new URL('../../src/FeedRaider.Web/wwwroot/main.js', import.meta.url), 'utf8');
+  assert.match(js, /onSearching: \(\) => showSuggestNote\('Searching…'\)/);
 });
 
 test('main.js: the callback is told by the fragment, and a failed sign-in or restore shows the line, not only a warning', () => {
@@ -554,6 +671,26 @@ test('atproto.js: the callback is finished here, not by the library popup hand-o
   assert.match(src, /client\.restore\(sub, false\)/);
   assert.match(src, /completeCallback\(\{/, 'a restore that fails after the exchange is handed back too');
   assert.match(src, /export function initError/);
+});
+
+test('atproto.js: every restore goes through restoreSaved, and each sign-in step is noted in the report', () => {
+  const src = readFileSync(new URL('../src/atproto.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /\?\.session \?\? null|const restored = await client\.initRestore/, 'no bare initRestore that misses a forgotten account');
+  assert.match(src, /restoreSaved\(\{ initRestore: \(\) => client\.initRestore\(false\), restore: \(sub\) => client\.restore\(sub, false\)/);
+  assert.match(src, /noteSignIn\(storage\(\), 'started'\)/);
+  assert.match(src, /did = session\.did;[^]*?noteSignIn\(storage\(\), 'restored', \{ sub: did \}\)/, 'a page showing the account keeps the report fresh');
+  assert.match(src, /export async function logout\(\) \{\s*clearSignIn\(storage\(\)\)/, 'a sign-out is not undone by the next load');
+  assert.match(src, /report: \(step, extra\) => noteSignIn\(storage\(\), step, extra\)/);
+  assert.match(src, /failure = signInLost\(out\.report, out\.error\)/);
+  assert.match(src, /export function initNote/);
+});
+
+test('main.js and index.html: the callback page shows the wait line, then its own note; the note is a status, not an alert', () => {
+  const js = readFileSync(new URL('../../src/FeedRaider.Web/wwwroot/main.js', import.meta.url), 'utf8');
+  const html = readFileSync(new URL('../../src/FeedRaider.Web/wwwroot/index.html', import.meta.url), 'utf8');
+  assert.match(js, /if \(oauthCallback && needsStart\) showNote\(page\.CALLBACK_WAIT_NOTE\)/);
+  assert.match(js, /showNote\(auth\?\.initNote\(\)\)/);
+  assert.match(html, /<p id="start-note" role="status" hidden><\/p>/);
 });
 
 test('main.js: a signed-out start page takes a session another page saved, so a popup it stopped waiting for still signs it in', () => {
@@ -582,4 +719,45 @@ test('main.js: Random is ?feed=random with no handle and skips the panel on relo
   assert.match(js, /needsStart = !spectatorMode && !handle && !randomFromUrl/);
   assert.match(js, /page\.guestTarget\(startHandle\.value\)/);
   assert.doesNotMatch(js, /pick\('', 'guest'\)/, 'an empty box is no longer Discover');
+});
+
+test('busy handle check: Play as someone reads "checking…", the form is aria-busy and the note says so', () => {
+  const view = startView({ loginAvailable: true, handle: null, busy: 'check' });
+  const els = fakeEls();
+  renderStart(els, view);
+  assert.equal(els.guest.textContent, 'checking…');
+  assert.equal(els.signIn.textContent, 'Sign in with Bluesky');
+  assert.equal(els.form.attrs['aria-busy'], 'true');
+  assert.equal(view.busyNote, 'Checking the handle…');
+  assert.equal(startView({ loginAvailable: true, handle: null, busy: true }).guestLabel, 'checking…');
+});
+
+test('busy sign-in: the button reads "signing in…" and the note waits for Bluesky; idle shows the plain labels', () => {
+  const view = startView({ loginAvailable: true, handle: null, busy: 'signin' });
+  const els = fakeEls();
+  renderStart(els, view);
+  assert.equal(els.signIn.textContent, 'signing in…');
+  assert.equal(els.guest.textContent, 'Play as someone');
+  assert.equal(els.form.attrs['aria-busy'], 'true');
+  assert.equal(view.busyNote, 'Waiting for Bluesky…');
+  const idle = draw({ loginAvailable: true, handle: null });
+  assert.equal(idle.signIn.textContent, 'Sign in with Bluesky');
+  assert.equal(idle.form.attrs['aria-busy'], 'false');
+  assert.equal(startView({ loginAvailable: true, handle: null }).busyNote, '');
+});
+
+test('typeahead: an empty answer is marked as answered, a cleared box and a failure are not', async () => {
+  const c = clock(), seen = [];
+  const ok = createTypeahead({ fetchImpl: async () => ({ ok: true, json: async () => ({ actors: [] }) }), onResults: (r, info) => seen.push([r.length, info?.answered === true]), setTimer: c.setTimer, clearTimer: c.clearTimer });
+  ok.input('nobody');
+  c.tick(200);
+  await flush();
+  ok.input('n');
+  assert.deepEqual(seen, [[0, true], [0, false]]);
+  const failed = [];
+  const bad = createTypeahead({ fetchImpl: async () => { throw new Error('offline'); }, onResults: (r, info) => failed.push(['results', info?.answered === true]), onError: () => failed.push(['error']), setTimer: c.setTimer, clearTimer: c.clearTimer });
+  bad.input('alice');
+  c.tick(200);
+  await flush();
+  assert.deepEqual(failed, [['results', false], ['error']]);
 });

@@ -12,6 +12,9 @@ public static class QuitWatcher
 {
     public static volatile bool Quit;
 
+    /// <summary>Set when <see cref="Quit"/> turns true, for callers that would rather wait than poll.</summary>
+    public static readonly ManualResetEventSlim Signal = new();
+
     public static void Start()
     {
         if (Console.IsInputRedirected) return;
@@ -22,10 +25,10 @@ public static class QuitWatcher
                 while (!Quit)
                 {
                     var k = Console.ReadKey(intercept: true);
-                    if (k.Key is ConsoleKey.Q or ConsoleKey.Escape) { Quit = true; return; }
+                    if (k.Key is ConsoleKey.Q or ConsoleKey.Escape) { Quit = true; Signal.Set(); return; }
                 }
             }
-            catch { /* console closed / no TTY — nothing to watch */ }
+            catch (InvalidOperationException) { /* input went away under us (closed or redirected console): nothing left to watch */ }
         })
         { IsBackground = true };
         th.Start();

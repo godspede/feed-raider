@@ -112,9 +112,9 @@ public class SfxTests
     {
         var (g, played) = New();
         Settle(g, played);
-        Add(g, EnemyKind.Grunt, g.PX, g.PY - 14, Tuning.PlayerBulletDamage * 0.5);
-        Add(g, EnemyKind.Carrier, g.PX, g.PY - 30, Tuning.PlayerBulletDamage * 0.5);
-        Add(g, EnemyKind.Gunship, g.PX, g.PY - 46, Tuning.PlayerBulletDamage * 0.5);
+        Add(g, EnemyKind.Grunt, g.PX, g.PY - 14, 0.5);
+        Add(g, EnemyKind.Carrier, g.PX, g.PY - 30, 0.5);
+        Add(g, EnemyKind.Gunship, g.PX, g.PY - 46, 0.5);
         g.Input.Key(GameKey.Fire, true);
         Run(g, 60);
         var kills = played.Where(p => p.Name is "kill" or "boom").ToList();
@@ -217,7 +217,7 @@ public class SfxTests
     public void A_wingmans_comm_opens_with_one_chirp_panned_to_its_ship()
     {
         var (g, played) = New();
-        g.OfferPost(Post(1));
+        g.Queue.Offer(Post(1));
         for (int i = 0; i < 400 && g.Comms.Speaker is null; i++) g.Step();
         var w = Assert.IsType<Wingman>(g.Comms.Speaker);
         var chirp = Assert.Single(played, p => p.Name == "comm");
@@ -233,7 +233,7 @@ public class SfxTests
         foreach (bool loggedIn in new[] { true, false })
         {
             var (g, played) = New(loggedIn);
-            g.OfferPost(Post(1));
+            g.Queue.Offer(Post(1));
             for (int i = 0; i < 400 && !g.Wings.Any(w => w.Age > Tuning.WingEnterFrames); i++) g.Step();
             var w = g.Wings[0];
             for (int i = 0; i < 200 && (Math.Abs(g.PX - w.X) > 3 || Math.Abs(g.PY - w.Y) > 3); i++)

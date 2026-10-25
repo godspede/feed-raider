@@ -10,7 +10,7 @@ public enum WavePattern { Line, Vee, Arc, Column, Sine }
 public sealed record EnemySpawn(EnemyKind Kind, double X, int Delay, double Amp, double Phase, string? Text);
 
 /// <summary>A planned wave. <see cref="Live"/> waves come from a real darkness event, filler ones from the generator.</summary>
-public sealed record WaveSpec(bool Live, DarknessKind? Kind, WavePattern Pattern, IReadOnlyList<EnemySpawn> Enemies, string? Text, string? Label = null);
+public sealed record WaveSpec(bool Live, DarknessKind? Kind, WavePattern Pattern, IReadOnlyList<EnemySpawn> Enemies, string? Text, string? Label = null, DarkSource Source = DarkSource.Label);
 
 /// <summary>Turns darkness events (and the filler generator) into waves. Pure: the same post always gives the same wave.
 /// The text a wave carries went through <see cref="DarknessText"/> already; nothing here knows an author.</summary>
@@ -24,8 +24,8 @@ public static class WaveSpawner
         string text = DarknessText.Clean(post.Text, 44);
         if (post.Kind == DarknessKind.Rude)
         {
-            var gunship = new EnemySpawn(EnemyKind.Gunship, 0.3 + Hashing.Unit(s, 1) * 0.4, 0, 0.22, Hashing.Unit(s, 2) * 6.28, text);
-            return new WaveSpec(true, DarknessKind.Rude, WavePattern.Line, [gunship], text, post.Label);
+            var gunship = new EnemySpawn(EnemyKind.Gunship, 0.3 + Hashing.Unit(s, 1) * 0.4, 0, 0.22, Hashing.Unit(s, 2) * Math.Tau, text);
+            return new WaveSpec(true, DarknessKind.Rude, WavePattern.Line, [gunship], text, post.Label, post.Source);
         }
         int n = Tuning.SpamMin + (int)(Hashing.Mix(s) % (ulong)(Tuning.SpamMax - Tuning.SpamMin + 1));
         var pattern = (WavePattern)(int)(Hashing.Unit(s, 3) * 4);   // line, vee, arc, column (sine is filler-only)
@@ -40,7 +40,7 @@ public static class WaveSpawner
                 var kind = PickKind(s, i, stage, shootable: true);
                 if (at != carrier && kind is { } k) list[at] = list[at] with { Kind = k };
             }
-        return new WaveSpec(true, DarknessKind.Spam, pattern, list, text, post.Label);
+        return new WaveSpec(true, DarknessKind.Spam, pattern, list, text, post.Label, post.Source);
     }
 
     /// <summary>The nth filler wave: grunts (small ones only at stage 1), never carrying text, never a gunship. Later stages add
@@ -72,7 +72,7 @@ public static class WaveSpawner
     {
         double x = 0.15 + Hashing.Unit(s, 40 + i) * 0.7;
         int delay = 20 + i * 35 + (int)(Hashing.Unit(s, 50 + i) * 20);
-        double phase = Hashing.Unit(s, 60 + i) * 6.28;
+        double phase = Hashing.Unit(s, 60 + i) * Math.Tau;
         if (kind == EnemyKind.Mine)
         {
             for (int k = 0; k < Tuning.MinesPerSpecial; k++)
@@ -89,7 +89,7 @@ public static class WaveSpawner
     {
         var list = new List<EnemySpawn>(n);
         double cx = 0.25 + Hashing.Unit(s, 7) * 0.5;
-        double phase = Hashing.Unit(s, 8) * 6.28;
+        double phase = Hashing.Unit(s, 8) * Math.Tau;
         for (int i = 0; i < n; i++)
         {
             double t = n == 1 ? 0.5 : i / (double)(n - 1);

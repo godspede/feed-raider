@@ -3,6 +3,9 @@
 //   node test/e2e/popup-signin.e2e.mjs            the real hand-off
 //   node test/e2e/popup-signin.e2e.mjs --no-bus   the callback page's BroadcastChannel posts go nowhere
 //   node test/e2e/popup-signin.e2e.mjs --abandon  the opening page stops waiting (Sign in pressed again) before the popup is done
+//   ... --reload                                  then the popup is closed and the opening page reloaded: it must restore the session
+//   ... --reload --lose-sub                       and before the reload the library's pointer to the current account is gone, as a
+//                                                 callback page closed between saving and restoring, or a racing failed restore, leaves it
 // Nothing brings the opening page to the front: it has to find the session by itself.
 // Prints one line per case and exits non-zero when the opening page did not adopt the session.
 // PLAYWRIGHT_CORE names playwright-core when it is not importable from here (playwright-cli carries one).
@@ -18,6 +21,8 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const wwwroot = fileURLToPath(new URL('../../../src/FeedRaider.Web/wwwroot/', import.meta.url));
 const noBus = process.argv.includes('--no-bus');
 const abandon = process.argv.includes('--abandon');
+const reload = process.argv.includes('--reload');
+const loseSub = process.argv.includes('--lose-sub');
 
 async function playwright() {
   try { return await import('playwright-core'); } catch { /* not installed here */ }
@@ -103,15 +108,30 @@ try {
   let popupClosed = false;
   popup.on('close', () => { popupClosed = true; });
   // no focus, no bringToFront: the opening page must notice by itself (hand-off, storage event or its own asking)
-  await opener.waitForTimeout(5000);
+  // a page that never shows the account is caught by the check of `shown` below, with its own message
+  await opener.waitForFunction(() => document.getElementById('start-signed')?.hidden === false, null, { timeout: 5000 }).catch(() => {});
   const after = await opener.evaluate(() => window.__e2e);
   const shown = await opener.evaluate(() => (document.getElementById('start-signed')?.hidden === false ? document.getElementById('start-who-name')?.textContent || '?' : ''));
   if (process.env.E2E_VERBOSE) console.info('pages:', context.pages().map((p) => p.url()).join(' | '));
-  const popupState = popupClosed ? 'closed' : await popup.evaluate(() => `open at ${location.href} [${document.getElementById('start-error')?.textContent || ''}] who=${document.getElementById('start-who-name')?.textContent || ''}`).catch((e) => 'gone: ' + e.message);
+  const popupState = popupClosed ? 'closed' : await popup.evaluate(() => `open at ${location.href} [${document.getElementById('start-error')?.textContent || ''}] who=${document.getElementById('start-who-name')?.textContent || ''} note=${document.getElementById('start-note')?.hidden === false ? document.getElementById('start-note').textContent : ''}`).catch((e) => 'gone: ' + e.message);
   // an abandoned wait ends in SignInCancelled; the start page itself must then show the account
-  const adopted = abandon ? !!shown : typeof after === 'string' && after.startsWith('{');
+  let adopted = abandon ? !!shown : typeof after === 'string' && after.startsWith('{');
+  let reloaded = '';
+  if (reload) {
+    // the operator's report: he closed the popup himself and reloaded the opening page, which must find the saved session
+    if (!popupClosed) await popup.close();
+    if (loseSub) await opener.evaluate(() => localStorage.removeItem('@@atproto/oauth-client-browser(sub)'));
+    await opener.reload();
+    await opener.waitForFunction(() => document.getElementById('start-signed')?.hidden === false || !document.getElementById('start-login').disabled, null, { timeout: 30e3 });
+    const again = await opener.evaluate(() => ({
+      who: document.getElementById('start-signed')?.hidden === false ? document.getElementById('start-who-name')?.textContent || '?' : '',
+      error: document.getElementById('start-error')?.style.display === 'block' ? document.getElementById('start-error').textContent : '',
+    }));
+    adopted = !!again.who;
+    reloaded = `; after reload shows=${again.who || '(signed out)'} [${again.error}]`;
+  }
   failed = !adopted;
-  console.info(`${abandon ? 'abandon' : noBus ? 'no-bus' : 'hand-off'}: opener signIn=${after} start page shows=${shown || '(signed out)'}; popup ${popupState}; severed-check=${severed}`);
+  console.info(`${abandon ? 'abandon' : noBus ? 'no-bus' : 'hand-off'}${reload ? '+reload' : ''}${loseSub ? '+lose-sub' : ''}: opener signIn=${after} start page shows=${shown || '(signed out)'}; popup ${popupState}; severed-check=${severed}${reloaded}`);
   if (!adopted || process.env.E2E_VERBOSE) console.info(logs.join('\n'), '\nmock:', as.log.join(', '));
 } finally {
   await browser.close();

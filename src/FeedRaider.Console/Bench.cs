@@ -12,7 +12,7 @@ static class Bench
 
     public static int Run(int frames, int cols, int rows)
     {
-        var game = new RaiderGame(42);
+        var game = new RaiderGame(DemoRun.Seed);
         var view = new RaiderView();
         var scr = new Screen(cols, rows);
         var enc = new DiffEncoder();
@@ -46,7 +46,7 @@ static class Bench
         }
         var total = render.Zip(encode, (a, b) => a + b).ToList();
         double p95 = Pct(total, 0.95);
-        Console.WriteLine($"bench {cols}x{rows}, {frames} frames (+{Warmup} warmup), seed 42");
+        Console.WriteLine($"bench {cols}x{rows}, {frames} frames (+{Warmup} warmup), seed {DemoRun.Seed}");
         Console.WriteLine($"  step          mean {step / frames:F3} ms");
         Console.WriteLine($"  render        mean {render.Average():F3} ms   p95 {Pct(render, 0.95):F3} ms");
         Console.WriteLine($"  encode        mean {encode.Average():F3} ms   p95 {Pct(encode, 0.95):F3} ms");

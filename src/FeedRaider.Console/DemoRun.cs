@@ -6,6 +6,7 @@ using FeedRaider.Engine.Raider;
 /// the PNG frames and the timing are repeatable without a network.</summary>
 static class DemoRun
 {
+    public const ulong Seed = 42;
     const string Handle = "demo.bsky.social";
 
     static FeedPost Post(int n, string text, int likes) =>
@@ -13,7 +14,7 @@ static class DemoRun
 
     public static int Run(int frames, string outDir, int cols, int rows, int every)
     {
-        var game = new RaiderGame(42);
+        var game = new RaiderGame(Seed);
         var view = new RaiderView();
         var scr = new Screen(cols, rows);
         var enc = new DiffEncoder();
@@ -42,12 +43,12 @@ static class DemoRun
     public static (int At, Action Do)[] Script(RaiderGame game) =>
         new (int At, Action Do)[]
         {
-            (20, () => game.OfferPost(Post(1, "just shipped the thing we have been working on for months, tell me what you think", 240))),
+            (20, () => game.Queue.Offer(Post(1, "just shipped the thing we have been working on for months, tell me what you think", 240))),
             (60, () => game.OfferDark(new DarkPost(DarknessKind.Spam, 11, "buy followers cheap click my profile now"))),
             (200, () => game.OfferDark(new DarkPost(DarknessKind.Rude, 12, "you are all idiots and nobody likes your takes"))),
-            (260, () => game.OfferPost(Post(2, "unpopular opinion: the best part of any feed is the quiet posts nobody reshared", 1800))),
+            (260, () => game.Queue.Offer(Post(2, "unpopular opinion: the best part of any feed is the quiet posts nobody reshared", 1800))),
             (420, () => game.OfferDark(new DarkPost(DarknessKind.Spam, 13, "free crypto giveaway dm me"))),
-            (520, () => game.OfferPost(Post(3, "good morning everyone, coffee first and then the rest of the world", 35))),
+            (520, () => game.Queue.Offer(Post(3, "good morning everyone, coffee first and then the rest of the world", 35))),
         };
     // Fly at the nearest wingman, like when prompted, otherwise sweep and fire.
     public static void Autopilot(RaiderGame g)

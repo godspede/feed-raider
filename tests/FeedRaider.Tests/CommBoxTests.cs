@@ -5,7 +5,7 @@ using FeedRaider.Engine.Raider;
 namespace FeedRaider.Tests;
 
 // The comm box under each wingman: the whole post (never a two-word chip), pinned below its ship at one offset,
-// one size for the life of a post, cropped by the field's edge, and drawn beneath the ships and bullets.
+// one size for the life of a post, cropped by the field's edge, and a solid panel over the ships and bullets.
 public class CommBoxTests
 {
     private const string Long = "this is a perfectly ordinary post with enough words in it to run well past three short lines of comm text";
@@ -24,7 +24,7 @@ public class CommBoxTests
     {
         var g = new RaiderGame(5) { LoggedIn = true, MaxWings = posts.Length };
         g.SetLayout(FieldLayout.Compute(cols, rows));
-        for (int i = 0; i < posts.Length; i++) g.OfferPost(Post(i + 1, posts[i]));
+        for (int i = 0; i < posts.Length; i++) g.Queue.Offer(Post(i + 1, posts[i]));
         RunUntil(g, () => g.Wings.Count == posts.Length && g.Comms.Speaker is not null);
         return g;
     }
@@ -137,7 +137,7 @@ public class CommBoxTests
     {
         var g = new RaiderGame(5) { LoggedIn = true, MaxWings = 1 };
         g.SetLayout(FieldLayout.Compute(48, 60));
-        g.OfferPost(Post(1, text));
+        g.Queue.Offer(Post(1, text));
         RunUntil(g, () => g.Wings.Count == 1);
         var w = g.Wings[0];
         var view = new RaiderView();
@@ -157,8 +157,8 @@ public class CommBoxTests
             {
                 if (c < lay.Col0 || c >= lay.Col0 + lay.PCols || row < 2 || row >= lay.Rows) continue;
                 char got = scr.CharAt(c, row);
-                uint boxBg = Surface.Mix(0x0a1426, w.Accent, 0.14);
-                if (got != ch && scr.BgAt(c, row) != boxBg) continue;   // a ship over the corner shows through
+                uint boxBg = Surface.Mix(CommPainter.PanelBg, w.Accent, 0.22);
+                if (got != ch && scr.BgAt(c, row) == CommPainter.PanelBg) continue;   // the narrow screen's panel draws over the field's top rows
                 Assert.True(got == ch, $"frame {f}: '{ch}' expected at ({c},{row}), got '{got}' bg {scr.BgAt(c, row):x6} box bg {boxBg:x6}");
                 corners++;
             }
@@ -166,10 +166,10 @@ public class CommBoxTests
         Assert.True(corners > 50, $"{corners} corners checked");
     }
 
-    // ---------------------------------------------------------------- beneath the action
+    // ---------------------------------------------------------------- a solid panel
 
     [Fact]
-    public void Bullets_and_ships_inside_the_box_show_over_it()
+    public void The_box_is_a_solid_panel_that_hides_what_flies_under_it()
     {
         var g = Game(48, 60, Long);
         var w = g.Wings.Single();
@@ -182,22 +182,54 @@ public class CommBoxTests
         g.Enemies.Clear(); g.Bullets.Clear(); g.Pickups.Clear(); g.Particles.Clear(); g.Rings.Clear();
         g.Bullets.Add(new Bullet { X = bc * 2 + 1, Y = br * 2 + 1 });
         var scr = Render(g, 48, 60, quiet: false);
+        uint panel = Surface.Mix(CommPainter.PanelBg, w.Accent, 0.22);
         int i = br * scr.Cols + r.C + 8;
-        Assert.True(scr.Fg[i] is 0xff3d6e or 0xffffff || scr.Bg[i] is 0xff3d6e or 0xffffff,
-            $"the bullet's cell shows the bullet, not the box (fg {scr.Fg[i]:x6} bg {scr.Bg[i]:x6} '{scr.Ch[i]}')");
-        // the box's own text still reads where nothing covers it
+        Assert.True(scr.Bg[i] == panel && scr.Fg[i] is not (0xff3d6e or 0xffffff), $"the bullet is under the box (fg {scr.Fg[i]:x6} bg {scr.Bg[i]:x6})");
+        // every cell of the box, border and padding too, is the panel colour or the wingman's accent: no backdrop through it
+        for (int y = r.R; y < r.Bottom; y++)
+            for (int x = r.C + 5; x < r.Right; x++)   // right of the avatar
+            {
+                if (x < lay.Col0 || x >= lay.Col0 + lay.PCols || y < 2 || y >= lay.PRows) continue;
+                int k = y * scr.Cols + x;
+                Assert.True(scr.Bg[k] == panel, $"cell {x},{y} bg {scr.Bg[k]:x6}");
+            }
         Assert.Contains(w.HandleTag, Row(scr, r.R + 1));
+    }
 
-        // a second wingman flying through the box shows its ship, not the box
-        var g2 = Game(48, 60, Long, "another post to fly over the first box");
-        var a = g2.Comms.Speaker!; var b = g2.Wings.Single(x => x != a);
-        a.X = lay.PW / 2.0; a.Y = 20;
-        var ra = CommPainter.Box(a, g2.Layout);
-        b.X = lay.PW / 2.0; b.Y = (ra.R + 3) * 2;
-        var s2 = Render(g2, 48, 60);
-        var boxBg = s2.BgAt(ra.C + 1, ra.R + 1);
-        int sc = g2.Layout.Col0 + (int)(b.X / 2), sr = (int)(b.Y / 2);
-        Assert.True(sr > ra.R && sr < ra.Bottom - 1, "the ship's centre is inside the box");
-        Assert.False(s2.BgAt(sc, sr) == boxBg && s2.CharAt(sc, sr) == ' ', "the ship's centre cell shows the ship, not the box");
+    [Fact]
+    public void The_box_is_all_one_colour_family_and_adds_few_distinct_cell_styles_per_frame()
+    {
+        // the glyph atlas keeps every (char, fg, bg) it has seen; a box that dims or mixes its cells against the moving backdrop
+        // mints new keys every frame and fills the atlas pages. The box here has a bounded set of styles however the field moves.
+        var g = Game(130, 46, Long, "a second wingman with its own post to read out in full");
+        var keys = new HashSet<(char, uint, uint)>();
+        var scr = new Screen(130, 46);
+        var view = new RaiderView();
+        foreach (var w in g.Wings) { w.X = g.Layout.PW / 2.0; w.Y = 30; }
+        var boxes = g.Wings.Select(w => CommPainter.Box(w, g.Layout)).ToArray();
+        for (int f = 0; f < 600; f++)
+        {
+            g.Step();
+            g.Enemies.Clear(); g.Bullets.Clear(); g.Particles.Clear(); g.Rings.Clear();
+            view.Render(g, scr);
+            foreach (var r in boxes)
+                for (int y = r.R + 1; y < r.Bottom - 1; y++)
+                    for (int x = r.C + 6; x < r.Right - 1; x++)
+                        if (x >= g.Layout.Col0 && x < g.Layout.Col0 + g.Layout.PCols) keys.Add((scr.CharAt(x, y), scr.Fg[y * scr.Cols + x], scr.Bg[y * scr.Cols + x]));
+        }
+        Assert.True(keys.Count < 600, $"{keys.Count} distinct (char, fg, bg) in the text area of the boxes over 600 frames");
+    }
+    [Fact]
+    public void Every_comm_text_colour_reads_at_body_text_contrast_whatever_the_authors_hue()
+    {
+        // each box is tinted by its author's accent, so a handle in that accent can sink into its own panel (a blue one did)
+        for (int n = 0; n < 400; n++)
+        {
+            uint ac = PlaneFactory.Accent($"did:plc:hue{n}"), bg = Surface.Mix(CommPainter.PanelBg, ac, 0.22);
+            foreach (uint fg in new[] { ac, 0x6f86adu, Surface.Mix(0xe6eefc, bg, 0.45) })
+                Assert.True(Surface.Contrast(Surface.Legible(fg, bg), bg) >= Surface.BodyTextContrast, $"{fg:x6} on {bg:x6}");
+        }
+        Assert.Equal(0xe6eefcu, Surface.Legible(0xe6eefc, CommPainter.PanelBg));   // already legible: left alone
+        Assert.True(Surface.Contrast(Surface.Legible(0x203040, 0xf0f0f0), 0xf0f0f0) >= Surface.BodyTextContrast);   // on a light panel it darkens
     }
 }

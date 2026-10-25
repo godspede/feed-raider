@@ -80,7 +80,7 @@ else {
   await page.locator('#start-random').click();
   await page.mouse.move(280, 520);
   await page.keyboard.down('Space');
-  await page.waitForTimeout(8000);
+  await page.waitForTimeout(8000); // gameplay time: the plane has to fly for real seconds before the frame is taken
   // sweep the plane over the field pressing like until a thread opens, then hold still and like the opened post too, so the bubble
   // stacks three posts; the guest's first like asks to sign in, and that popup has faded by the time the frame is taken
   const likes = () => opened.size;

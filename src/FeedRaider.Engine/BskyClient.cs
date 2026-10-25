@@ -57,6 +57,10 @@ public sealed class JetstreamSource : IEventSource, IHasState
     public const string DefaultEndpoint = "wss://jetstream2.us-east.bsky.network/subscribe";
     /// <summary>Above this the DIDs are sent as an options_update message instead of in the URL.</summary>
     public const int MaxUrlLength = 8000;
+    internal const int ReceiveBufferBytes = 16 * 1024;
+
+    /// <summary>The wait before reconnect number <paramref name="failures"/>: 2, 4, 8, 16, then 30 seconds.</summary>
+    internal static TimeSpan Backoff(int failures) => TimeSpan.FromSeconds(Math.Min(30, 1 << Math.Min(failures, 5)));
 
     private readonly IReadOnlyList<string> _dids;
     private readonly string _endpoint;
@@ -110,14 +114,14 @@ public sealed class JetstreamSource : IEventSource, IHasState
             if (!await TryConnectAsync(ws, url, viaUpdate ? BuildOptionsUpdate(_dids) : null, ct))
             {
                 failures++;
-                try { await Task.Delay(TimeSpan.FromSeconds(Math.Min(30, 1 << Math.Min(failures, 5))), ct); }
+                try { await Task.Delay(Backoff(failures), ct); }
                 catch (OperationCanceledException) { yield break; }
                 continue;
             }
 
             failures = 0;
             State = "live";
-            var buffer = new byte[16 * 1024];
+            var buffer = new byte[ReceiveBufferBytes];
             while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
                 string? msg = await ReceiveTextAsync(ws, buffer, ct);

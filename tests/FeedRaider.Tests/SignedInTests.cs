@@ -101,7 +101,7 @@ public class SignedInTests
         var game = new RaiderGame(1);
         using var cts = new CancellationTokenSource();
         var run = RaiderFeeds.WingmenAsync(game, new JsFeedSource((_, _, _) => Task.FromResult(json)), null, Feeds.Discover, cts.Token);
-        await Task.Delay(1500);
+        await Wait.UntilAsync(() => { lock (game) return game.Queue.Count >= 2; }, "two wingmen in the queue");
         cts.Cancel();
         await run.WaitAsync(TimeSpan.FromSeconds(10));
         var served = new List<FeedPost>();
@@ -145,6 +145,45 @@ public class SignedInTests
     }
 
     [Fact]
+    public async Task A_failing_fallback_says_so_too_instead_of_retrying_in_silence()
+    {
+        var game = new RaiderGame(1);
+        var trouble = new List<string>();
+        using var cts = new CancellationTokenSource();
+        var run = RaiderFeeds.WingmenAsync(game, new Throws(new Exception("Insufficient scope: rpc:app.bsky.feed.getTimeline")),
+            new Throws(new HttpRequestException("Failed to fetch")), Feeds.Discover, cts.Token,
+            onTrouble: m => { trouble.Add(m); cts.Cancel(); }, sourceName: "your Following timeline");
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("could not reach Bluesky for Discover; trying again", Assert.Single(trouble));
+    }
+
+    [Fact]
+    public async Task The_loader_says_it_is_loading_then_that_the_feed_is_empty_once()
+    {
+        var game = new RaiderGame(1);
+        var said = new List<string>();
+        using var cts = new CancellationTokenSource();
+        var run = RaiderFeeds.WingmenAsync(game, new Fixed(), null, Feeds.Discover, cts.Token, onStatus: m => { lock (said) said.Add(m); });
+        await Wait.UntilAsync(() => { lock (said) return said.Count >= 2; }, "the loader to say the feed is empty");
+        cts.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal([FeedStatus.Loading, FeedStatus.Empty], said);
+        Assert.Equal("loading your feed…", FeedStatus.Loading);
+        Assert.Equal("no posts to show", FeedStatus.Empty);
+    }
+
+    [Fact]
+    public void Every_toast_is_passed_on_to_the_host()
+    {
+        var game = new RaiderGame(1);
+        var said = new List<string>();
+        game.Said = said.Add;
+        game.Say("sign in to like");
+        Assert.Equal(["sign in to like"], said);
+        Assert.Equal("sign in to like", game.Toast);
+    }
+
+    [Fact]
     public void Plain_words_for_like_failures()
     {
         Assert.Equal("your sign-in does not allow likes, sign out and sign in again", Plain.Like(new Exception("Insufficient scope")));
@@ -171,7 +210,7 @@ public class SignedInTests
         var json = Page(feed);
         using var cts = new CancellationTokenSource();
         var run = RaiderFeeds.WingmenAsync(game, new JsFeedSource((_, _, _) => Task.FromResult(json)), null, Feeds.Discover, cts.Token);
-        for (int i = 0; i < 100; i++) { lock (game) if (game.Queue.Count > 0) break; await Task.Delay(50); }
+        await Wait.UntilAsync(() => { lock (game) return game.Queue.Count > 0; }, "the feed to queue a post");
         cts.Cancel();
         await run.WaitAsync(TimeSpan.FromSeconds(10));
         var pending = new List<Task>();
@@ -260,7 +299,7 @@ public class SignedInTests
         var g = NewGame();
         var liked = new List<FeedPost>();
         g.OnLike = liked.Add;
-        g.OfferPost(new FeedPost("at://did:plc:t1/app.bsky.feed.post/1", "cid1", "did:plc:t1", "t1.test", Text, 10, 0, 0, null, null));
+        g.Queue.Offer(new FeedPost("at://did:plc:t1/app.bsky.feed.post/1", "cid1", "did:plc:t1", "t1.test", Text, 10, 0, 0, null, null));
         var w = Arrived(g);
         return (g, w, liked, (g.Layout.Col0 + w.X / 2, w.Y / 2));
     }

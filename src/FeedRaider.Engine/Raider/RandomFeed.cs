@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace FeedRaider.Engine.Raider;
 
 /// <summary>The Random mode's wingmen: posts from public Bluesky comedy feeds. It reads its two primaries, <see cref="Feeds.RandomPrimary"/>
@@ -77,8 +79,9 @@ public sealed class RandomFeedSource(IFeedSource source, IFeedSource? last = nul
             if (page.Cursor is null || lane.Empties >= EmptyLimit) lane.Dead = !ReferenceEquals(lane, _discover);
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception) when (!throwOnError)
+        catch (Exception ex) when (!throwOnError && ex is HttpRequestException or InvalidOperationException or JsonException)
         {
+            // A lane that cannot be read is retired; the other lanes keep the feed going.
             lane.Dead = true;
         }
         return posts;

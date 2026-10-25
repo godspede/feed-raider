@@ -1,6 +1,6 @@
 namespace TUImation;
 
-/// <summary>A 24-bit RGB pixel. Two of these stack into one terminal cell (see Renderer).</summary>
+/// <summary>A 24-bit RGB pixel. Two of these stack into one terminal cell.</summary>
 public readonly record struct Rgb(byte R, byte G, byte B)
 {
     public Rgb Darken(double factor) =>

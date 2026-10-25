@@ -47,9 +47,21 @@ test('watchAtlas renews at the first page merge, whatever the count, and a new a
   assert.equal(renewals2, 0);
 });
 
-test('main.js loads the WebGL addon through watchAtlas and renews it by disposing the old addon first', () => {
+test('watchAtlas re-arms when renew hands the addon a fresh atlas, so one addon renews every cycle', () => {
+  const gl = fakeAddon();
+  let renewals = 0;
+  watchAtlas(gl, () => { renewals++; gl.change(); }); // renewing starts a one-page atlas in place
+  for (let cycle = 1; cycle <= 3; cycle++) {
+    for (let i = 0; i < ATLAS_PAGE_LIMIT; i++) gl.add();
+    assert.equal(renewals, cycle);
+  }
+});
+
+test('main.js loads the WebGL addon through watchAtlas and renews the atlas in place, never by a new GL context', () => {
   const main = readFileSync(new URL('../../src/FeedRaider.Web/wwwroot/main.js', import.meta.url), 'utf8');
   assert.match(main, /page\.watchAtlas\(gl,/);
-  // the atlas is cached per terminal: a new addon loaded before the old one is disposed would get the same full atlas
-  assert.match(main, /gl\.dispose\(\);[^\n]*loadWebgl\(\)/);
+  // a new context costs a quarter to a second and a half of frozen frames; an option flip makes xterm build a new atlas in place
+  assert.match(main, /drawBoldTextInBrightColors = !term\.options\.drawBoldTextInBrightColors/);
+  assert.doesNotMatch(main, /gl\.dispose\(\);[^\n]*loadWebgl\(\)/);
+  assert.doesNotMatch(main, /loseContext/);
 });

@@ -197,6 +197,13 @@ public sealed class DiffEncoder
 
     public int LastChanged { get; private set; }
 
+    /// <summary>When set, every colour sent goes through it first (see <see cref="ColourSnap"/>). Change detection still
+    /// compares the colours the screen holds.</summary>
+    public ColourSnap? Snap { get; init; }
+
+    /// <summary>The encoder the game sends with: colours snapped to a <see cref="ColourSnap"/> with its defaults.</summary>
+    public static DiffEncoder Snapped() => new() { Snap = new ColourSnap() };
+
     public void Invalidate() => _full = true;
 
     private static sbyte[] BuildQuadMask()
@@ -243,15 +250,25 @@ public sealed class DiffEncoder
                 {
                     int ik = r * cols + k;
                     char ch = sch[ik]; uint fg = sfg[ik], bg = sbg[ik];
+                    if (Snap is { } snap) { fg = snap[fg]; bg = snap[bg]; }
                     char glyph = ch;
                     bool needFg = true, needBg = true;
                     if (ch == ' ') needFg = false;
                     else if (ch == '█') needBg = false;
                     else if (QuadMask[ch] is var m and >= 0)
                     {
-                        int asIs = (fg != lastFg ? 1 : 0) + (bg != lastBg ? 1 : 0);
-                        int flipped = (bg != lastFg ? 1 : 0) + (fg != lastBg ? 1 : 0);
-                        if (flipped < asIs) { glyph = QuadGlyph[m ^ 15]; (fg, bg) = (bg, fg); }
+                        if (Snap is not null)
+                        {
+                            // one orientation per colour pair, and a cell of one colour is a space, so the atlas holds each look once
+                            if (fg == bg) { glyph = ' '; needFg = false; }
+                            else if (fg < bg) { glyph = QuadGlyph[m ^ 15]; (fg, bg) = (bg, fg); }
+                        }
+                        else
+                        {
+                            int asIs = (fg != lastFg ? 1 : 0) + (bg != lastBg ? 1 : 0);
+                            int flipped = (bg != lastFg ? 1 : 0) + (fg != lastBg ? 1 : 0);
+                            if (flipped < asIs) { glyph = QuadGlyph[m ^ 15]; (fg, bg) = (bg, fg); }
+                        }
                     }
                     needFg = needFg && fg != lastFg; needBg = needBg && bg != lastBg;
                     if (needFg || needBg)

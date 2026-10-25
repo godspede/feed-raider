@@ -9,6 +9,17 @@ public readonly record struct FieldLayout(int Cols, int Rows, int Col0, int PCol
     /// <summary>Spare columns left of the field; a wide terminal puts the dialogue panel there.</summary>
     public int Margin => Col0;
 
+    /// <summary>Width in columns of each side column, or 0 when the margin cannot hold one: as wide as the margin allows
+    /// after the gap to the field and one spare column, up to <see cref="Tuning.SidePanelMaxCols"/>.</summary>
+    public int PanelCols
+    {
+        get
+        {
+            int w = Math.Min(Tuning.SidePanelMaxCols, Margin - Tuning.SideGapCols - 1);
+            return w >= Tuning.SidePanelMinCols ? w : 0;
+        }
+    }
+
     public static FieldLayout Compute(int cols, int rows)
     {
         int pc = Math.Min(cols, Tuning.FieldMaxCols) & ~1;

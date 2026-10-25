@@ -22,13 +22,13 @@ public class FeedLogTests
     {
         var g = new RaiderGame(5) { LoggedIn = true };
         g.SetLayout(FieldLayout.Compute(Cols, Rows));
-        for (int i = 1; i <= posts; i++) g.OfferPost(Post(i));
+        for (int i = 1; i <= posts; i++) g.Queue.Offer(Post(i));
         return g;
     }
 
-    private static int C0(RaiderGame g) => g.Layout.Col0 - 28;
+    private static int C0(RaiderGame g) => g.Layout.Col0 - 2 - g.Layout.PanelCols;
 
-    private static string ColRow(Screen s, RaiderGame g, int r) => new(Enumerable.Range(C0(g), 26).Select(c => s.CharAt(c, r)).ToArray());
+    private static string ColRow(Screen s, RaiderGame g, int r) => new(Enumerable.Range(C0(g), g.Layout.PanelCols).Select(c => s.CharAt(c, r)).ToArray());
 
     /// <summary>The row of the log column showing <paramref name="text"/>, or -1.</summary>
     private static int RowOf(Screen s, RaiderGame g, string text) => Enumerable.Range(0, s.Rows).FirstOrDefault(r => ColRow(s, g, r).Contains(text), -1);
@@ -131,13 +131,13 @@ public class FeedLogTests
         string text = string.Join(' ', Enumerable.Repeat("tomatoes ripen slowly in cool spring weather", 5)) + " and the very last word zebra";
         var g = new RaiderGame(5) { LoggedIn = true };
         g.SetLayout(FieldLayout.Compute(Cols, Rows));
-        g.OfferPost(Post(1, text));
+        g.Queue.Offer(Post(1, text));
         RunUntil(g, () => g.Wings.Count == 1);
         var w = g.Wings.Single();
         var scr = Render(new RaiderView(), g);
         Assert.True(RowOf(scr, g, "@b1.test") >= 0);
         Assert.True(RowOf(scr, g, w.LikesTag) >= 0);
-        var lines = BubbleText.Format(text, 24, 200);
+        var lines = BubbleText.Format(text, g.Layout.PanelCols - 2, 200);
         Assert.True(lines.Length > 5);
         foreach (var l in lines) Assert.True(RowOf(scr, g, l) >= 0, $"\"{l}\" is shown");
         Assert.DoesNotContain(Enumerable.Range(0, Rows), r => ColRow(scr, g, r).Contains('…'));
@@ -148,7 +148,7 @@ public class FeedLogTests
     {
         var g = new RaiderGame(5) { LoggedIn = true };
         g.SetLayout(FieldLayout.Compute(Cols, Rows));
-        g.OfferPost(Post(1));
+        g.Queue.Offer(Post(1));
         RunUntil(g, () => g.Wings.Count == 1);
         var w = g.Wings.Single();
         g.ThreadOpened(w.Post.Uri, Post(1, "the reply in the same thread carries on and ends in giraffe") with { Uri = "at://did:plc:b1/app.bsky.feed.post/1b", Cid = "cid1b" });
@@ -163,7 +163,7 @@ public class FeedLogTests
     {
         var g = new RaiderGame(5) { LoggedIn = true };
         g.SetLayout(FieldLayout.Compute(48, 60));
-        g.OfferPost(Post(1));
+        g.Queue.Offer(Post(1));
         RunUntil(g, () => g.Wings.Count == 1 && g.Comms.Speaker is not null);
         var scr = new Screen(48, 60);
         new RaiderView().Render(g, scr);

@@ -130,7 +130,7 @@ public class DarknessSourcesTests
         Assert.Equal((DarknessKind.Spam, DarkSource.Label, "win free crypto now"), (post.Kind, post.Source, post.Text));
 
         var room = RoomOfGuys();
-        room.Haunt(post);
+        room.Dark.Offer(post);
         string everything = "";
         for (long ms = 0; ms < 12000; ms += 250) everything += room.Render(100, 40, ms);
         Assert.True(room.Dark.SpawnedFromLabels > 0);
@@ -144,7 +144,7 @@ public class DarknessSourcesTests
     public void Spawns_are_counted_by_source()
     {
         var room = RoomOfGuys();
-        room.Haunt(new DarkPost(DarknessKind.Rude, 1, "grr", DarkSource.Hidden));
+        room.Dark.Offer(new DarkPost(DarknessKind.Rude, 1, "grr", DarkSource.Hidden));
         for (long ms = 0; ms < 3000; ms += 250) room.Render(100, 40, ms);
         Assert.Equal(1, room.Dark.SpawnedFromHidden);
         Assert.Equal(0, room.Dark.SpawnedFromLabels);

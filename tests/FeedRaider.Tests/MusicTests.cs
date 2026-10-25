@@ -17,7 +17,7 @@ public class MusicTests
     /// <summary>Feeds the same snapshot every half second from <paramref name="from"/> to <paramref name="to"/> seconds.</summary>
     private static void Hold(MusicDirector d, MusicSnapshot s, double from, double to)
     {
-        for (double t = from; t <= to; t += 0.5) d.Update(s, t);
+        for (double t = from; t <= to; t += 0.5) d.Update(s);
     }
 
     [Fact]

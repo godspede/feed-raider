@@ -105,7 +105,9 @@ public sealed partial class RaiderGame
         }
     }
 
-    public static uint PickupColor(PickupKind k) => k switch { PickupKind.Shield => 0x4fe8ff, PickupKind.Bomb => 0xff9a3c, _ => 0xffd84a };
+    private const uint ShieldColor = 0x4fe8ff;
+
+    public static uint PickupColor(PickupKind k) => k switch { PickupKind.Shield => ShieldColor, PickupKind.Bomb => 0xff9a3c, _ => 0xffd84a };
 
     private void Collect(Pickup p)
     {
@@ -153,7 +155,7 @@ public sealed partial class RaiderGame
         InvulnIsShield = true;
         Sound(SfxNames.ShieldHit, PX);
         AddShake(Tuning.ShakeShield);
-        AddRing(PX, PY, 7, 16, 0x4fe8ff, 10);
+        AddRing(PX, PY, 7, 16, PickupColor(PickupKind.Shield), 10);
         AddRing(PX, PY, 5, 11, 0xffffff, 7);
         foreach (var e in Enemies)
         {
@@ -163,7 +165,7 @@ public sealed partial class RaiderGame
         for (int i = 0; i < 8; i++)
         {
             double a = R() * Math.PI * 2;
-            AddParticle(new Particle { X = PX + Math.Cos(a) * 8, Y = PY + Math.Sin(a) * 8, VX = Math.Cos(a) * 1.2, VY = Math.Sin(a) * 1.2, Life = 8, Color = 0x4fe8ff, Kind = ParticleKind.Spark });
+            AddParticle(new Particle { X = PX + Math.Cos(a) * 8, Y = PY + Math.Sin(a) * 8, VX = Math.Cos(a) * 1.2, VY = Math.Sin(a) * 1.2, Life = 8, Color = PickupColor(PickupKind.Shield), Kind = ParticleKind.Spark });
         }
         return true;
     }

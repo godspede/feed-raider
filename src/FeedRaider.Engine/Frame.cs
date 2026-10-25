@@ -5,8 +5,8 @@ namespace FeedRaider.Engine;
 
 /// <summary>
 /// A pixel layer (half-block, via Canvas) with a text layer on top. Speech needs real glyphs, which
-/// the vendored Renderer cannot do, so frames are composed here: a cell with text shows the text,
-/// any other cell shows the same half-block pair Renderer would emit.
+/// the vendored renderers cannot do, so frames are composed here: a cell with text shows the text,
+/// any other cell shows a half-block pair.
 /// </summary>
 internal sealed class Frame
 {

@@ -21,8 +21,10 @@ public sealed class Enemy
     public string? Text;
     public bool Live;
     public DarknessKind? Source;
-    /// <summary>The badge drawn above a darkness enemy (" SPAM "), built once at spawn; null for filler.</summary>
-    public string? Badge;
+    /// <summary>The header of a darkness enemy's comm box ("SPAM"), built once at spawn; null for filler.</summary>
+    public string? Header;
+    public string[]? CommLines;
+    public int CommChars, CommAge;
     public bool Leaving;
     public double VY = 0.55;
     public double VX;
@@ -54,7 +56,7 @@ public sealed class Popup { public string Text = ""; public double X, Y; public 
 /// <summary>
 /// Feed Raider's simulation: a fixed 30 Hz step, no clock and no network. Time is the number of calls to <see cref="Step"/>;
 /// randomness is a seeded generator, so a run is a pure function of the seed and the inputs. Hosts feed it input
-/// (<see cref="Input"/>), darkness events (<see cref="OfferDark"/>) and feed posts (<see cref="OfferPost"/>), and read its
+/// (<see cref="Input"/>), darkness events (<see cref="OfferDark"/>) and feed posts (<see cref="Queue"/>), and read its
 /// state to draw. The only outward effect is <see cref="OnLike"/>, called at one place: <see cref="TryLike"/>.
 /// </summary>
 public sealed partial class RaiderGame
@@ -146,7 +148,7 @@ public sealed partial class RaiderGame
     public WingComms Comms { get; } = new();
     public FeedLog Log { get; } = new();
     private readonly Queue<WaveSpec> _waves = new();
-    private readonly List<(long At, EnemySpawn Spawn, bool Live, DarknessKind? Src, string? Badge)> _pending = [];
+    private readonly List<(long At, EnemySpawn Spawn, bool Live, DarknessKind? Src, string? Header)> _pending = [];
     private readonly HashSet<string> _liked = new(StringComparer.Ordinal);
     private readonly Dictionary<string, uint[]> _avatars = new(StringComparer.Ordinal);
     private int _sinceWave, _emptyFor, _fillerN;
@@ -207,8 +209,6 @@ public sealed partial class RaiderGame
         _waves.Enqueue(WaveSpawner.FromPost(post, Stage));
     }
 
-    public bool OfferPost(FeedPost post) => Queue.Offer(post);
-
     public void SetAvatar(string did, uint[] px)
     {
         if (px.Length != 64) return;
@@ -219,7 +219,9 @@ public sealed partial class RaiderGame
     /// <summary>What the first signed-out like press says. Later presses stay quiet. The flag lives on the game, and the web host makes one game per page load.</summary>
     public const string SignInHint = "sign in to like";
     private bool _hintShown;
-    public void Say(string text) { Toast = text; ToastLeft = Tuning.Fps * 2; }
+    /// <summary>Hears every toast, so a host can pass it on to a screen reader. Called under the game lock.</summary>
+    public Action<string>? Said { get; set; }
+    public void Say(string text) { Toast = text; ToastLeft = Tuning.Fps * 2; Said?.Invoke(text); }
 
     /// <summary>The host's like call failed: allow another try on that post, and say why.</summary>
     public void LikeFailed(string uri, string? reason = null)
@@ -310,7 +312,7 @@ public sealed partial class RaiderGame
     {
         if (OnBest is not null && Score > RecordToBeat && Score > _bestSaved && Frame % Tuning.Fps == 0) { _bestSaved = Score; OnBest(Score); }
         Music?.Update(new MusicSnapshot(Deaths, Enemies.Any(e => e.Kind == EnemyKind.Gunship && e.Y > 0 && !e.Leaving),
-            Hp, Wings.Count, LiveWavesCleared, Score, RecordToBeat), Frame / (double)Tuning.Fps);
+            Hp, Wings.Count, LiveWavesCleared, Score, RecordToBeat));
     }
 
     private void UpdateStage()
@@ -425,15 +427,15 @@ public sealed partial class RaiderGame
 
         for (int i = _pending.Count - 1; i >= 0; i--)
         {
-            var (at, sp, live, src, badge) = _pending[i];
+            var (at, sp, live, src, header) = _pending[i];
             if (at > Tick) continue;
             _pending.RemoveAt(i);
-            SpawnEnemy(sp, live, src, badge);
+            SpawnEnemy(sp, live, src, header);
         }
 
         bool gunshipUp = Enemies.Any(e => e.Kind == EnemyKind.Gunship) || _pending.Any(p => p.Spawn.Kind == EnemyKind.Gunship);
         bool real = _waves.Count > 0 && !(gunshipUp && _waves.Peek().Kind == DarknessKind.Rude);
-        bool empty = _emptyFor >= Tuning.EmptyScreenFrames && _sinceWave >= 24;
+        bool empty = _emptyFor >= Tuning.EmptyScreenFrames && _sinceWave >= Tuning.MinWaveGapFrames;
         if (real && (_sinceWave >= Tuning.WaveGapFrames || empty)) Launch(_waves.Dequeue());
         else if (!real && _waves.Count == 0 && (empty || _sinceWave >= Ramp.FillerGap(Stage) && Enemies.Count < 3))
             Launch(WaveSpawner.Filler(Hashing.Mix(_seed + (ulong)(++_fillerN)), Stage));
@@ -444,8 +446,8 @@ public sealed partial class RaiderGame
         _sinceWave = 0;
         WavesSpawned++;
         if (w.Live) { LiveWavesSpawned++; Sound(SfxNames.Darkness); }
-        string? badge = w.Live && w.Kind is { } bk ? EnemyBadge.Text(w.Label, bk) : null;
-        foreach (var s in w.Enemies) _pending.Add((Tick + 1 + s.Delay, s, w.Live, w.Kind, badge));
+        string? header = w.Live && w.Kind is { } bk ? BaddieComm.Header(w.Label, bk, w.Source) : null;
+        foreach (var s in w.Enemies) _pending.Add((Tick + 1 + s.Delay, s, w.Live, w.Kind, header));
     }
 
     public static Sprite SpriteFor(EnemyKind kind) => kind switch
@@ -473,7 +475,7 @@ public sealed partial class RaiderGame
         _ => Tuning.GruntHp,
     };
 
-    private void SpawnEnemy(EnemySpawn s, bool live, DarknessKind? src, string? badge)
+    private void SpawnEnemy(EnemySpawn s, bool live, DarknessKind? src, string? header)
     {
         var sprite = SpriteFor(s.Kind);
         double hp = BaseHp(s.Kind) * (s.Kind is EnemyKind.Mine or EnemyKind.Shard ? 1 : Ramp.HpMul(Stage));
@@ -492,7 +494,7 @@ public sealed partial class RaiderGame
             Text = s.Text,
             Live = live,
             Source = src,
-            Badge = badge,
+            Header = header,
             FireCd = 50 + (int)(R() * 90),
             VY = s.Kind == EnemyKind.Gunship ? 0.5 : 0.5 + R() * 0.15,
             Grace = s.Kind == EnemyKind.Mine ? Tuning.MineArmFrames : s.Kind == EnemyKind.Shard ? Tuning.ShardGraceFrames : 0,
@@ -523,7 +525,7 @@ public sealed partial class RaiderGame
                 MaxHp = Tuning.ShardHp,
                 Live = parent.Live,
                 Source = parent.Source,
-                Badge = parent.Badge,
+                Header = parent.Header,
                 VX = side * Tuning.ShardSpeedX,
                 VY = Tuning.ShardSpeedY,
                 Grace = Tuning.ShardGraceFrames,
@@ -536,6 +538,7 @@ public sealed partial class RaiderGame
         foreach (var e in Enemies)
         {
             e.Age++;
+            BaddieComm.Update(e, Layout.PCols);
             if (e.Flash > 0) e.Flash--;
             e.BaseX += e.KX; e.Y += e.KY;
             e.KX *= Tuning.KnockDecay; e.KY *= Tuning.KnockDecay;
@@ -545,7 +548,7 @@ public sealed partial class RaiderGame
             }
             else if (e.Kind == EnemyKind.Gunship)
             {
-                if (!e.Leaving && e.Age > 640) e.Leaving = true;
+                if (!e.Leaving && e.Age > Tuning.GunshipStayFrames) e.Leaving = true;
                 if (e.Leaving) e.Y -= 0.8;
                 else if (e.Y < 22) e.Y += e.VY;
                 e.X = e.BaseX + Math.Sin(e.Age * 0.035 + e.Phase) * e.Amp * PW;
@@ -559,7 +562,8 @@ public sealed partial class RaiderGame
                 if (e.Y > 6 && e.Y < PH * 0.6 && --e.FireCd <= 0)
                 {
                     double gap = Ramp.FireGapMul(Stage);
-                    e.FireCd = gap == 1 ? (e.Live ? 90 : 140) + (int)(R() * 80) : (int)(((e.Live ? 90 : 140) + R() * 80) * gap);
+                    int baseGap = e.Live ? Tuning.EnemyFireGapLive : Tuning.EnemyFireGapIdle;
+                    e.FireCd = gap == 1 ? baseGap + (int)(R() * Tuning.EnemyFireGapJitter) : (int)((baseGap + R() * Tuning.EnemyFireGapJitter) * gap);
                     if (Alive) EnemyShot(e.X, e.Y + 2, PX, PY, 0, Tuning.EnemyBulletSpeed * Ramp.BulletSpeedMul(Stage));
                 }
             }
@@ -640,10 +644,9 @@ public sealed partial class RaiderGame
 
     private void GunshipVolley(Enemy e)
     {
-        e.FireCd = 38;
-        e.Hits += 0;
+        e.FireCd = Tuning.GunshipVolleyFrames;
         double y = e.Y + e.Sprite.H / 2.0;
-        if ((e.Age / 38) % 2 == 0)
+        if ((e.Age / Tuning.GunshipVolleyFrames) % 2 == 0)
             for (int i = -1; i <= 1; i++) EnemyShot(e.X, y, PX, PY, i * 0.28, Tuning.EnemyBulletSpeed * 1.1 * Ramp.BulletSpeedMul(Stage));
         else
             for (int i = -2; i <= 2; i++) Bullets.Add(new Bullet { X = e.X + i * 4, Y = y, VX = i * 0.22, VY = Tuning.EnemyBulletSpeed * Ramp.BulletSpeedMul(Stage) });
@@ -706,7 +709,7 @@ public sealed partial class RaiderGame
         // a free slot, taking turns left and right so a lone wingman doesn't always fly on one side
         int slot = _wingsSpawned++ % 2;
         if (Wings.Any(w => w.Slot == slot)) slot ^= 1;
-        var plane = PlaneFactory.Make(post.AuthorDid, wingman: true);
+        var plane = PlaneFactory.Make(post.AuthorDid);
         var w = new Wingman
         {
             Post = post,
@@ -1023,7 +1026,7 @@ public sealed partial class RaiderGame
 
     private void AddParticle(Particle p)
     {
-        if (Particles.Count < 420) { p.MaxLife = p.Life; Particles.Add(p); }
+        if (Particles.Count < Tuning.MaxParticles) { p.MaxLife = p.Life; Particles.Add(p); }
     }
 
     private void AddRing(double x, double y, double r0, double r1, uint color, int frames) =>

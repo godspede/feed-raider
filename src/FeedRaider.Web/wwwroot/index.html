@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -36,8 +36,8 @@
     body { display: flex; flex-direction: column; }
     header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; min-height: 40px; padding: 4px 12px; border-bottom: 2px solid var(--field); }
     /* the wordmark: bold, spaced capitals after the talking-wingman bar */
-    h1 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--cream); white-space: nowrap; }
-    h1::before { content: "▌"; color: var(--olive); margin-right: .35em; letter-spacing: 0; }
+    h1, #menu-title { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--cream); white-space: nowrap; }
+    h1::before, #menu-title::before { content: "▌"; color: var(--olive); margin-right: .35em; letter-spacing: 0; }
     form { display: flex; gap: 8px; }
     input { background: var(--ground); color: var(--cream); caret-color: var(--olive); border: 2px solid var(--frame); border-radius: 0; padding: 4px 8px; font: inherit; width: 16em; }
     input::placeholder { color: var(--navy); opacity: 1; }
@@ -69,6 +69,9 @@
     #vol::-moz-range-thumb { width: 10px; height: 18px; background: var(--olive); border: 0; border-radius: 0; box-shadow: 0 0 0 2px var(--ground); }
     #vol:hover::-webkit-slider-thumb { background: var(--olive-light); box-shadow: 0 0 0 2px var(--ground), var(--glow); }
     #vol:hover::-moz-range-thumb { background: var(--olive-light); box-shadow: 0 0 0 2px var(--ground), var(--glow); }
+    .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+    #play-title { display: none; }
+    body.playing #play-title { display: block; }
     #debug { display: none; max-height: 40vh; overflow: auto; padding: 8px 16px; border-bottom: 2px solid var(--field); font-size: 13px; }
     #debug h2 { margin: 0 0 6px; font-size: 14px; color: var(--cream); }
     #debug .post { border-top: 1px solid var(--field); padding: 6px 0; }
@@ -87,8 +90,8 @@
     body.game:not(.debug) header { display: none; }
     body.game header form:not(#login), body.game #note { display: none; }
     body.playing #login { display: none; }
-    /* the gear at the top right of the field, beside the Stage readout: a 44 px target around a HUD-sized button. It never
-       takes focus, so Space and the arrows stay with the game; Esc does the same. */
+    /* the gear at the top right of the field, beside the Stage readout: a 44 px target around a HUD-sized button. Tab
+       reaches it; a press never takes focus from the game, and Space and the arrows stay with the game. */
     #gear { position: fixed; z-index: 2; padding: 0; background: transparent; box-shadow: none; cursor: pointer; }
     #gear[hidden], #side[hidden] { display: none; }
     #gear .face { position: absolute; display: flex; align-items: center; justify-content: center; background: var(--field); color: var(--olive); box-shadow: inset 0 0 0 2px var(--frame); }
@@ -122,8 +125,8 @@
     #menu::backdrop { background: rgba(16, 19, 22, .75); }
     #menu[open] { display: grid; grid-template-columns: minmax(16em, 20em) 1fr; }
     #menu .controls { display: flex; flex-direction: column; gap: 12px; padding: 22px 20px 22px 24px; border-right: 2px solid var(--field); }
-    #menu h1 { font-size: 24px; letter-spacing: .14em; white-space: normal; text-shadow: 3px 3px 0 var(--olive-deep), var(--glow); }
-    #menu h1::before { text-shadow: var(--glow); }
+    #menu-title { font-size: 24px; letter-spacing: .14em; white-space: normal; text-shadow: 3px 3px 0 var(--olive-deep), var(--glow); }
+    #menu-title::before { text-shadow: var(--glow); }
     #menu .paused { margin: -4px 0 4px; }
     #menu .paused::before { content: "> "; color: var(--olive); }
     #menu button { min-height: 44px; padding: 8px 16px; }
@@ -208,6 +211,7 @@
     #start-who { display: flex; align-items: center; gap: 12px; color: var(--cream); font-weight: 700; }
     #start-signout, #start-signout:hover:not(:disabled) { align-self: center; background: transparent; color: var(--sky); font-weight: 400; text-decoration: underline; text-underline-offset: 3px; min-height: 44px; padding: 6px 8px; font-size: 13px; box-shadow: none; }
     #start .hint { margin: 0; font-size: 13px; color: var(--sky); }
+    #start-note { margin: 0; color: var(--cream); background: var(--field); padding: 8px 12px 8px 16px; font-size: 14px; box-shadow: inset 4px 0 0 var(--olive); }
     #start-error { display: none; margin: 0; color: #f4f8e4; background: var(--wine); padding: 8px 12px 8px 16px; font-size: 14px; box-shadow: inset 4px 0 0 var(--cream); }
     #start .controls { margin: 0; font-size: 13px; }
     #start .alt { margin: 0; font-size: 13px; text-align: center; }
@@ -229,28 +233,29 @@
   <header>
     <h1>Feed Raider</h1>
     <form method="get">
-      <input name="handle" placeholder="handle, e.g. bsky.app" aria-label="Bluesky handle" autocomplete="off" spellcheck="false">
+      <input type="text" name="handle" placeholder="handle, e.g. bsky.app" aria-label="Bluesky handle" autocomplete="off" spellcheck="false">
       <button type="submit">watch</button>
     </form>
     <span id="note">A watch-only view of a feed, nothing to fly. <a href="./">Play the game</a></span>
     <div id="right">
     <form id="login">
-      <input name="login-handle" placeholder="your handle, e.g. you.bsky.social" aria-label="Your Bluesky handle" autocomplete="username" spellcheck="false">
+      <input type="text" name="login-handle" placeholder="your handle, e.g. you.bsky.social" aria-label="Your Bluesky handle" autocomplete="username" spellcheck="false">
       <button type="submit">Sign in with Bluesky</button>
     </form>
     <div id="who" style="display:none"><span></span> <button id="logout" type="button">Sign out</button></div>
     </div>
   </header>
-  <div id="debug"></div>
+  <section id="debug" aria-label="Feed debug"></section>
   <div id="error" role="alert"></div>
-  <div id="term"></div>
-  <button id="gear" type="button" tabindex="-1" aria-label="Pause menu" aria-haspopup="dialog" aria-controls="menu" title="Pause (Esc)" hidden>
+  <div id="announce" class="sr-only" role="status"></div>
+  <main id="term" aria-label="Game"><h1 id="play-title" class="sr-only">Feed Raider, playing</h1></main>
+  <button id="gear" type="button" aria-label="Pause menu" aria-haspopup="dialog" aria-controls="menu" title="Pause (Esc)" hidden>
     <span class="face"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="4" stroke-dasharray="3.1416 3.1416"/><circle cx="12" cy="12" r="6.5" fill="currentColor"/><circle class="hole" cx="12" cy="12" r="2.6"/></svg></span>
   </button>
   <aside id="side" class="info" aria-label="About Feed Raider" hidden></aside>
   <dialog id="menu" aria-labelledby="menu-title">
     <div class="controls">
-      <h1 id="menu-title">Feed Raider</h1>
+      <h2 id="menu-title">Feed Raider</h2>
       <p class="paused">Paused.</p>
       <button type="button" id="menu-resume" autofocus>Resume</button>
       <fieldset id="menu-sound" hidden>
@@ -297,10 +302,12 @@
     </section>
   </template>
   <div id="start">
-    <main id="start-form">
+    <!-- [html-validate-disable-next no-multiple-main -- the start page and the game are never on screen together: the game is inert behind it and it is hidden once a run starts] -->
+    <main id="start-form" aria-label="Start menu">
       <h1>Feed Raider</h1>
       <p class="tagline">Fly through your Bluesky feed and shoot it down.</p>
       <div id="start-load">
+        <!-- [html-validate-disable-next prefer-native-element -- the segmented HUD bar is drawn by the span inside; a native progress element cannot be styled to the same look in every browser] -->
         <div id="start-bar" class="indeterminate" role="progressbar" aria-label="Loading the game" aria-valuemin="0" aria-valuemax="100"><span></span></div>
         <p id="start-load-text" role="status">Loading the game…</p>
         <button type="button" id="start-retry" hidden>Retry</button>
@@ -311,7 +318,7 @@
           <p class="blurb">Fly your own feed and like posts for real. Nothing else is ever posted.</p>
           <button type="button" id="start-login" class="primary" disabled>Sign in with Bluesky</button>
           <div id="start-signed" hidden>
-            <div id="start-who"><img id="start-avatar" alt="" hidden><span id="start-who-name"></span></div>
+            <div id="start-who"><span id="start-who-name"></span></div>
             <button type="button" id="start-play" class="primary">Play</button>
             <button type="button" id="start-signout">not you? sign out</button>
           </div>
@@ -321,7 +328,8 @@
           <p class="blurb">Type a handle. Your wingmen are the posts of the people they follow. No account needed.</p>
           <form id="start-handle-form" autocomplete="off">
             <div class="combo">
-              <input id="start-handle" role="combobox" aria-label="A Bluesky handle" aria-autocomplete="list" aria-expanded="false" aria-controls="start-suggest" placeholder="someone.bsky.social" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="email" enterkeyhint="go">
+              <input type="text" id="start-handle" role="combobox" aria-label="A Bluesky handle" aria-autocomplete="list" aria-expanded="false" aria-controls="start-suggest" placeholder="someone.bsky.social" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="email" enterkeyhint="go">
+              <!-- [html-validate-disable-next prefer-native-element -- the ARIA 1.2 combobox pattern wants a listbox popup owned by the input; a select or datalist cannot show avatars] -->
               <ul id="start-suggest" role="listbox" aria-label="Matching accounts" hidden></ul>
             </div>
             <button type="submit" id="start-guest" class="primary">Play as someone</button>
@@ -335,6 +343,7 @@
       </div>
       <p class="hint" id="start-hint">Without signing in, liking is off.</p>
       <div id="start-error" role="alert"></div>
+      <p id="start-note" role="status" hidden></p>
       <p class="controls"><kbd>WASD</kbd>/arrows move, <kbd>Space</kbd> fires (<kbd>F</kbd> auto-fire), <kbd>B</kbd> bomb, <kbd>E</kbd> likes a wingman's post, <kbd>Esc</kbd> pauses. Mouse or touch: hold on a wingman to like it (a tap never does), right click or two-finger tap bombs.</p>
       <p class="alt"><a href="?mode=spectator">spectator view</a></p>
     </main>

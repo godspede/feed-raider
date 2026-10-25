@@ -146,7 +146,7 @@ public class FollowsFeedTests
         var said = new List<string>();
         using var cts = new CancellationTokenSource();
         var run = RaiderFeeds.WingmenAsync(game, primary, fallback, "", cts.Token, onFallback: said.Add, backoffMs: 10);
-        await Task.Delay(1500);
+        await Wait.UntilAsync(() => { lock (game) return game.Queue.Count > 0; }, "a wingman after the retries");
         cts.Cancel();
         await run.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(0, fallback.Calls);

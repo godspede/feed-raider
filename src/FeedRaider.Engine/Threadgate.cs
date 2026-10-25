@@ -65,7 +65,7 @@ public sealed class ThreadgateDiffer
 /// replies a thread owner has newly hidden; nothing about the owner or the reply's author leaves this class.</summary>
 public sealed class ThreadgateSource : IHasState
 {
-    public const string Endpoint = "wss://jetstream2.us-east.bsky.network/subscribe?wantedCollections=app.bsky.feed.threadgate";
+    public const string Endpoint = $"{JetstreamSource.DefaultEndpoint}?wantedCollections={ThreadgateDiffer.GateCollection}";
     public string State { get; private set; } = "connecting";
     public int GatesSeen { get; private set; }
     /// <summary>While paused the connection is closed; on resume it opens afresh (the paused time is not replayed).</summary>
@@ -90,12 +90,12 @@ public sealed class ThreadgateSource : IHasState
             {
                 failures++;
                 State = $"reconnecting ({failures})";
-                try { await Task.Delay(TimeSpan.FromSeconds(Math.Min(30, 1 << Math.Min(failures, 5))), ct); } catch (OperationCanceledException) { yield break; }
+                try { await Task.Delay(JetstreamSource.Backoff(failures), ct); } catch (OperationCanceledException) { yield break; }
                 continue;
             }
             failures = 0;
             State = "live";
-            var buffer = new byte[16 * 1024];
+            var buffer = new byte[JetstreamSource.ReceiveBufferBytes];
             while (ws.State == WebSocketState.Open && !wsCt.IsCancellationRequested)
             {
                 string? msg = await ReceiveAsync(ws, buffer, wsCt);

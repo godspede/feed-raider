@@ -222,7 +222,7 @@ public static class PlaneFactory
     /// <summary>The ship's body colour: the accent its comm and chip wear.</summary>
     public static uint Accent(string did) => Hsv(Hashing.Unit(Hashing.Fnv64(did), 1), 0.55, 0.95);
 
-    public static Sprite Make(string did, bool wingman = false)
+    public static Sprite Make(string did)
     {
         ulong h = Hashing.Fnv64(did);
         double hue = Hashing.Unit(h, 1);
@@ -240,7 +240,7 @@ public static class PlaneFactory
         void P(int x, int y, uint col) { if ((uint)x < W && (uint)y < H) sp.Px[y * W + x] = col | Sprite.Opaque; }
         for (int y = 0; y < H; y++)
         {
-            int fh = y < 2 ? 0 : y < 6 ? 1 : 1;
+            int fh = y < 2 ? 0 : 1;
             for (int x = -fh; x <= fh; x++) P(c + x, y, x == 0 && y > 1 && y < 5 ? (y == 3 ? glass : trim) : body);
         }
         for (int i = 1; i <= span; i++)
@@ -261,7 +261,7 @@ public static class PlaneFactory
         // a lit nose and engine
         P(c, 0, trim);
         P(c, H - 1, 0xffd166);
-        return wingman ? sp : sp;
+        return sp;
     }
 
     private static uint Hsv(double h, double s, double v)

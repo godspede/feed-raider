@@ -199,12 +199,12 @@ public sealed class LabelSource : IHasState
             {
                 failures++;
                 State = $"reconnecting ({failures})";
-                try { await Task.Delay(TimeSpan.FromSeconds(Math.Min(30, 1 << Math.Min(failures, 5))), ct); } catch (OperationCanceledException) { yield break; }
+                try { await Task.Delay(JetstreamSource.Backoff(failures), ct); } catch (OperationCanceledException) { yield break; }
                 continue;
             }
             failures = 0;
             State = "live";
-            var buffer = new byte[16 * 1024];
+            var buffer = new byte[JetstreamSource.ReceiveBufferBytes];
             while (ws.State == WebSocketState.Open && !wsCt.IsCancellationRequested)
             {
                 var frame = await ReceiveAsync(ws, buffer, wsCt);
@@ -263,6 +263,8 @@ public sealed class DarknessStats
 /// <summary>Subjects in, anonymous <see cref="DarkPost"/>s out. Fetching is paced (one at a time) and the backlog drops its oldest.</summary>
 public static class DarknessFeed
 {
+    private const int SeenCap = 5000;
+
     /// <summary>Labels in. Post-level spam/engagement-farming/rude and account-level spam pass; the subject is fetched, then forgotten.</summary>
     public static Task RunAsync(IAsyncEnumerable<LabelEvent> labels, Func<string, CancellationToken, Task<string?>> fetchText,
         Action<DarkPost> onPost, DarknessStats stats, CancellationToken ct, int paceMs = 600, PauseGate? pause = null) =>
@@ -282,7 +284,7 @@ public static class DarknessFeed
             stats.LabelsSeen++;
             if (DarknessFilter.Accept(l) is null && DarknessFilter.AcceptAccount(l) is null) continue;
             if (!seen.Add(l.Uri)) continue;
-            if (seen.Count > 5000) seen.Clear();
+            if (seen.Count > SeenCap) seen.Clear();
             if (DarknessFilter.Accept(l) is { } kind) { stats.LabelsPassed++; yield return (l.Uri, kind, l.Val); }
             else if (DarknessFilter.AcceptAccount(l) is { } k) { stats.LabelsPassed++; stats.AccountLabels++; yield return (l.Uri, k, l.Val); }
         }
@@ -295,7 +297,7 @@ public static class DarknessFeed
         await foreach (var uri in hidden.WithCancellation(ct).ConfigureAwait(false))
         {
             if (!DarknessFilter.IsPostUri(uri) || !seen.Add(uri)) continue;
-            if (seen.Count > 5000) seen.Clear();
+            if (seen.Count > SeenCap) seen.Clear();
             stats.HiddenNew++;
             yield return (uri, DarknessKind.Rude, null);
         }
@@ -314,7 +316,7 @@ public static class DarknessFeed
                 await foreach (var (subject, kind, label) in items.WithCancellation(ct).ConfigureAwait(false))
                 {
                     if (!seen.Add(subject)) continue;
-                    if (seen.Count > 5000) seen.Clear();
+                    if (seen.Count > SeenCap) seen.Clear();
                     queue.Writer.TryWrite((subject, kind, label));
                 }
             }

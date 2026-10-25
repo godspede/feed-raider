@@ -6,16 +6,17 @@
 // failure leaves the effects silent and logs once.
 
 const MAX_VOICES = 6;
-const DEFAULT_LEVEL = 0.8;
+const BUS_LEVEL = 0.8;                    // the sfx bus gain under the master
+const DUCK_DB = -6;                       // how far a big sound dips the music
 // per-sound level trim, a multiplier on every tone and noise in the sound, set so each lands near its target loudness
 const TRIM = { shot: 0.4, hit: 0.52, kill: 0.92, boom: 1.51, hurt: 1.37, death: 1, bomb: 1.67, comm: 2.68, like: 1.56, nolike: 1.34, darkness: 2.2, clear: 1.58, pickup_shield: 1.48, pickup_bomb: 1.4, pickup_power: 1.85, shield_hit: 0.97 };
 const MAX_STEP = 7;                       // the combo pitch rise tops out at +7 semitones
-// the sounds that duck the music under them, with the hold in ms (music.js ducks -6 dB, 40 ms in, 400 ms out)
+// the sounds that duck the music under them, with the hold in ms (DUCK_DB, 40 ms in, 400 ms out)
 const DUCKS = { bomb: 250, boom: 500, death: 400 };
 // the fewest ms between two plays of a sound (the game rate-limits too; this protects the page from any caller)
 const GAP_MS = { shot: 60, hit: 45, kill: 40, hurt: 90, like: 80, nolike: 150, bomb: 150, comm: 250, clear: 400, darkness: 1500, pickup_shield: 100, pickup_bomb: 100, pickup_power: 100, shield_hit: 90 };
 
-let master = null, duck = null, off = true, warned = false, level = DEFAULT_LEVEL;
+let master = null, duck = null, off = true, warned = false;
 let bus = null, busCtx = null, whiteBuf = null, brownBuf = null;
 // soft saturation, slope 1 at zero: also the limiter curve on the bus (it tops out at about -2.8 dBFS)
 const SATURATE = Float32Array.from({ length: 1025 }, (_, i) => 0.9 * Math.tanh((i / 512 - 1) / 0.9));
@@ -49,7 +50,7 @@ function getBus(ctx) {
   busCtx = ctx;
   [whiteBuf, brownBuf] = noiseBuffers(ctx);
   const gain = ctx.createGain();
-  gain.gain.value = level;
+  gain.gain.value = BUS_LEVEL;
   if (ctx.createWaveShaper) {
     // a limiter so several loud voices together do not clip; unlike a compressor it adds no unknown makeup gain
     const lim = ctx.createWaveShaper();
@@ -313,13 +314,6 @@ export function init({ master: m, duck: d, off: disabled } = {}) {
   return !off;
 }
 
-/** The sfx level (0..1) under the master gain. */
-export function setLevel(v) {
-  level = Math.min(1, Math.max(0, Number(v) || 0));
-  if (bus) bus.gain.value = level;
-}
-export const getLevel = () => level;
-
 /** Plays one effect. name is one of Object.keys(sounds); pan is -1 (left) to 1 (right); step (kill, hit) is the
  *  combo pitch rise in semitones, 0..7; size (kill) is the enemy's size, 0..1. Never throws. */
 export function play(name, pan = 0, step = 0, size = 0) {
@@ -336,7 +330,7 @@ export function play(name, pan = 0, step = 0, size = 0) {
     voices.push(v);
     try {
       sounds[name](v, Math.min(1, Math.max(0, Number(size) || 0)));
-      if (duck && name in DUCKS) { try { duck(-6, DUCKS[name]); } catch { /* the music is not our problem */ } }
+      if (duck && name in DUCKS) { try { duck(DUCK_DB, DUCKS[name]); } catch { /* a failed duck must not cut the sound it was for */ } }
     } catch (e) {
       v.steal();
       throw e;

@@ -3,13 +3,13 @@ import { BrowserOAuthClient } from '@atproto/oauth-client-browser';
 import { buildAtprotoLoopbackClientId } from '@atproto/oauth-types';
 import { Agent } from '@atproto/api';
 import scopes from '../scope.json';
-import { metadataUrl, signIn as signInWith, signInFailed, popupKey, completeCallback } from '../../src/FeedRaider.Web/wwwroot/page.js';
+import { metadataUrl, signIn as signInWith, signInFailed, popupKey, completeCallback, noteSignIn, clearSignIn, restoreSaved, signInLost, callbackNote, PUBLIC_API, ENTRYWAY } from '../../src/FeedRaider.Web/wwwroot/page.js';
 
-const PUBLIC_API = 'https://public.api.bsky.app';
 const APPVIEW = 'did:web:api.bsky.app#bsky_appview';
 const isLoopback = ['127.0.0.1', '[::1]', 'localhost'].includes(location.hostname);
 
-let client, agent, reader, did = null, handle = null, returnSearch = null, failure = null;
+let client, agent, reader, did = null, handle = null, returnSearch = null, failure = null, note = null;
+const storage = () => { try { return globalThis.localStorage ?? null; } catch { return null; } };
 
 // ?scope=transition requests atproto transition:generic instead of the granular scopes (loopback only; Pages is fixed by client-metadata.json).
 export function requestedScope() {
@@ -26,7 +26,7 @@ async function makeClient() {
     redirect.hash = '';
     const clientId = buildAtprotoLoopbackClientId({ scope: requestedScope(), redirect_uris: [redirect.href] });
     return new BrowserOAuthClient({
-      handleResolver: 'https://bsky.social',
+      handleResolver: ENTRYWAY,
       clientMetadata: {
         client_id: clientId,
         redirect_uris: [redirect.href],
@@ -41,11 +41,13 @@ async function makeClient() {
   }
   const res = await fetch(metadataUrl(location.href));
   if (!res.ok) throw new Error('client-metadata.json not found beside index.html');
-  return new BrowserOAuthClient({ handleResolver: 'https://bsky.social', clientMetadata: await res.json() });
+  return new BrowserOAuthClient({ handleResolver: ENTRYWAY, clientMetadata: await res.json() });
 }
 
 async function adopt(session) {
   did = session.did;
+  // kept fresh by every page that shows the account, so a later load finds it even when the library forgot it
+  noteSignIn(storage(), 'restored', { sub: did });
   // Writes go straight to the user's PDS. Only reads carry the appview proxy header: with it on a write, the PDS would forward
   // createRecord to the appview instead of saving the like.
   agent = new Agent(session);
@@ -53,12 +55,22 @@ async function adopt(session) {
   try {
     const r = await fetch(`${PUBLIC_API}/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`);
     handle = r.ok ? (await r.json()).handle : did;
-  } catch { handle = did; }
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw e;
+    handle = did;
+  }
+}
+
+// The saved session, with the sign-in report and why its account's restore failed (see restoreSaved).
+async function savedSession() {
+  const out = await restoreSaved({ initRestore: () => client.initRestore(false), restore: (sub) => client.restore(sub, false), storage: storage() });
+  if (out.session && out.report) console.info(`restored ${out.report.sub} from the sign-in report: the library had no current account`);
+  return out;
 }
 
 // Restores a saved session, or finishes the callback of a redirect or a popup. Returns the session JSON, or null when logged out.
 // Only a client that cannot be made throws: a failed callback or restore leaves the page signed out but able to sign in again,
-// and initError() says why.
+// and initError() says why, as it does for a recent sign-in that left no session.
 export async function init() {
   client = await makeClient();
   try {
@@ -66,8 +78,14 @@ export async function init() {
     const redirectUri = params && client.findRedirectUrl();
     if (redirectUri) await finishCallback(params, redirectUri);
     else {
-      const restored = await client.initRestore(false);
-      if (restored?.session) await adopt(restored.session);
+      const out = await savedSession();
+      if (out.session) await adopt(out.session);
+      else if (out.report) {
+        // said once: the next load starts clean
+        failure = signInLost(out.report, out.error);
+        clearSignIn(storage());
+        console.warn(`no session after the sign-in that reached "${out.report.step}" at ${new Date(out.report.at).toISOString()}: ${failure}`);
+      }
     }
   } catch (e) {
     failure = signInFailed(e);
@@ -90,7 +108,9 @@ async function finishCallback(params, redirectUri) {
       return r;
     },
     adopt: async () => { await adopt(await client.restore(sub, false)); return did; },
+    report: (step, extra) => noteSignIn(storage(), step, extra),
   });
+  note = callbackNote({ popup: !!popupKey(result.state), handle });
   if (!popupKey(result.state) && typeof result.state === 'string' && result.state.startsWith('?')) {
     // a fresh login carries the query string we left with (?debug=feed, ?handle=...), so the page can go back to it
     returnSearch = result.state;
@@ -100,6 +120,11 @@ async function finishCallback(params, redirectUri) {
 // Why the last callback or restore failed, as the start page's line, or null.
 export function initError() {
   return failure;
+}
+
+// What the callback page says once it is done (a popup that saved the session), or null.
+export function initNote() {
+  return note;
 }
 
 // The query string the user had before the login redirect, or null when this load was not a login callback.
@@ -113,7 +138,7 @@ export function session() {
 
 // An empty input goes to bsky.social itself: its own page offers the account picker or the remembered session.
 export async function login(input) {
-  const h = input.trim().replace(/^@/, '') || 'https://bsky.social';
+  const h = input.trim().replace(/^@/, '') || ENTRYWAY;
   await client.signInRedirect(h, { scope: client.clientMetadata.scope, state: location.search });
 }
 
@@ -121,7 +146,8 @@ export async function login(input) {
 // Resolves the session JSON once the popup's callback has saved a session; on the redirect path the page leaves and this never
 // returns. `onWaiting` runs once the popup shows the authorization page; `signal` gives up on it.
 export async function signIn(input, { onWaiting, signal } = {}) {
-  const restore = async () => (await client.initRestore(false))?.session ?? null;
+  noteSignIn(storage(), 'started');
+  const restore = async () => (await savedSession()).session;
   const out = await signInWith(client, input, { scope: client.clientMetadata.scope, state: location.search, standalone: navigator.standalone === true, restore, onWaiting, signal });
   if (out.via === 'popup') await adopt(out.session);
   failure = null;
@@ -131,14 +157,15 @@ export async function signIn(input, { onWaiting, signal } = {}) {
 // A session another page of the site saved since this one loaded (a popup whose sign-in this page stopped waiting for), adopted:
 // the session JSON, or null when there is none.
 export async function adoptSaved() {
-  const restored = await client.initRestore(false);
-  if (!restored?.session) return null;
-  await adopt(restored.session);
+  const { session: saved } = await savedSession();
+  if (!saved) return null;
+  await adopt(saved);
   failure = null;
   return session();
 }
 
 export async function logout() {
+  clearSignIn(storage());
   if (client && did) await client.revoke(did);
   did = handle = agent = reader = null;
 }

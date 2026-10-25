@@ -38,7 +38,7 @@ public class ThreadTests
     public async Task A_failed_or_slow_lookup_ends_the_thread_without_a_word()
     {
         var g = Game(signedIn: true);
-        g.OfferPost(Root());
+        g.Queue.Offer(Root());
         var w = Arrived(g);
         await RaiderFeeds.ThreadAsync(g, new ThrowingSource(), w.Post);
         Assert.True(w.Followed);
@@ -46,7 +46,7 @@ public class ThreadTests
         Assert.Empty(w.Earlier);
 
         var g2 = Game(signedIn: true);
-        g2.OfferPost(Root());
+        g2.Queue.Offer(Root());
         var w2 = Arrived(g2);
         await RaiderFeeds.ThreadAsync(g2, new HangingSource(), w2.Post, timeoutMs: 40);
         Assert.True(w2.Followed);
@@ -57,7 +57,7 @@ public class ThreadTests
     public async Task A_lookup_through_the_source_opens_the_post_from_the_fixture()
     {
         var g = Game(signedIn: true);
-        g.OfferPost(Root());
+        g.Queue.Offer(Root());
         var w = Arrived(g);
         var src = new JsThreadSource((uri, depth, parents) =>
         {
@@ -125,7 +125,7 @@ public class ThreadTests
             int n = Number(p);
             if (n < length) g.ThreadOpened(p.Uri, Chain(n + 1, replies: n + 1 < length ? 1 : 0)); else g.ThreadEnded(p.Uri);
         };
-        g.OfferPost(Chain(1, liked: firstLiked));
+        g.Queue.Offer(Chain(1, liked: firstLiked));
         return (g, liked, asked);
     }
 
@@ -188,7 +188,7 @@ public class ThreadTests
     public void An_already_liked_post_with_no_replies_is_not_offered()
     {
         var g = Game(signedIn: true);
-        g.OfferPost(Chain(1, liked: true, replies: 0));
+        g.Queue.Offer(Chain(1, liked: true, replies: 0));
         var w = Arrived(g);
         Assert.True(w.Followed);
         Assert.Null(g.Prompt);
@@ -198,7 +198,7 @@ public class ThreadTests
     public void A_reply_that_comes_back_after_the_wingman_moved_on_or_left_is_ignored()
     {
         var g = Game(signedIn: true);
-        g.OfferPost(Chain(1));
+        g.Queue.Offer(Chain(1));
         var w = Arrived(g);
         g.ThreadOpened("at://someone/else", Chain(2));
         Assert.Empty(w.Earlier);
@@ -212,7 +212,7 @@ public class ThreadTests
     public void An_ineligible_reply_handed_to_the_game_ends_the_thread()
     {
         var g = Game(signedIn: true);
-        g.OfferPost(Chain(1));
+        g.Queue.Offer(Chain(1));
         var w = Arrived(g);
         g.ThreadOpened(w.Post.Uri, Chain(2, text: "short"));
         Assert.Empty(w.Earlier);
@@ -224,7 +224,7 @@ public class ThreadTests
     {
         var g = Game(signedIn: false);
         g.PlainOnly = true;
-        g.OfferPost(Chain(1));
+        g.Queue.Offer(Chain(1));
         var w = Arrived(g);
         g.ThreadOpened(w.Post.Uri, Chain(2) with { Labelled = true });   // e.g. a !warn label
         Assert.Empty(w.Earlier);
@@ -236,7 +236,7 @@ public class ThreadTests
     {
         var g = Game(signedIn: false);
         g.PlainOnly = true;
-        g.OfferPost(Chain(1));
+        g.Queue.Offer(Chain(1));
         var w = Arrived(g);
         g.ThreadOpened(w.Post.Uri, Chain(2));
         Assert.Single(w.Earlier);
@@ -246,7 +246,7 @@ public class ThreadTests
     public void Outside_Random_a_labelled_self_reply_still_opens()
     {
         var g = Game(signedIn: true);
-        g.OfferPost(Chain(1));
+        g.Queue.Offer(Chain(1));
         var w = Arrived(g);
         g.ThreadOpened(w.Post.Uri, Chain(2) with { Labelled = true });
         Assert.Single(w.Earlier);
@@ -299,7 +299,7 @@ public class ThreadTests
         string wordy = string.Concat(Enumerable.Repeat("word ", 40)) + "end";
         var phone = Game(signedIn: true, 48, 60);
         phone.ThreadWanted = p => phone.ThreadOpened(p.Uri, Chain(Number(p) + 1, text: wordy));
-        phone.OfferPost(Chain(1));
+        phone.Queue.Offer(Chain(1));
         var pw = Arrived(phone);
         Press(phone, pw);
         for (int i = 0; i < 5; i++) { phone.Input.Like(); phone.Step(); }
@@ -312,7 +312,7 @@ public class ThreadTests
         string tail = "and this is the very last word zebra";
         string longText = string.Join(' ', Enumerable.Repeat("tomatoes ripen slowly in cool spring weather", 6)) + " " + tail;
         var g = Game(signedIn: true, 130, 46);
-        g.OfferPost(Chain(1, text: longText));
+        g.Queue.Offer(Chain(1, text: longText));
         var w = Arrived(g);
         for (int i = 0; i < 240; i++) g.Step();                    // typed out in full
         var view = new RaiderView();
@@ -331,9 +331,9 @@ public class ThreadTests
     /// <summary>The panel column's text, rows joined with the spaces dropped (a wrapped line ends where a word does).</summary>
     private static string Panel(Screen s, RaiderGame g)
     {
-        int c0 = Math.Max(1, g.Layout.Col0 - 28);
+        int c0 = g.Layout.Col0 - 2 - g.Layout.PanelCols;
         var sb = new System.Text.StringBuilder();
-        for (int r = 0; r < s.Rows; r++) for (int c = c0; c < c0 + 26; c++) if (s.CharAt(c, r) != ' ') sb.Append(s.CharAt(c, r));
+        for (int r = 0; r < s.Rows; r++) for (int c = c0; c < c0 + g.Layout.PanelCols; c++) if (s.CharAt(c, r) != ' ') sb.Append(s.CharAt(c, r));
         return sb.ToString();
     }
 }

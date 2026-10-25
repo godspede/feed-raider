@@ -14,7 +14,7 @@ namespace TUImation;
 /// Blocks with at most two colours are exact. Width and Height should be even
 /// (a stray odd edge reads as transparent). Output is W/2 columns by H/2 rows.
 ///
-/// Frame hygiene matches <see cref="Renderer"/>: rows joined by '\n' (none
+/// Frame hygiene: rows joined by '\n' (none
 /// trailing), each row ends with reset + \x1b[K, and SGR codes are skipped
 /// when the colours match the previous cell.
 /// </summary>

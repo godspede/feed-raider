@@ -43,21 +43,4 @@ public class FeedTests
     [InlineData("at://did:plc:x/app.bsky.feed.generator/y", "at://did:plc:x/app.bsky.feed.generator/y")]
     [InlineData("https://evil.example", null)]
     public void Feeds_resolve(string? input, string? expected) => Assert.Equal(expected, Feeds.Resolve(input));
-
-    [Fact]
-    public async Task Fakes_satisfy_the_interfaces()
-    {
-        var fake = new Fake();
-        var page = await ((IFeedSource)fake).GetPageAsync(Feeds.Discover, null, 10, default);
-        var liked = await ((IActions)fake).LikeAsync(page.Posts[0].Ref, default);
-        Assert.Equal("at://me/app.bsky.feed.like/1", liked.Uri);
-        Assert.Equal("did:plc:me", ((ISession)fake).Current?.Did);
-    }
-
-    private sealed class Fake : IFeedSource, IActions, ISession
-    {
-        public SessionInfo? Current => new("did:plc:me", "me.example");
-        public Task<FeedPage> GetPageAsync(string feedUri, string? cursor, int limit, CancellationToken ct) => Task.FromResult(Page());
-        public Task<PostRef> LikeAsync(PostRef post, CancellationToken ct) => Task.FromResult(new PostRef("at://me/app.bsky.feed.like/1", "c"));
-    }
 }

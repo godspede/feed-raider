@@ -98,7 +98,7 @@ public class RaiderTests
     public void A_wingman_flies_in_fights_and_leaves_while_the_next_one_queues()
     {
         var g = NewGame();
-        g.OfferPost(Post(1)); g.OfferPost(Post(2)); g.OfferPost(Post(3));
+        g.Queue.Offer(Post(1)); g.Queue.Offer(Post(2)); g.Queue.Offer(Post(3));
         Run(g, 5);
         Assert.Single(g.Wings);
         Assert.Equal(WingPhase.Enter, g.Wings[0].Phase);
@@ -122,10 +122,10 @@ public class RaiderTests
     public void Firepower_grows_with_the_log_of_likes()
     {
         var g = NewGame();
-        g.OfferPost(Post(1, likes: 0)); Run(g, 60);
+        g.Queue.Offer(Post(1, likes: 0)); Run(g, 60);
         var low = g.Wings.Single(w => w.Post.LikeCount == 0).Firepower;
         var h = NewGame();
-        h.OfferPost(Post(2, likes: 900)); Run(h, 60);
+        h.Queue.Offer(Post(2, likes: 900)); Run(h, 60);
         var high = h.Wings.Single(w => w.Post.LikeCount == 900).Firepower;
         Assert.Equal(1.0, low, 6);
         Assert.True(high > low && high < low * 3);
@@ -138,7 +138,7 @@ public class RaiderTests
         g.OfferDark(new DarkPost(DarknessKind.Spam, 3, "buy followers now cheap"));
         Run(g, 150);
         Assert.NotEmpty(g.Enemies);
-        g.OfferPost(Post(1, likes: Tuning.BombLikeThreshold));
+        g.Queue.Offer(Post(1, likes: Tuning.BombLikeThreshold));
         for (int i = 0; i < 70 && g.Banner is null; i++) g.Step();
         Assert.NotNull(g.Banner);
         Assert.Contains("1,000", g.Banner);
@@ -153,7 +153,7 @@ public class RaiderTests
     public void The_prompt_shows_only_within_the_like_radius()
     {
         var g = NewGame();
-        g.OfferPost(Post(1));
+        g.Queue.Offer(Post(1));
         for (int i = 0; i < 400 && !g.Wings.Any(w => w.Age > Tuning.WingEnterFrames); i++) g.Step();
         var w = g.Wings[0];
         Assert.Null(g.Prompt);                                 // the player starts at the bottom, far away
@@ -167,7 +167,7 @@ public class RaiderTests
         var g = NewGame();
         var liked = new List<FeedPost>();
         g.OnLike = liked.Add;
-        g.OfferPost(Post(1));
+        g.Queue.Offer(Post(1));
         var w = WingmanInRange(g);
         Run(g, 60);
         Assert.Empty(liked);
@@ -181,7 +181,7 @@ public class RaiderTests
         var g = NewGame();
         var liked = new List<FeedPost>();
         g.OnLike = liked.Add;
-        g.OfferPost(Post(1));
+        g.Queue.Offer(Post(1));
         var w = WingmanInRange(g);
         g.Input.Like(); g.Step();
         Assert.Single(liked);
@@ -198,7 +198,7 @@ public class RaiderTests
         var g = NewGame();
         var liked = new List<FeedPost>();
         g.OnLike = liked.Add;
-        g.OfferPost(Post(1));
+        g.Queue.Offer(Post(1));
         for (int i = 0; i < 400 && !g.Wings.Any(w => w.Age > Tuning.WingEnterFrames); i++) g.Step();
         g.Input.Like();                                        // pressed while nothing is in range
         Run(g, InputState.LikeLatchFrames + 2);
@@ -213,7 +213,7 @@ public class RaiderTests
         var g = NewGame();
         var liked = new List<FeedPost>();
         g.OnLike = liked.Add;
-        g.OfferPost(Post(1));
+        g.Queue.Offer(Post(1));
         WingmanInRange(g);
         g.Input.Tap(g.Layout.Col0 + 2, 5);                    // nowhere near the bomb button
         g.Step();
@@ -226,7 +226,7 @@ public class RaiderTests
         var g = NewGame(loggedIn: false);
         var liked = new List<FeedPost>();
         g.OnLike = liked.Add;
-        g.OfferPost(Post(1));
+        g.Queue.Offer(Post(1));
         WingmanInRange(g);
         g.Input.Like(); g.Step();
         Assert.Empty(liked);
@@ -248,7 +248,7 @@ public class RaiderTests
         var g = NewGame();
         var liked = new List<FeedPost>();
         g.OnLike = liked.Add;
-        g.OfferPost(Post(1));
+        g.Queue.Offer(Post(1));
         var w = WingmanInRange(g);
         g.Input.Like(); g.Step();
         g.LikeFailed(w.Post.Uri);
@@ -260,7 +260,7 @@ public class RaiderTests
     public void The_power_up_lasts_its_time_then_ends()
     {
         var g = NewGame();
-        g.OfferPost(Post(1));
+        g.Queue.Offer(Post(1));
         WingmanInRange(g);
         g.Input.Like(); g.Step();
         Assert.InRange(g.PowerLeft, Tuning.PowerUpFrames - 2, Tuning.PowerUpFrames);
@@ -279,7 +279,7 @@ public class RaiderTests
         g.Input.Key(GameKey.Fire, true);
         g.Step();
         var plain = g.Bullets.Where(b => b.Friendly).ToList();
-        g.OfferPost(Post(1));
+        g.Queue.Offer(Post(1));
         var w = WingmanInRange(g);
         g.Input.Like(); g.Step();
         g.Bullets.Clear();
@@ -474,7 +474,7 @@ public class RaiderTests
         {
             var g = NewGame();
             g.OfferDark(new DarkPost(DarknessKind.Spam, 5, "buy now cheap followers here"));
-            g.OfferPost(Post(1));
+            g.Queue.Offer(Post(1));
             g.Input.Key(GameKey.Fire, true);
             Run(g, 600);
             return (g.Score, g.Tick, g.Enemies.Count);
