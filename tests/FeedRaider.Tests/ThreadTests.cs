@@ -31,7 +31,7 @@ public class ThreadTests
         Assert.Null(ThreadMapper.Next(Fixture("thread-short.json"), Root()));
         Assert.Null(ThreadMapper.Next(Fixture("thread-none.json"), Root()));
         Assert.Null(ThreadMapper.Next("""{"thread":{"$type":"app.bsky.feed.defs#notFoundPost","notFound":true}}""", Root()));
-        Assert.Null(ThreadMapper.Next("not json at all", Root()));
+        Assert.ThrowsAny<System.Text.Json.JsonException>(() => ThreadMapper.Next("not json at all", Root()));   // a failure, not a thread's end
     }
 
     [Fact]
@@ -100,7 +100,8 @@ public class ThreadTests
         return g.Wings.First(x => x.Age > Tuning.WingEnterFrames);
     }
 
-    private static void Press(RaiderGame g, Wingman w)
+    /// <summary>Steers the ship onto the wingman, lets go of every key, and presses like.</summary>
+    private static void SteerOntoAndLike(RaiderGame g, Wingman w)
     {
         for (int i = 0; i < 200 && (Math.Abs(g.PX - w.X) > 3 || Math.Abs(g.PY - w.Y) > 3); i++)
         {
@@ -136,7 +137,7 @@ public class ThreadTests
         var w = Arrived(g);
         var sounds = new List<string>();
         g.Sfx = new SfxBus((name, _, _, _) => sounds.Add(name));
-        Press(g, w);
+        SteerOntoAndLike(g, w);
         Assert.Equal(RaiderGame.SignInHint, g.Toast);
         Assert.Contains("like", sounds);
         Assert.Single(w.Earlier);                                 // the reply opened all the same
@@ -154,7 +155,7 @@ public class ThreadTests
     {
         var (g, liked, asked) = Chained(signedIn: true, length: 3);
         var w = Arrived(g);
-        Press(g, w);
+        SteerOntoAndLike(g, w);
         Assert.Equal([Chain(1).Uri], liked);
         Assert.Equal(Chain(2).Uri, w.Post.Uri);
         Assert.False(w.Liked);                                    // the reply itself is not liked yet
@@ -176,7 +177,7 @@ public class ThreadTests
         var (g, liked, asked) = Chained(signedIn: true, length: 3, firstLiked: true);
         var w = Arrived(g);
         Assert.True(w.Liked);
-        Press(g, w);
+        SteerOntoAndLike(g, w);
         Assert.Empty(liked);
         Assert.Single(asked);
         Assert.Equal(Chain(2).Uri, w.Post.Uri);
@@ -258,7 +259,7 @@ public class ThreadTests
         var (g, liked, _) = Chained(signedIn: true, length: 60);
         var w = Arrived(g);
         int usual = w.TotalFrames;
-        Press(g, w);
+        SteerOntoAndLike(g, w);
         Assert.True(w.TotalFrames - w.Age >= Tuning.ThreadReadFrames);
         for (int i = 0; i < 40; i++) { g.Input.Like(); g.Step(); }
         Assert.True(w.Age < w.TotalFrames);
@@ -275,7 +276,7 @@ public class ThreadTests
     {
         var (g, _, _) = Chained(signedIn: true, length: 3);
         var w = Arrived(g);
-        Press(g, w);
+        SteerOntoAndLike(g, w);
         Assert.Same(w, g.Comms.Speaker);
         for (int i = 0; i < WingComms.TotalFrames(w) + 10; i++) g.Step();
         Assert.NotEqual(WingPhase.Leave, w.Phase);
@@ -288,7 +289,7 @@ public class ThreadTests
     {
         var (g, _, _) = Chained(signedIn: true, length: 8);
         var w = Arrived(g);
-        Press(g, w);
+        SteerOntoAndLike(g, w);
         for (int i = 0; i < 4; i++) { g.Input.Like(); g.Step(); }
         Assert.Equal(5, w.Earlier.Count);
         Assert.Equal(WingComms.MaxStubs, WingComms.StubRows(w));
@@ -301,7 +302,7 @@ public class ThreadTests
         phone.ThreadWanted = p => phone.ThreadOpened(p.Uri, Chain(Number(p) + 1, text: wordy));
         phone.Queue.Offer(Chain(1));
         var pw = Arrived(phone);
-        Press(phone, pw);
+        SteerOntoAndLike(phone, pw);
         for (int i = 0; i < 5; i++) { phone.Input.Like(); phone.Step(); }
         Assert.True(WingComms.CommH(pw) <= phone.Layout.Rows / 2, $"{WingComms.CommH(pw)} rows of {phone.Layout.Rows}");
     }

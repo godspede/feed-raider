@@ -48,11 +48,9 @@ public sealed class Wingman
     public int CommSeq;                       // arrival order
     public CommState Comm = CommState.Waiting;
     public int CommAge;                       // frames since this wingman took the mic
-
-    public int Typed(int fps = Tuning.Fps) => PostAge * Tuning.TypeCharsPerSecond / fps;
 }
 
-/// <summary>Which feed posts may become wingmen, and the queue of those waiting. Plain posts (no embed: no image, video, link card or quote) with at least <see cref="Tuning.WingMinTextChars"/> characters; each post at most once.</summary>
+/// <summary>Which feed posts may become wingmen, and the queue of those waiting. Plain single posts: no embed (image, video, link card, quote), not just a link, not a reply (a reply shown alone has lost its parent; only an author's own thread reply is opened, see <see cref="Plain"/>), with at least <see cref="Tuning.WingMinTextChars"/> characters; each post at most once.</summary>
 public sealed class WingQueue
 {
     private readonly Queue<FeedPost> _q = new();
@@ -68,8 +66,11 @@ public sealed class WingQueue
 
     public static bool Eligible(FeedPost p) => Eligible(p, false);
 
-    public static bool Eligible(FeedPost p, bool signedOut) =>
-        Allowed(p, signedOut) && !p.HasEmbed && BubbleText.Sanitize(p.Text).Length >= Tuning.WingMinTextChars;
+    public static bool Eligible(FeedPost p, bool signedOut) => Allowed(p, signedOut) && p.ReplyParent is null && p.ReplyRoot is null && Plain(p);
+
+    /// <summary>Text-only content fit to show: no embed, not just a link, long enough. A thread follow applies this to the author's own
+    /// reply, which <see cref="Eligible(FeedPost)"/> would refuse as a reply.</summary>
+    public static bool Plain(FeedPost p) => !p.HasEmbed && !p.LinkText && BubbleText.Sanitize(p.Text).Length >= Tuning.WingMinTextChars;
 
     public bool Offer(FeedPost p)
     {

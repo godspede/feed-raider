@@ -10,6 +10,10 @@
 // the music itself off (init without tracks, or off: true) so that the sound effects keep the speaker button, M and the slider.
 
 const FADE_MS = 1500, CROSSFADE_MS = 2000, WATCH_MS = 250;
+const CUT_FADE_MS = 200;          // the quick fade-out when the music is muted or nothing is wanted
+const FADE_TICK_MS = 40;          // how often a running fade is stepped
+const MASTER_SMOOTH_S = 0.03;     // time constant that smooths a volume change on the master gain
+const DUCK_IN_S = 0.04, DUCK_OUT_S = 0.4;   // a duck dips this fast and recovers this slowly
 const VOLUME_KEY = 'feed-raider.music.volume', MUTED_KEY = 'feed-raider.music.muted';
 // the unlock clip: 10 ms of 8 kHz 8-bit mono silence (80 samples of 0x80); a WAV with no samples will not decode in Firefox
 const SILENT = 'data:audio/wav;base64,UklGRnQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
@@ -32,17 +36,15 @@ let rot = { order: [], i: -1, last: null }; // the gameplay rotation; `last` is 
 let advancing = false, random = Math.random;
 let tabHidden = false;   // the page is in a background tab: nothing plays or rotates until it is back
 let ctx = null, masterNode = null, musicBus = null;   // musicBus: the tracks only, so duck() leaves the effects alone
-const listeners = new Set();
 
 /** The volume every sound shares. `gain` is the effective 0..1 (0 when muted); `node` is the Web Audio master GainNode once
- *  the first gesture has made the context (null before, or without Web Audio). onChange(fn) returns an unsubscribe. */
+ *  the first gesture has made the context (null before, or without Web Audio). */
 export const master = {
   get volume() { return volume; },
   get muted() { return muted; },
   get gain() { return muted ? 0 : volume; },
   get context() { return ctx; },
   get node() { return masterNode; },
-  onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
 };
 
 function warnOnce(what, e) {
@@ -91,14 +93,14 @@ function advance() {
   return (rot.last = rot.order[rot.i]);
 }
 
-const pick = (role) => { const l = ofRole(role); return l[Math.floor(random() * l.length)] ?? null; };
+const randomTrackOfRole = (role) => { const l = ofRole(role); return l[Math.floor(random() * l.length)] ?? null; };
 
 function applyCue(name) {
   if (!ROLES.includes(name) || name === want) return;
   let next;
   if (name === 'gameplay') next = want === 'boss' && rot.order.length ? advance() : newRun();
   else {
-    next = pick(name);
+    next = randomTrackOfRole(name);
     if (next && name !== 'boss') rot = { order: [], i: -1, last: rot.last }; // menu and gameover end the rotation
   }
   if (!next) return; // no track for this role: the music stays as it was
@@ -179,7 +181,7 @@ function setLevel(s, v) {
 let ticker = null;
 function fadeTo(s, target, ms = FADE_MS) {
   s.from = s.level; s.target = target; s.t0 = performance.now(); s.ms = ms;
-  ticker ??= setInterval(tick, 40);
+  ticker ??= setInterval(tick, FADE_TICK_MS);
 }
 function tick() {
   const now = performance.now();
@@ -201,7 +203,7 @@ function release(s) {
 }
 const positions = new Map(); // where a gameplay track was faded out (muted), so unmuting carries on
 
-function prepare() {
+function createAudio() {
   if (musicOn) {
     for (const s of slots) {
       s.el = new Audio();
@@ -237,7 +239,7 @@ function prepare() {
 function unlock() {
   if (off || unlocked) return;
   try {
-    if (!ctx && !slots[0].el) prepare();
+    if (!ctx && !slots[0].el) createAudio();
     ctx?.resume();
     for (const s of musicOn ? slots : []) {
       if (s.track) continue;
@@ -258,7 +260,7 @@ const GESTURES = ['keydown', 'pointerup', 'touchend', 'click', 'mousedown'];
 function reconcile() {
   if (!musicOn || !unlocked) return;
   if (muted || !target) {
-    for (const s of slots) if (s.el && s.target !== 0) fadeTo(s, 0, 200);
+    for (const s of slots) if (s.el && s.target !== 0) fadeTo(s, 0, CUT_FADE_MS);
     return;
   }
   const active = slots.find((s) => s.target === 1);
@@ -321,23 +323,22 @@ function rearm() {
 
 // ---------------------------------------------------------------- controls
 
-function changed() {
-  if (masterNode) masterNode.gain.setTargetAtTime(master.gain, ctx.currentTime, 0.03);
+function applyMasterChange() {
+  if (masterNode) masterNode.gain.setTargetAtTime(master.gain, ctx.currentTime, MASTER_SMOOTH_S);
   else for (const s of slots) if (s.el) setLevel(s, s.level);
-  for (const fn of listeners) { try { fn(master); } catch { /* one listener's failure must not stop the others hearing the change */ } }
   syncUi();
 }
 
 export function setVolume(v) {
   volume = Math.min(1, Math.max(0, v));
   store.set(VOLUME_KEY, String(volume));
-  changed();
+  applyMasterChange();
 }
 
 export function setMuted(m) {
   muted = !!m;
   store.set(MUTED_KEY, muted ? '1' : '0');
-  changed();
+  applyMasterChange();
   reconcile();
   if (!muted && want) prefetchAround(want);
 }
@@ -351,9 +352,9 @@ export function duck(db, holdMs = 200) {
     const g = musicBus.gain, t = ctx.currentTime, low = 10 ** (Math.min(0, db) / 20);
     g.cancelScheduledValues(t);
     g.setValueAtTime(g.value, t);
-    g.linearRampToValueAtTime(low, t + 0.04);
-    g.setValueAtTime(low, t + 0.04 + holdMs / 1000);
-    g.linearRampToValueAtTime(1, t + 0.04 + holdMs / 1000 + 0.4);
+    g.linearRampToValueAtTime(low, t + DUCK_IN_S);
+    g.setValueAtTime(low, t + DUCK_IN_S + holdMs / 1000);
+    g.linearRampToValueAtTime(1, t + DUCK_IN_S + holdMs / 1000 + DUCK_OUT_S);
   } catch { /* best effort: a missed duck leaves the music at full volume, which harms nothing */ }
 }
 

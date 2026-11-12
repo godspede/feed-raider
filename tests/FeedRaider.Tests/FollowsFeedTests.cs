@@ -6,6 +6,9 @@ namespace FeedRaider.Tests;
 
 public class FollowsFeedTests
 {
+    // the handle a test account gets: its DID without the "did:plc:" prefix
+    private static string HandleOf(string did) => did["did:plc:".Length..] + ".test";
+
     private sealed class Handler(Func<string, (HttpStatusCode, string)> reply) : HttpMessageHandler
     {
         public List<string> Urls { get; } = [];
@@ -25,23 +28,24 @@ public class FollowsFeedTests
     }
 
     private static string FollowsJson(params string[] dids) =>
-        "{\"follows\":[" + string.Join(",", dids.Select(d => $"{{\"did\":\"{d}\",\"handle\":\"{d[8..]}.test\"}}")) + "]}";
+        "{\"follows\":[" + string.Join(",", dids.Select(d => $"{{\"did\":\"{d}\",\"handle\":\"{HandleOf(d)}\"}}")) + "]}";
 
     private static Handler Net(params string[] follows) => new(url =>
     {
         if (url.Contains("getFollows")) return (HttpStatusCode.OK, FollowsJson(follows));
         string actor = Uri.UnescapeDataString(url.Split("actor=")[1].Split('&')[0]);
         // every author feed has one original post and one repost of a stranger
-        return (HttpStatusCode.OK, "{\"feed\":[" + Post(actor, actor[8..] + ".test", "orig") + "," + Post("did:plc:stranger", "stranger.test", "rp", repost: true) + "]}");
+        return (HttpStatusCode.OK, "{\"feed\":[" + Post(actor, HandleOf(actor), "orig") + "," + Post("did:plc:stranger", "stranger.test", "rp", repost: true) + "]}");
     });
 
     private static Task NoDelay(TimeSpan _, CancellationToken __) => Task.CompletedTask;
 
     [Fact]
-    public void ParsePage_can_drop_reposts()
+    public void ParsePage_drops_reposts_unless_asked_to_keep_them()
     {
         string json = JetstreamParserTests.Fixture("feed-page.json");
-        Assert.True(FeedMapper.ParsePage(json, skipReposts: true).Posts.Count < FeedMapper.ParsePage(json).Posts.Count);
+        Assert.Equal(FeedMapper.ParsePage(json).Posts.Count, FeedMapper.ParsePage(json, skipReposts: true).Posts.Count);
+        Assert.True(FeedMapper.ParsePage(json, skipReposts: true).Posts.Count < FeedMapper.ParsePage(json, skipReposts: false).Posts.Count);
     }
 
     [Fact]
@@ -56,7 +60,7 @@ public class FollowsFeedTests
     [Fact]
     public async Task One_page_interleaves_across_the_follows()
     {
-        string Many(string actor) => "{\"feed\":[" + string.Join(",", Enumerable.Range(1, 12).Select(i => Post(actor, actor[8..] + ".test", "p" + i))) + "]}";
+        string Many(string actor) => "{\"feed\":[" + string.Join(",", Enumerable.Range(1, 12).Select(i => Post(actor, HandleOf(actor), "p" + i))) + "]}";
         var h = new Handler(url => url.Contains("getFollows")
             ? (HttpStatusCode.OK, FollowsJson("did:plc:alice111", "did:plc:bob22222", "did:plc:carol333"))
             : (HttpStatusCode.OK, Many(Uri.UnescapeDataString(url.Split("actor=")[1].Split('&')[0]))));
@@ -134,7 +138,7 @@ public class FollowsFeedTests
         public Task<FeedPage> GetPageAsync(string feedUri, string? cursor, int limit, CancellationToken ct) { Calls++; return Task.FromResult(new FeedPage(posts, null)); }
     }
 
-    private static FeedPost Parsed(string did, string rkey) => FeedMapper.ParsePage("{\"feed\":[" + Post(did, did[8..] + ".test", rkey) + "]}").Posts[0];
+    private static FeedPost Parsed(string did, string rkey) => FeedMapper.ParsePage("{\"feed\":[" + Post(did, HandleOf(did), rkey) + "]}").Posts[0];
 
     [Fact]
     public async Task Transient_primary_errors_are_retried_and_never_fill_from_the_fallback()
@@ -186,7 +190,7 @@ public class FollowsFeedTests
             if (url.Contains("getFollows")) return (HttpStatusCode.OK, FollowsJson("did:plc:alice111", "did:plc:bob22222", "did:plc:carol333"));
             string actor = Uri.UnescapeDataString(url.Split("actor=")[1].Split('&')[0]);
             return actor == "did:plc:bob22222" ? (HttpStatusCode.TooManyRequests, "{}")
-                : (HttpStatusCode.OK, "{\"feed\":[" + Post(actor, actor[8..] + ".test", "orig") + "]}");
+                : (HttpStatusCode.OK, "{\"feed\":[" + Post(actor, HandleOf(actor), "orig") + "]}");
         });
         var src = new FollowsFeedSource(new HttpClient(h), "me.test", NoDelay);
         var page = await src.GetPageAsync("", null, 30, default);

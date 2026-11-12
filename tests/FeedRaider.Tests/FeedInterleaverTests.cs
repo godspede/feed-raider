@@ -30,16 +30,14 @@ public class FeedInterleaverTests
     }
 
     [Fact]
-    public void Self_thread_stays_in_order_and_contiguous()
+    public void A_reply_is_never_buffered_even_when_its_parent_was_just_served()
     {
         var m = new FeedInterleaver();
         var a1 = P("a", "1");
-        var a2 = P("a", "2", parent: Uri("a", "1"), root: Uri("a", "1"));
-        var a3 = P("a", "3", parent: Uri("a", "2"), root: Uri("a", "1"));
-        m.Add([P("b", "1"), a1, P("c", "1"), a3, a2, P("b", "2")]);
-        var o = Drain(m, repeat: true).Select(p => p.Uri).ToList();
-        int i = o.IndexOf(a1.Uri);
-        Assert.Equal([a1.Uri, a2.Uri, a3.Uri], o.Skip(i).Take(3));
+        m.Add([P("b", "1"), a1, P("a", "2", parent: Uri("a", "1"), root: Uri("a", "1"))]);
+        var o = Drain(m, repeat: true);
+        Assert.Equal(2, o.Count);
+        Assert.All(o, p => Assert.Null(p.ReplyParent));
     }
 
     [Fact]

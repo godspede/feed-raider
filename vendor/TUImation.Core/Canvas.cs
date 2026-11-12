@@ -54,32 +54,4 @@ public sealed class Canvas
             }
         }
     }
-
-    /// <summary>A rounded thick line between two points — the workhorse for limbs.
-    /// Steps along the segment stamping filled disks, so joints (two segments
-    /// sharing an endpoint) meet without a gap.</summary>
-    public void FillThickLine(double x0, double y0, double x1, double y1, double thickness, Rgb color)
-    {
-        double dx = x1 - x0, dy = y1 - y0;
-        double len = Math.Sqrt(dx * dx + dy * dy);
-        int steps = (int)Math.Ceiling(len) + 1;
-        double r = thickness / 2;
-        for (int i = 0; i <= steps; i++)
-        {
-            double t = (double)i / steps;
-            FillEllipse(x0 + dx * t, y0 + dy * t, r, r, color);
-        }
-    }
-
-    /// <summary>A short horizontal bar with a linear slope — used for angled brows.</summary>
-    public void FillSlopedBar(double xCenter, double yCenter, double halfWidth, double thickness, double slope, Rgb color)
-    {
-        int x0 = (int)Math.Round(xCenter - halfWidth);
-        int x1 = (int)Math.Round(xCenter + halfWidth);
-        for (int x = x0; x <= x1; x++)
-        {
-            double y = yCenter + slope * (x - xCenter);
-            FillRect(x, y - thickness / 2, 1, thickness, color);
-        }
-    }
 }

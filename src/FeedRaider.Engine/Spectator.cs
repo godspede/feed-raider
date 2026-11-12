@@ -13,6 +13,9 @@ public sealed class Spectator
 
     public string Hint { get; set; } = "";
     public int PostsSeen { get; private set; }
+    private const int DemoFirstDelayMs = 3000, DemoDelayMs = 5000;
+    /// <summary>The demo offers a made-up post only while fewer monsters than this are on screen.</summary>
+    private const int DemoMaxMonsters = 3;
     /// <summary>Forces of darkness: monsters from Bluesky's moderation labels (spam, rude). On unless a host turns it off.</summary>
     public bool Darkness { get; set; } = true;
     /// <summary>When the labeler has sent nothing usable for a while, summon made-up monsters (clearly marked in the status line).
@@ -102,9 +105,9 @@ public sealed class Spectator
             {
                 for (int i = 0; !pumpCts.Token.IsCancellationRequested; i++)
                 {
-                    await Task.Delay(i == 0 ? 3000 : 5000, pumpCts.Token).ConfigureAwait(false);
+                    await Task.Delay(i == 0 ? DemoFirstDelayMs : DemoDelayMs, pumpCts.Token).ConfigureAwait(false);
                     lock (room)
-                        if (DarkStats.Haunted == 0 || room.Dark.Pending == 0 && room.Dark.Monsters.Count < 3)
+                        if (DarkStats.Haunted == 0 || room.Dark.Pending == 0 && room.Dark.Monsters.Count < DemoMaxMonsters)
                             room.Dark.Offer(DarknessDemoPosts.Next(i));
                 }
             }, pumpCts.Token);

@@ -3,7 +3,7 @@ using TUImation;
 namespace FeedRaider.Engine.Raider;
 
 /// <summary>A flat opaque pixel buffer (0xRRGGBB). The renderer's working canvas: cheap to copy and compare, which
-/// matters under the browser's interpreter. Small transparent sprites stay <see cref="Canvas"/>es and are blitted in.</summary>
+/// matters under the browser's interpreter.</summary>
 public sealed class Surface
 {
     public int W { get; }
@@ -33,13 +33,15 @@ public sealed class Surface
         // asked every frame for a handful of pairs, so remembered: the interpreter in the browser is slow at Math.Pow
         ulong key = (ulong)fg << 32 | bg;
         if (LegibleSeen.TryGetValue(key, out uint seen)) return seen;
-        uint pole = Luminance(bg) > 0.18 ? 0u : 0xffffffu;
+        uint pole = Luminance(bg) > 0.18 ? 0u : Palette.White;
         uint c = fg;
         for (int i = 1; i <= 20 && Contrast(c, bg) < BodyTextContrast; i++) c = Mix(fg, pole, i / 20.0);
-        if (LegibleSeen.Count > 4096) LegibleSeen.Clear();
+        if (LegibleSeen.Count > LegibleSeenMax) LegibleSeen.Clear();
         LegibleSeen[key] = c;
         return c;
     }
+
+    private const int LegibleSeenMax = 4096;
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, uint> LegibleSeen = new();
 
@@ -55,6 +57,15 @@ public sealed class Surface
         return 0.2126 * Lin(c >> 16 & 255) + 0.7152 * Lin(c >> 8 & 255) + 0.0722 * Lin(c & 255);
     }
 
+    /// <summary>The pixel value of "nothing drawn here" in a mask pass (no real colour has the top byte set).</summary>
+    public const uint None = 0xFF000000u;
+
+    /// <summary>A mask pass: <see cref="Blend"/> (and so <see cref="Ring"/>) cannot mix with a background it does not have, so a pixel
+    /// still <see cref="None"/> takes the colour mixed over a dark stand-in and rings stay visible over the post boxes.</summary>
+    public bool SkipBlends;
+
+    private const uint MaskStandIn = 0x0c1020;
+
     public void Fill(uint c) => Array.Fill(P, c);
 
     public void Set(int x, int y, uint c)
@@ -62,11 +73,16 @@ public sealed class Surface
         if ((uint)x < (uint)W && (uint)y < (uint)H) P[y * W + x] = c;
     }
 
+    /// <summary>The pixel at (x, y), or 0 outside the surface. Like <see cref="Set"/> and <see cref="Blend"/>, which drop a write
+    /// outside it, the read does not report the miss, so 0 is also black: callers read inside the bounds.</summary>
     public uint Get(int x, int y) => (uint)x < (uint)W && (uint)y < (uint)H ? P[y * W + x] : 0;
 
     public void Blend(int x, int y, uint c, double a)
     {
-        if ((uint)x < (uint)W && (uint)y < (uint)H) P[y * W + x] = Mix(P[y * W + x], c, a);
+        if ((uint)x >= (uint)W || (uint)y >= (uint)H) return;
+        uint back = P[y * W + x];
+        if (SkipBlends && back == None) back = MaskStandIn;
+        P[y * W + x] = Mix(back, c, a);
     }
 
     public void Rect(int x, int y, int w, int h, uint c)
@@ -91,18 +107,6 @@ public sealed class Surface
             Array.Copy(src.P, (sy + y) * src.W + sx, P, (dy + y) * W + dx, w);
     }
 
-    /// <summary>Draws a sprite with its top-left at (x, y). <paramref name="whiteness"/> blends every opaque pixel toward white.</summary>
-    public void Blit(Canvas s, int x, int y, double whiteness = 0)
-    {
-        for (int sy = 0; sy < s.Height; sy++)
-            for (int sx = 0; sx < s.Width; sx++)
-                if (s[sx, sy] is { } c)
-                {
-                    uint v = Pack(c);
-                    Set(x + sx, y + sy, whiteness > 0 ? Mix(v, 0xFFFFFF, whiteness) : v);
-                }
-    }
-
     public void Disc(int cx, int cy, int r, uint c)
     {
         for (int y = -r; y <= r; y++)
@@ -110,10 +114,14 @@ public sealed class Surface
                 if (x * x + y * y <= r * r + r / 2) Set(cx + x, cy + y, c);
     }
 
+    // A little over 2π, so a ring takes a bit more than one step per pixel of its circumference and has no gaps. (Math.Tau
+    // would change the step count for some radii, and so the pixels drawn.)
+    private const double RingStepsPerRadius = 6.3;
+
     /// <summary>One-pixel circle outline; <paramref name="a"/> blends it over what is there.</summary>
     public void Ring(double cx, double cy, double r, uint c, double a)
     {
-        int steps = Math.Max(8, (int)(r * 6.3));
+        int steps = Math.Max(8, (int)(r * RingStepsPerRadius));
         for (int i = 0; i < steps; i++)
         {
             double t = i * Math.PI * 2 / steps;

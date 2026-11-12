@@ -150,6 +150,8 @@ public class DarknessTests
         string s = DarknessText.Clean(string.Join(' ', Enumerable.Repeat("blah", 40)));
         Assert.InRange(s.Length, 20, 61);
         Assert.EndsWith("…", s);
+        string post = string.Join(' ', Enumerable.Repeat("blah", 40));   // 199 chars: whole at the post limit
+        Assert.Equal(post, DarknessText.Clean(post, DarknessText.MaxPostChars));
         Assert.Equal("", DarknessText.Clean("   @only.mention.test https://x.test  "));
         Assert.Equal("", DarknessText.Clean(null));
     }

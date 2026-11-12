@@ -60,7 +60,7 @@ const term = new Terminal({
   fontSize: !spectatorMode && window.innerWidth < 600 ? 12 : 14,
   customGlyphs: true,
   scrollback: spectatorMode ? 1000 : 0, // the game redraws in place; history is dead memory
-  theme: { background: '#101316', foreground: '#d8cba3', selectionBackground: 'transparent' },
+  theme: { background: '#181a11', foreground: '#e9ead3', selectionBackground: 'transparent' },
 });
 const fit = new FitAddon.FitAddon();
 term.loadAddon(fit);
@@ -191,18 +191,19 @@ function fetchAvatar(did, url) {
   if (!avatarCache.has(did)) avatarCache.set(did, loadAvatar(did, url));
   return avatarCache.get(did);
 }
+const AVATAR_SIZE = 8, AVATAR_PIXELS = AVATAR_SIZE * AVATAR_SIZE, RGBA_BYTES = 4;
 async function loadAvatar(did, url) {
   const tryBlob = async (get) => {
     try {
       const r = await get();
       if (!r.ok) return null;
       const bmp = await createImageBitmap(await r.blob());
-      const c = new OffscreenCanvas(8, 8);
+      const c = new OffscreenCanvas(AVATAR_SIZE, AVATAR_SIZE);
       const x = c.getContext('2d', { willReadFrequently: true });
-      x.drawImage(bmp, 0, 0, 8, 8);
-      const px = x.getImageData(0, 0, 8, 8).data;
+      x.drawImage(bmp, 0, 0, AVATAR_SIZE, AVATAR_SIZE);
+      const px = x.getImageData(0, 0, AVATAR_SIZE, AVATAR_SIZE).data;
       const out = [];
-      for (let i = 0; i < 64; i++) out.push((px[i * 4] << 16) | (px[i * 4 + 1] << 8) | px[i * 4 + 2]);
+      for (let i = 0; i < AVATAR_PIXELS; i++) out.push((px[i * RGBA_BYTES] << 16) | (px[i * RGBA_BYTES + 1] << 8) | px[i * RGBA_BYTES + 2]);
       return out.join(',');
     } catch { return null; /* the blob is blocked, gone or not an image: no avatar */ }
   };
@@ -512,6 +513,7 @@ function el(tag, props = {}, ...kids) {
   n.append(...kids);
   return n;
 }
+const DEBUG_POSTS = 10;
 async function renderDebug() {
   panel.style.display = 'block';
   panel.replaceChildren(el('h2', { textContent: 'feed debug' }));
@@ -525,13 +527,13 @@ async function renderDebug() {
   panel.append(status);
   let page;
   try {
-    page = JSON.parse(await exports.Bridge.FeedPage(feed, null, 10));
+    page = JSON.parse(await exports.Bridge.FeedPage(feed, null, DEBUG_POSTS));
   } catch (e) {
     status.textContent = 'feed failed: ' + (e.message || e);
     return;
   }
   status.textContent = `${page.posts.length} posts from ${feed} (as @${me.handle})`;
-  for (const p of page.posts.slice(0, 10)) panel.append(postRow(p));
+  for (const p of page.posts.slice(0, DEBUG_POSTS)) panel.append(postRow(p));
 }
 function postRow(p) {
   const result = el('span', { className: 'result' });
@@ -627,6 +629,7 @@ function installMenu() {
   $('menu-resume').addEventListener('click', () => menu.close());
   $('menu-quit').addEventListener('click', () => menu.backToMenu());
   $('menu-signout').addEventListener('click', async () => {
+    // a failed logout is logged, not shown: the menu still has to close, and renderSession then shows whatever session is left
     try { await auth?.logout(); } catch (e) { console.warn('sign-out failed: ' + (e?.message || e)); }
     renderSession();
     menu.backToMenu();
@@ -736,13 +739,25 @@ function installGameInput() {
   screen.addEventListener('mousemove', (e) => exports.Host.Pointer(...toCell(e.clientX, e.clientY)));
   screen.addEventListener('mouseleave', () => { exports.Host.PointerGone(); gestures.mouseLeave(); });
   // Capture phase, stopped here: xterm's own drag-to-select listens on an inner element and must never see the press.
+  let fieldPress = false; // a press that began on the field and has not been released yet
   screen.addEventListener('mousedown', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    fieldPress = true;
     gestures.mouseDown(e.button, toCell(e.clientX, e.clientY));
   }, true);
-  window.addEventListener('mouseup', (e) => gestures.mouseUp(e.button), true);
+  // Firefox's chatbot shortcut (browser.ml.chat.*) times a press from the last mousedown it saw to the mouseup, and shows
+  // itself after a long one even with nothing selected. It never sees the field's mousedown (stopped above), so a release
+  // it did see would be timed from some earlier click on the page and always count as long. No page opt-out exists, so the
+  // release of a field press stops here too, wherever the pointer has got to by then.
+  window.addEventListener('mouseup', (e) => {
+    if (fieldPress) { fieldPress = false; e.stopPropagation(); }
+    gestures.mouseUp(e.button);
+  }, true);
   screen.addEventListener('dblclick', (e) => { e.preventDefault(); e.stopPropagation(); }, true);
+  // and no selection or drag may start in the field
+  screen.addEventListener('selectstart', (e) => e.preventDefault());
+  screen.addEventListener('dragstart', (e) => e.preventDefault());
   term.onSelectionChange(() => { if (term.hasSelection()) term.clearSelection(); });
   screen.addEventListener('contextmenu', (e) => e.preventDefault());
 

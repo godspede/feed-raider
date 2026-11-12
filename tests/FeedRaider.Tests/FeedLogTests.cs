@@ -26,7 +26,7 @@ public class FeedLogTests
         return g;
     }
 
-    private static int C0(RaiderGame g) => g.Layout.Col0 - 2 - g.Layout.PanelCols;
+    private static int C0(RaiderGame g) => g.Layout.Col0 - Tuning.SideGapCols - g.Layout.PanelCols;
 
     private static string ColRow(Screen s, RaiderGame g, int r) => new(Enumerable.Range(C0(g), g.Layout.PanelCols).Select(c => s.CharAt(c, r)).ToArray());
 

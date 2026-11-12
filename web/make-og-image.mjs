@@ -46,11 +46,15 @@ const feed = texts.map((text, i) => ({
   },
 }));
 
+const CARD_W = 1200, CARD_H = 630, SHOT_W = 560;   // the card, and the game frame on its right
+const COLOUR_TOLERANCE = 14;   // summed per-channel distance under which a pixel has a kind's colour
+const MIN_KIND_PIXELS = 12;    // pixels of a kind's colour that make a frame show that kind
+
 const browser = await firefox.launch();
-const card = await browser.newPage({ viewport: { width: 1200, height: 630 } });
+const card = await browser.newPage({ viewport: { width: CARD_W, height: CARD_H } });
 // the sprite colours of the mine, diver, splitter and turret; a frame counts a kind when enough pixels are close to its colour
 const kindColours = [[0xff, 0xb3, 0x47], [0x9d, 0xff, 0x5a], [0xff, 0x6b, 0xe0], [0x3f, 0xe0, 0xd0]];
-const kindsIn = (png) => card.evaluate(async ([b64, colours]) => {
+const kindsIn = (png) => card.evaluate(async ([b64, colours, tolerance, minPixels]) => {
   const img = new Image();
   img.src = `data:image/png;base64,${b64}`;
   await img.decode();
@@ -58,13 +62,13 @@ const kindsIn = (png) => card.evaluate(async ([b64, colours]) => {
   c.drawImage(img, 0, 0);
   const px = c.getImageData(0, 0, img.width, img.height).data;
   const seen = colours.map(() => 0);
-  for (let i = 0; i < px.length; i += 4) colours.forEach(([r, g, b], k) => { if (Math.abs(px[i] - r) + Math.abs(px[i + 1] - g) + Math.abs(px[i + 2] - b) < 14) seen[k]++; });
-  return seen.filter((n) => n >= 12).length;
-}, [png.toString('base64'), kindColours]);
+  for (let i = 0; i < px.length; i += 4) colours.forEach(([r, g, b], k) => { if (Math.abs(px[i] - r) + Math.abs(px[i + 1] - g) + Math.abs(px[i + 2] - b) < tolerance) seen[k]++; });
+  return seen.filter((n) => n >= minPixels).length;
+}, [png.toString('base64'), kindColours, COLOUR_TOLERANCE, MIN_KIND_PIXELS]);
 let shot;
 if (process.env.OG_SHOT) shot = readFileSync(process.env.OG_SHOT).toString('base64');
 else {
-  const page = await browser.newPage({ viewport: { width: 560, height: 630 } });
+  const page = await browser.newPage({ viewport: { width: SHOT_W, height: CARD_H } });
   await page.route('**/xrpc/app.bsky.feed.getFeed*', (r) => r.fulfill({ json: { feed, cursor: 'next' } }));
   const opened = new Set();
   await page.route('**/xrpc/app.bsky.feed.getPostThread*', (r) => {
@@ -83,9 +87,8 @@ else {
   await page.waitForTimeout(8000); // gameplay time: the plane has to fly for real seconds before the frame is taken
   // sweep the plane over the field pressing like until a thread opens, then hold still and like the opened post too, so the bubble
   // stacks three posts; the guest's first like asks to sign in, and that popup has faded by the time the frame is taken
-  const likes = () => opened.size;
   for (let t = 0; t < 400 && ![...opened].some((k) => k.endsWith(':1')); t++) {
-    if (likes() === 0) await page.mouse.move(60 + (t * 37) % 440, 120 + (t * 71) % 440, { steps: 4 });
+    if (opened.size === 0) await page.mouse.move(60 + (t * 37) % 440, 120 + (t * 71) % 440, { steps: 4 });
     await page.keyboard.press('KeyE');
     await page.waitForTimeout(250);
   }
@@ -107,14 +110,14 @@ else {
 
 await card.setContent(`<style>
   * { box-sizing: border-box; }
-  body { margin: 0; width: 1200px; height: 630px; display: flex; background: #101316; color: #d8cba3; font: 28px/1.35 system-ui, sans-serif; }
+  body { margin: 0; width: ${CARD_W}px; height: ${CARD_H}px; display: flex; background: #101316; color: #d8cba3; font: 28px/1.35 system-ui, sans-serif; }
   .text { flex: 1; padding: 64px 56px; display: flex; flex-direction: column; justify-content: center; }
   h1 { margin: 0 0 28px; font: 700 60px/1 ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace; letter-spacing: .18em; text-transform: uppercase; color: #eef2d6; white-space: nowrap; }
   h1::before { content: "▌"; color: #a3b35f; margin-right: .35em; letter-spacing: 0; }
   .lede { margin: 0 0 40px; color: #d8cba3; }
   ul { list-style: none; margin: 0; padding: 0; font: 26px/1.3 ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace; }
   li { margin: 0 0 14px; color: #eef2d6; } li b { color: #a3b35f; font-weight: 600; }
-  img { width: 560px; height: 630px; display: block; border-left: 4px solid #a3b35f; }
+  img { width: ${SHOT_W}px; height: ${CARD_H}px; display: block; border-left: 4px solid #a3b35f; }
 </style>
 <div class="text"><h1>Feed Raider</h1>
 <p class="lede">A shoot-'em-up built from your Bluesky feed</p>

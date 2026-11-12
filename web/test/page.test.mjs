@@ -5,15 +5,17 @@ import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { avatarCid, didDocUrl, metadataUrl } from '../../src/FeedRaider.Web/wwwroot/page.js';
 
 const wwwroot = new URL('../../src/FeedRaider.Web/wwwroot/', import.meta.url);
+const metadataScript = fileURLToPath(new URL('../make-client-metadata.mjs', import.meta.url));
 const SITE = 'https://feed-raider.famelos.com';
 const PAGES = [`${SITE}/`, `${SITE}/index.html`, `${SITE}/?handle=bsky.app`, `${SITE}/?debug=feed#state=x`];
 
 test('client_id and redirect_uri match what make-client-metadata writes for the site URL', () => {
   const out = join(mkdtempSync(join(tmpdir(), 'fr-meta-')), 'client-metadata.json');
-  execFileSync('node', [new URL('../make-client-metadata.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), SITE, out]);
+  execFileSync('node', [metadataScript, SITE, out]);
   const meta = JSON.parse(readFileSync(out, 'utf8'));
   assert.equal(meta.client_id, `${SITE}/client-metadata.json`);
   assert.deepEqual(meta.redirect_uris, [`${SITE}/`]);
@@ -30,7 +32,7 @@ test('client_id and redirect_uri match what make-client-metadata writes for the 
 test('a trailing slash on the site argument makes no difference', () => {
   const dir = mkdtempSync(join(tmpdir(), 'fr-meta-'));
   const gen = (site, name) => {
-    execFileSync('node', [new URL('../make-client-metadata.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), site, join(dir, name)]);
+    execFileSync('node', [metadataScript, site, join(dir, name)]);
     return readFileSync(join(dir, name), 'utf8');
   };
   assert.equal(gen(SITE, 'a.json'), gen(`${SITE}/`, 'b.json'));

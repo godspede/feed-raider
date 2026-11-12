@@ -17,7 +17,7 @@ public class FieldLayoutPanelTests
     }
 
     [Theory]
-    [InlineData(Tuning.FieldMaxCols + 2 * 32)]
+    [InlineData(Tuning.FieldMaxCols + 2 * (Tuning.SidePanelMinCols + Tuning.SideGapCols))]
     [InlineData(122)]
     [InlineData(57)]
     public void Below_the_threshold_there_is_no_side_column(int cols) => Assert.Equal(0, FieldLayout.Compute(cols, 47).PanelCols);

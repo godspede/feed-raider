@@ -11,14 +11,16 @@ public static class GuyBuilder
     public const int Width = 12;
     public const int Height = 16;
 
+    /// <summary>How much darker than the body the legs, arms and antenna stem are drawn.</summary>
+    private const double ShadeFactor = 0.78;
+
     private static readonly Rgb Ink = new(0x18, 0x22, 0x3a);
 
     public static Canvas Build(Look look, Pose pose)
     {
         var c = new Canvas(Width, Height);
-        Rgb body = look.Body, shade = body.Darken(0.78), belly = body.Lerp(new Rgb(255, 255, 240), 0.55);
+        Rgb body = look.Body, shade = body.Darken(ShadeFactor), belly = body.Lerp(new Rgb(255, 255, 240), 0.55);
 
-        // legs (back), one lifts on odd steps while walking
         int lift = pose.Step & 1;
         c.FillRect(3, 12, 2, 4 - (pose.Step > 0 && lift == 1 ? 1 : 0), shade);
         c.FillRect(7, 12, 2, 4 - (pose.Step > 0 && lift == 0 ? 1 : 0), shade);
@@ -29,12 +31,10 @@ public static class GuyBuilder
             c[x, y] = null;
         if (look.Belly) c.FillRect(3, 9, 6, 2, belly);
 
-        // arms: raised while speaking
         int armY = pose.Speaking ? 5 : 7;
         c.FillRect(0, armY, 1, 3, shade);
         c.FillRect(11, armY, 1, 3, shade);
 
-        // eyes
         int ex = Math.Clamp(pose.Facing, -1, 1);
         int lx = 3 + ex, rx = 8 + ex;
         if (pose.Blink)
@@ -47,7 +47,7 @@ public static class GuyBuilder
             switch (look.EyeStyle)
             {
                 case 0: c.FillRect(lx, 6, 1, 2, Ink); c.FillRect(rx, 6, 1, 2, Ink); break;
-                case 1: c.FillRect(lx, 6, 2, 2, Ink); c.FillRect(rx - 1, 6, 2, 2, Ink); c[lx, 6] = Rgb255(255); c[rx - 1, 6] = Rgb255(255); break;
+                case 1: c.FillRect(lx, 6, 2, 2, Ink); c.FillRect(rx - 1, 6, 2, 2, Ink); c[lx, 6] = Grey(255); c[rx - 1, 6] = Grey(255); break;
                 default: c.FillRect(lx, 7, 1, 1, Ink); c.FillRect(rx, 7, 1, 1, Ink); c[lx, 6] = Ink; c[rx, 6] = Ink; break;
             }
         }
@@ -57,7 +57,7 @@ public static class GuyBuilder
         return c;
     }
 
-    private static Rgb Rgb255(byte v) => new(v, v, v);
+    private static Rgb Grey(byte v) => new(v, v, v);
 
     private static void DrawAccessory(Canvas c, Look look)
     {
@@ -65,7 +65,7 @@ public static class GuyBuilder
         switch (look.Accessory)
         {
             case Accessory.Antenna:
-                c.FillRect(5, 2, 2, 2, b.Darken(0.78));
+                c.FillRect(5, 2, 2, 2, b.Darken(ShadeFactor));
                 c.FillRect(5, 0, 2, 2, t);
                 break;
             case Accessory.CatEars:

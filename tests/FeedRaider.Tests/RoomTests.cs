@@ -57,6 +57,29 @@ public class RoomTests
     }
 
     [Fact]
+    public void A_visitor_walks_out_without_a_bubble_and_speaks_once_she_arrives()
+    {
+        Room Started()
+        {
+            var r = Make("alice", "bob");
+            r.Handle(Post("alice", "hey bob", "bob"), 0);
+            return r;
+        }
+        var room = Started();
+        Assert.DoesNotContain("hey bob", room.Render(80, 24, 100));   // setting off
+        long walkMs = room.CurrentAction("did:plc:alice")!.WalkMs;
+        Assert.InRange(walkMs, 1, Room.BubbleMs);
+        Assert.DoesNotContain("hey bob", Started().Render(80, 24, walkMs - 1));   // the last moment of the walk
+        Assert.Contains("hey bob", Started().Render(80, 24, walkMs));             // arrived
+
+        // at the moment she sets off she is still at her seat, but drawn walking rather than standing idle
+        var idle = Make("alice", "bob");
+        var visiting = Make("alice", "bob");
+        visiting.Handle(Post("alice", "hey bob", "bob"), 1000);
+        Assert.NotEqual(idle.Render(80, 24, 1000), visiting.Render(80, 24, 1000));
+    }
+
+    [Fact]
     public void Visitor_stands_next_to_the_target_while_talking()
     {
         var room = Make("alice", "bob");

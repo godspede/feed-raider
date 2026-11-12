@@ -6,6 +6,10 @@ namespace FeedRaider.Tests;
 /// <summary>A hidden browser tab pauses the game loop, the feed pager and the socket reads; coming back resumes them.</summary>
 public class PauseTests
 {
+    // Pausing has no signal to wait for, so the tests sleep: SettleMs for a tick already in flight to finish, then WatchMs (or
+    // LongWatchMs, over the frame sink) to see that nothing moves.
+    private const int SettleMs = 100, WatchMs = 300, LongWatchMs = 500;
+
     private sealed class CountSink : IFrameSink
     {
         public int Frames;
@@ -74,9 +78,9 @@ public class PauseTests
         await Wait.UntilAsync(() => { lock (game) return game.Tick > 3; }, "the loop to run");
 
         gate.Hold("menu", true);
-        await Task.Delay(100);
+        await Task.Delay(SettleMs);
         long atPause; lock (game) atPause = game.Tick;
-        await Task.Delay(300);
+        await Task.Delay(WatchMs);
         long whilePaused; lock (game) whilePaused = game.Tick;
         Assert.Equal(atPause, whilePaused);
 
@@ -111,10 +115,10 @@ public class PauseTests
         await Wait.UntilAsync(() => { lock (game) return game.Tick > 3; }, "the loop to run before the pause");
 
         gate.Pause();
-        await Task.Delay(100);   // let a tick in flight finish
+        await Task.Delay(SettleMs);
         long atPause; lock (game) atPause = game.Tick;
         int framesAtPause = sink.Frames;
-        await Task.Delay(500);
+        await Task.Delay(LongWatchMs);
         long whilePaused; lock (game) whilePaused = game.Tick;
         Assert.Equal(atPause, whilePaused);
         Assert.Equal(framesAtPause, sink.Frames);
@@ -138,7 +142,7 @@ public class PauseTests
         using var cts = new CancellationTokenSource();
         var run = RaiderFeeds.WingmenAsync(game, feed, null, "", cts.Token, pause: gate);
 
-        await Task.Delay(300);
+        await Task.Delay(WatchMs);
         Assert.Equal(0, feed.Calls);
 
         gate.Resume();
@@ -159,7 +163,7 @@ public class PauseTests
         var l = Task.Run(async () => { await foreach (var _ in labels) { } });
         var h = Task.Run(async () => { await foreach (var _ in hidden) { } });
 
-        await Task.Delay(200);   // paused from the start: no connection is attempted, no network is touched
+        await Task.Delay(WatchMs);   // paused from the start: no connection is attempted, no network is touched
         Assert.False(l.IsCompleted);
         Assert.False(h.IsCompleted);
 

@@ -23,6 +23,9 @@ public sealed class SfxBus(Action<string, double, int, double> emit)
     /// <summary>The combo's pitch rise stops at this many semitones.</summary>
     public const int MaxStep = 7;
 
+    // far enough back that no frame counts as soon after it (halved so frame - NoKillYet cannot overflow)
+    private const long NoKillYet = long.MinValue / 2;
+
     /// <summary>The fewest frames between two plays of a sound; 2 frames at 30 Hz is 66 ms.</summary>
     public static int MinGapFrames(string name) => name switch
     {
@@ -38,14 +41,14 @@ public sealed class SfxBus(Action<string, double, int, double> emit)
 
     private readonly Dictionary<string, long> _last = new(StringComparer.Ordinal);
     private int _combo;          // kills in the current chain
-    private long _lastKill = long.MinValue / 2;
+    private long _lastKill = NoKillYet;
 
     /// <summary>The combo's pitch rise in semitones as of <paramref name="frame"/>: 0 for the first kill of a chain.</summary>
     public int Step(long frame) => frame - _lastKill > ComboFrames ? 0 : Math.Min(MaxStep, Math.Max(0, _combo - 1));
 
     public void Play(string name, double pan, long frame, double size = 0)
     {
-        if (name is SfxNames.Hurt or SfxNames.Death) { _combo = 0; _lastKill = long.MinValue / 2; }
+        if (name is SfxNames.Hurt or SfxNames.Death) { _combo = 0; _lastKill = NoKillYet; }
         int step = 0;
         if (name is SfxNames.Kill or SfxNames.Boom)
         {

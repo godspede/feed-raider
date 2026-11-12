@@ -5,11 +5,15 @@ import assert from 'node:assert/strict';
 
 export const SR = 44100;
 const AUDIBLE = 0.003;   // -50 dBFS: the "audible span" runs from the first to the last sample above this
+const COEFF_INTERVAL = 16;   // samples between recomputing a filter's coefficients from its (possibly ramping) frequency
+const MAX_FILTER_HZ_FRACTION = 0.45;   // a filter's frequency is held under this share of the sample rate, short of Nyquist where the formulas blow up
+const MIN_Q = 0.05;   // the lowest Q used, so the bandwidth term never reaches zero
 
 // a deterministic Math.random for the noise buffers
 export function seeded(seed = 1) {
+  const LCG_MUL = 1664525, LCG_ADD = 1013904223, UINT32 = 4294967296;   // a linear congruential generator (Numerical Recipes)
   let s = seed >>> 0;
-  return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+  return () => { s = (Math.imul(s, LCG_MUL) + LCG_ADD) >>> 0; return s / UINT32; };
 }
 
 class Param {
@@ -91,8 +95,8 @@ export function makeCtx(seconds = 3) {
         out = new Float32Array(N);
         let x1 = 0, x2 = 0, y1 = 0, y2 = 0, b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
         for (let i = 0; i < N; i++) {
-          if (i % 16 === 0) {
-            const w = 2 * Math.PI * Math.min(f[i], SR * 0.45) / SR, c = Math.cos(w), al = Math.sin(w) / (2 * Math.max(q, 0.05)), a0 = 1 + al;
+          if (i % COEFF_INTERVAL === 0) {
+            const w = 2 * Math.PI * Math.min(f[i], SR * MAX_FILTER_HZ_FRACTION) / SR, c = Math.cos(w), al = Math.sin(w) / (2 * Math.max(q, MIN_Q)), a0 = 1 + al;
             if (n.type === 'lowpass') { b0 = (1 - c) / 2 / a0; b1 = (1 - c) / a0; b2 = b0; }
             else if (n.type === 'highpass') { b0 = (1 + c) / 2 / a0; b1 = -(1 + c) / a0; b2 = b0; }
             else { b0 = al / a0; b1 = 0; b2 = -b0; }   // bandpass

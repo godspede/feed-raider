@@ -52,7 +52,7 @@ public static class PostTextFetcher
                     if (p.TryGetProperty("record", out var rec) && rec.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
                         return t.GetString();
         }
-        catch (JsonException) { }
+        catch (JsonException) { }   // not JSON: no text
         return null;
     }
 
@@ -64,7 +64,7 @@ public static class PostTextFetcher
             if (doc.RootElement.TryGetProperty("value", out var v) && v.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
                 return t.GetString();
         }
-        catch (JsonException) { }
+        catch (JsonException) { }   // not JSON: no text
         return null;
     }
 
@@ -81,7 +81,7 @@ public static class PostTextFetcher
                         && p.TryGetProperty("record", out var rec) && rec.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
                         return t.GetString();
         }
-        catch (JsonException) { }
+        catch (JsonException) { }   // not JSON: no text
         return null;
     }
 
@@ -96,7 +96,7 @@ public static class PostTextFetcher
                     if (r.TryGetProperty("value", out var v) && v.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
                         return t.GetString();
         }
-        catch (JsonException) { }
+        catch (JsonException) { }   // not JSON: no text
         return null;
     }
 
@@ -112,7 +112,7 @@ public static class PostTextFetcher
                         && Uri.TryCreate(e, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps)
                         return u.GetLeftPart(UriPartial.Authority);
         }
-        catch (JsonException) { }
+        catch (JsonException) { }   // not JSON: no text
         return null;
     }
 
@@ -195,10 +195,10 @@ public sealed class LabelSource : IHasState
             string url = cursor >= 0 ? $"{Endpoint}?cursor={cursor}" : Endpoint;
             try { await ws.ConnectAsync(new Uri(url), wsCt).ConfigureAwait(false); }
             catch (Exception) when (Pause?.IsPaused == true && !ct.IsCancellationRequested) { State = "paused"; continue; }
-            catch (Exception)
+            catch (Exception e)
             {
                 failures++;
-                State = $"reconnecting ({failures})";
+                State = $"reconnecting ({failures}: {e.Message})";
                 try { await Task.Delay(JetstreamSource.Backoff(failures), ct); } catch (OperationCanceledException) { yield break; }
                 continue;
             }
@@ -207,8 +207,12 @@ public sealed class LabelSource : IHasState
             var buffer = new byte[JetstreamSource.ReceiveBufferBytes];
             while (ws.State == WebSocketState.Open && !wsCt.IsCancellationRequested)
             {
-                var frame = await ReceiveAsync(ws, buffer, wsCt);
-                if (frame is null) break;
+                var (frame, failure) = await JetstreamSource.ReceiveMessageAsync(ws, buffer, wsCt);
+                if (frame is null)
+                {
+                    if (failure is not null) State = $"reconnecting ({failure})";
+                    break;
+                }
                 var labels = LabelFrame.Decode(frame, out long seq);
                 FramesSeen++;
                 if (seq >= 0) last = seq;
@@ -233,22 +237,6 @@ public sealed class LabelSource : IHasState
         }
     }
 
-    private static async Task<byte[]?> ReceiveAsync(ClientWebSocket ws, byte[] buffer, CancellationToken ct)
-    {
-        try
-        {
-            using var ms = new MemoryStream();
-            while (true)
-            {
-                var r = await ws.ReceiveAsync(buffer, ct).ConfigureAwait(false);
-                if (r.MessageType == WebSocketMessageType.Close) return null;
-                ms.Write(buffer, 0, r.Count);
-                if (r.EndOfMessage) break;
-            }
-            return ms.ToArray();
-        }
-        catch (Exception) { return null; }
-    }
 }
 
 public sealed class DarknessStats
@@ -264,15 +252,17 @@ public sealed class DarknessStats
 public static class DarknessFeed
 {
     private const int SeenCap = 5000;
+    private const int DefaultPaceMs = 600;      // the wait between two text fetches
+    private const int BacklogCapacity = 24;     // subjects held for fetching before the oldest is dropped
 
     /// <summary>Labels in. Post-level spam/engagement-farming/rude and account-level spam pass; the subject is fetched, then forgotten.</summary>
     public static Task RunAsync(IAsyncEnumerable<LabelEvent> labels, Func<string, CancellationToken, Task<string?>> fetchText,
-        Action<DarkPost> onPost, DarknessStats stats, CancellationToken ct, int paceMs = 600, PauseGate? pause = null) =>
+        Action<DarkPost> onPost, DarknessStats stats, CancellationToken ct, int paceMs = DefaultPaceMs, PauseGate? pause = null) =>
         PumpAsync(Subjects(labels, stats, ct), fetchText, DarkSource.Label, onPost, () => stats.PostsFetched++, ct, paceMs, pause);
 
     /// <summary>Newly hidden reply URIs in; each becomes a rude monster.</summary>
     public static Task RunHiddenAsync(IAsyncEnumerable<string> hidden, Func<string, CancellationToken, Task<string?>> fetchText,
-        Action<DarkPost> onPost, DarknessStats stats, CancellationToken ct, int paceMs = 600, PauseGate? pause = null) =>
+        Action<DarkPost> onPost, DarknessStats stats, CancellationToken ct, int paceMs = DefaultPaceMs, PauseGate? pause = null) =>
         PumpAsync(HiddenSubjects(hidden, stats, ct), fetchText, DarkSource.Hidden, onPost, () => stats.HiddenFetched++, ct, paceMs, pause);
 
     private static async IAsyncEnumerable<(string Subject, DarknessKind Kind, string? Label)> Subjects(IAsyncEnumerable<LabelEvent> labels, DarknessStats stats,
@@ -306,8 +296,7 @@ public static class DarknessFeed
     private static async Task PumpAsync(IAsyncEnumerable<(string Subject, DarknessKind Kind, string? Label)> items, Func<string, CancellationToken, Task<string?>> fetchText,
         DarkSource source, Action<DarkPost> onPost, Action fetched, CancellationToken ct, int paceMs, PauseGate? pause = null)
     {
-        var queue = Channel.CreateBounded<(string Subject, DarknessKind Kind, string? Label)>(new BoundedChannelOptions(24) { FullMode = BoundedChannelFullMode.DropOldest });
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var queue = Channel.CreateBounded<(string Subject, DarknessKind Kind, string? Label)>(new BoundedChannelOptions(BacklogCapacity) { FullMode = BoundedChannelFullMode.DropOldest });
 
         var reader = Task.Run(async () =>
         {
@@ -315,8 +304,6 @@ public static class DarknessFeed
             {
                 await foreach (var (subject, kind, label) in items.WithCancellation(ct).ConfigureAwait(false))
                 {
-                    if (!seen.Add(subject)) continue;
-                    if (seen.Count > SeenCap) seen.Clear();
                     queue.Writer.TryWrite((subject, kind, label));
                 }
             }
@@ -329,7 +316,7 @@ public static class DarknessFeed
             await foreach (var (subject, kind, label) in queue.Reader.ReadAllAsync(ct).ConfigureAwait(false))
             {
                 if (pause is not null) await pause.WaitWhilePausedAsync(ct).ConfigureAwait(false);
-                string clean = DarknessText.Clean(await fetchText(subject, ct).ConfigureAwait(false));
+                string clean = DarknessText.Clean(await fetchText(subject, ct).ConfigureAwait(false), DarknessText.MaxPostChars);
                 if (clean.Length > 0)
                 {
                     fetched();

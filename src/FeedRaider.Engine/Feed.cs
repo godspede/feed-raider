@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace FeedRaider.Engine;
 
@@ -8,12 +9,13 @@ public sealed record PostRef(string Uri, string Cid);
 /// <summary>A post from a feed. <see cref="ReplyRoot"/> and <see cref="ReplyParent"/> are null for a top-level post.
 /// <see cref="AuthorOptOut"/>: the author carries the <c>!no-unauthenticated</c> label (no logged-out viewers).
 /// <see cref="Adult"/>: the post or its author carries an adult or graphic label.
-/// <see cref="Labelled"/>: the post or its author carries any other label, bar <see cref="FeedMapper.HarmlessLabels"/>.</summary>
+/// <see cref="Labelled"/>: the post or its author carries any other label, bar <see cref="FeedMapper.HarmlessLabels"/>.
+/// <see cref="LinkText"/>: the text is only a link, or points at another bsky.app post (a quote without the embed).</summary>
 public sealed record FeedPost(
     string Uri, string Cid, string AuthorDid, string AuthorHandle, string Text,
     int LikeCount, int RepostCount, int ReplyCount, PostRef? ReplyRoot, PostRef? ReplyParent,
     string? AvatarUrl = null, bool HasEmbed = false, bool AlreadyLiked = false, bool AuthorOptOut = false, bool Adult = false,
-    bool Labelled = false)
+    bool Labelled = false, bool LinkText = false)
 {
     public PostRef Ref => new(Uri, Cid);
 }
@@ -82,11 +84,11 @@ public static class Feeds
     }
 }
 
-public static class FeedMapper
+public static partial class FeedMapper
 {
     /// <summary>Maps an <c>app.bsky.feed.getFeed</c> response body to a page. Items without uri, cid or author DID are skipped, and so
-    /// are adult posts. With <paramref name="signedOut"/> (the page was read without a login) so are authors who opted out of logged-out viewers.</summary>
-    public static FeedPage ParsePage(string json, bool skipReposts = false, bool signedOut = false)
+    /// are reposts (the post belongs to another author, who was not asked for) and adult posts. With <paramref name="signedOut"/> (the page was read without a login) so are authors who opted out of logged-out viewers.</summary>
+    public static FeedPage ParsePage(string json, bool skipReposts = true, bool signedOut = false)
     {
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
@@ -123,9 +125,10 @@ public static class FeedMapper
         }
         return new FeedPost(uri, cid, did, Str(author, "handle") ?? did, text,
             Int(p, "likeCount"), Int(p, "repostCount"), Int(p, "replyCount"), rootRef, parentRef,
-            Str(author, "avatar"), HasEmbed(p), AlreadyLiked(p),
+            Str(author, "avatar"), HasEmbed(p) || HasRecordEmbed(p), AlreadyLiked(p),
             HasLabel(author, OptOutLabel), HasLabel(p, AdultLabels) || HasLabel(author, AdultLabels) || HasSelfLabel(p, AdultLabels),
-            HasOtherLabel(p) || HasOtherLabel(author) || HasSelfLabel(p, null));
+            HasOtherLabel(p) || HasOtherLabel(author) || HasSelfLabel(p, null),
+            IsLinkOrQuotedPost(p, text));
     }
 
     /// <summary>The author's request not to be shown to logged-out viewers.</summary>
@@ -175,6 +178,37 @@ public static class FeedMapper
     /// <summary>True when the post has any embed: images, video, an external link card, a quoted post or a quote with media.</summary>
     public static bool HasEmbed(JsonElement p) =>
         p.TryGetProperty("embed", out var e) && e.ValueKind == JsonValueKind.Object;
+
+    // the stored record's own embed: a feed that sends a bare record, or a view that dropped the embed, must not let a quote or picture through
+    private static bool HasRecordEmbed(JsonElement p) =>
+        p.TryGetProperty("record", out var r) && r.ValueKind == JsonValueKind.Object && r.TryGetProperty("embed", out var e) && e.ValueKind == JsonValueKind.Object;
+
+    [GeneratedRegex(@"(?:https?://|www\.)\S+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex Url();
+
+    [GeneratedRegex(@"bsky\.app/profile/\S+/post/", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex BskyPostUrl();
+
+    /// <summary>True when the text links to another bsky.app post, or is a link and little else (what is left once links are removed is
+    /// too short to show). The facets count as well as the visible text: a link facet can sit under a shortened label.</summary>
+    public static bool IsLinkOrQuotedPost(JsonElement p, string text)
+    {
+        bool facetLink = false;
+        if (p.TryGetProperty("record", out var rec) && rec.ValueKind == JsonValueKind.Object && rec.TryGetProperty("facets", out var facets) && facets.ValueKind == JsonValueKind.Array)
+            foreach (var f in facets.EnumerateArray())
+            {
+                if (!f.TryGetProperty("features", out var feats) || feats.ValueKind != JsonValueKind.Array) continue;
+                foreach (var ft in feats.EnumerateArray())
+                    if (ft.ValueKind == JsonValueKind.Object && Str(ft, "$type") is { } t && t.EndsWith("#link", StringComparison.Ordinal))
+                    {
+                        facetLink = true;
+                        if (Str(ft, "uri") is { } u && BskyPostUrl().IsMatch(u)) return true;
+                    }
+            }
+        if (BskyPostUrl().IsMatch(text)) return true;
+        if (!facetLink && !Url().IsMatch(text)) return false;
+        return Raider.Tuning.WingMinTextChars > BubbleText.Sanitize(Url().Replace(text, " ")).Length;
+    }
 
     private static PostRef? Ref(JsonElement e, string name) =>
         e.TryGetProperty(name, out var r) && r.ValueKind == JsonValueKind.Object && Str(r, "uri") is { } u && Str(r, "cid") is { } c ? new PostRef(u, c) : null;

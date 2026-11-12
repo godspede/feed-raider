@@ -20,14 +20,22 @@ public sealed record Look(Rgb Body, Rgb Trim, Accessory Accessory, bool Belly, i
         new(0x2b, 0x2f, 0x36), new(0xbf, 0xb2, 0x8a),
     ];
 
+    private static readonly int AccessoryCount = Enum.GetValues<Accessory>().Length;
+
+    /// <summary>How many eye drawings <see cref="GuyBuilder"/> has (its switch on <see cref="EyeStyle"/>).</summary>
+    private const int EyeStyleCount = 3;
+
+    // Each trait mixes the hash with its own salt, so the traits do not move together.
+    private const ulong TrimSalt = 0xA5A5, AccessorySalt = 0x1234, BellySalt = 0x77, EyeSalt = 0x99;
+
     public static Look From(string did, string? handle)
     {
         ulong h = Hashing.Fnv64(did + "|" + (handle ?? ""));
         int bodyIx = (int)(Hashing.Mix(h) % (ulong)Bodies.Length);
-        int trimIx = (int)(Hashing.Mix(h ^ 0xA5A5) % (ulong)Trims.Length);
-        var acc = (Accessory)(int)(Hashing.Mix(h ^ 0x1234) % 8);
-        bool belly = (Hashing.Mix(h ^ 0x77) & 1) == 1;
-        int eyes = (int)(Hashing.Mix(h ^ 0x99) % 3);
+        int trimIx = (int)(Hashing.Mix(h ^ TrimSalt) % (ulong)Trims.Length);
+        var acc = (Accessory)(int)(Hashing.Mix(h ^ AccessorySalt) % (ulong)AccessoryCount);
+        bool belly = (Hashing.Mix(h ^ BellySalt) & 1) == 1;
+        int eyes = (int)(Hashing.Mix(h ^ EyeSalt) % EyeStyleCount);
         return new Look(Bodies[bodyIx], Trims[trimIx], acc, belly, eyes);
     }
 }

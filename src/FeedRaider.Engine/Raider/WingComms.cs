@@ -26,7 +26,7 @@ public sealed class WingComms
     /// <summary>Header, borders and one page of text; a short post gets a short comm.</summary>
     public static int CommH(Wingman w) => CommChrome + StubRows(w) + w.PrevLines.Length + Math.Min(w.CommLines.Length, w.PageLines);
 
-    public static int Pages(Wingman w) => (w.CommLines.Length + w.PageLines - 1) / w.PageLines;
+    public static int Pages(Wingman w) => Pages(w.CommLines, w.PageLines);
 
     /// <summary>One-line stubs for the posts opened before the previous one: at most <see cref="MaxStubs"/>, the first standing for any further back.</summary>
     public static int StubRows(Wingman w) => Math.Min(MaxStubs, Math.Max(0, w.Earlier.Count - 1));
@@ -58,10 +58,8 @@ public sealed class WingComms
         w.Post = next;
         w.Text = BubbleText.Sanitize(next.Text);
         w.CommLines = BubbleText.Format(w.Text, w.CommTextW, TextLines * MaxPages);
-        int n = 0;
-        foreach (var l in w.CommLines) n += l.Length;
-        w.CommChars = n;
-        w.LikesTag = $"\u2665 {next.LikeCount:N0}";   // U+2665, the heart suit
+        w.CommChars = w.CommLines.Sum(l => l.Length);
+        w.LikesTag = LikesLabel(next);
         w.PostAge = 0;
         w.PageLines = Math.Clamp(fieldRows / 2 - CommChrome - StubRows(w) - w.PrevLines.Length, MinPageLines, TextLines);
         if (Speaker is { } s && s != w) s.Comm = CommState.Spoken;
@@ -75,42 +73,52 @@ public sealed class WingComms
         w.CommSeq = _seq++;
         w.CommTextW = TextWidth(fieldCols);
         w.CommLines = BubbleText.Format(w.Text, w.CommTextW, TextLines * MaxPages);
-        int n = 0;
-        foreach (var l in w.CommLines) n += l.Length;
-        w.CommChars = n;
+        w.CommChars = w.CommLines.Sum(l => l.Length);
         w.HandleTag = Trim("@" + w.Handle, w.CommTextW);
-        w.LikesTag = $"\u2665 {w.Post.LikeCount:N0}";   // \u2665 heart suit
+        w.LikesTag = LikesLabel(w.Post);
         w.ChipTag = Trim(w.Handle, ChipHandle);
         w.Accent = PlaneFactory.Accent(w.Post.AuthorDid);
     }
 
+    private static string LikesLabel(FeedPost p) => $"\u2665 {p.LikeCount:N0}";
+
     public static int RevealFrames(int chars) => (chars * Tuning.Fps + Tuning.CommCharsPerSecond - 1) / Tuning.CommCharsPerSecond;
 
-    public static int PageChars(Wingman w, int page)
+    public static int PageChars(Wingman w, int page) => PageChars(w.CommLines, w.PageLines, page);
+
+    /// <summary>Characters on page <paramref name="page"/> of <paramref name="lines"/> read <paramref name="pageLines"/> at a time (wingmen and enemies alike).</summary>
+    public static int PageChars(string[] lines, int pageLines, int page)
     {
         int n = 0;
-        for (int i = page * w.PageLines; i < Math.Min(w.CommLines.Length, (page + 1) * w.PageLines); i++) n += w.CommLines[i].Length;
+        for (int i = page * pageLines; i < Math.Min(lines.Length, (page + 1) * pageLines); i++) n += lines[i].Length;
         return n;
     }
 
-    public static int TotalFrames(Wingman w)
+    public static int Pages(string[] lines, int pageLines) => (lines.Length + pageLines - 1) / pageLines;
+
+    public static int TotalFrames(Wingman w) => TotalFrames(w.CommLines, w.PageLines, Tuning.CommCollapseFrames);
+
+    /// <summary>Frames to read every page out, hold the last, and then <paramref name="tail"/> more.</summary>
+    public static int TotalFrames(string[] lines, int pageLines, int tail)
     {
-        int pages = Pages(w), total = Tuning.CommCollapseFrames;
-        for (int p = 0; p < pages; p++) total += RevealFrames(PageChars(w, p)) + (p == pages - 1 ? Tuning.CommHoldFrames : Tuning.CommPageHoldFrames);
+        int pages = Pages(lines, pageLines), total = tail;
+        for (int p = 0; p < pages; p++) total += RevealFrames(PageChars(lines, pageLines, p)) + (p == pages - 1 ? Tuning.CommHoldFrames : Tuning.CommPageHoldFrames);
         return total;
     }
 
     /// <summary>The page on show and the characters of it typed so far, <paramref name="age"/> frames into the comm.</summary>
-    public static (int Page, int Shown) Progress(Wingman w, int age)
+    public static (int Page, int Shown) Progress(Wingman w, int age) => Progress(w.CommLines, w.PageLines, age);
+
+    public static (int Page, int Shown) Progress(string[] lines, int pageLines, int age)
     {
-        int pages = Pages(w);
+        int pages = Pages(lines, pageLines);
         for (int p = 0; p < pages - 1; p++)
         {
-            int chars = PageChars(w, p), span = RevealFrames(chars) + Tuning.CommPageHoldFrames;
+            int chars = PageChars(lines, pageLines, p), span = RevealFrames(chars) + Tuning.CommPageHoldFrames;
             if (age < span) return (p, Revealed(age, chars));
             age -= span;
         }
-        return (Math.Max(0, pages - 1), Revealed(age, PageChars(w, Math.Max(0, pages - 1))));
+        return (Math.Max(0, pages - 1), Revealed(age, PageChars(lines, pageLines, Math.Max(0, pages - 1))));
     }
 
     /// <summary>Characters shown after <paramref name="age"/> frames of speaking.</summary>
@@ -138,5 +146,6 @@ public sealed class WingComms
         next.Comm = CommState.Speaking; next.CommAge = 0; Speaker = next;
     }
 
-    private static string Trim(string s, int w) => s.Length <= w ? s : s[..Math.Max(1, w - 1)] + "…";
+    /// <summary>Cuts <paramref name="s"/> to <paramref name="w"/> characters, ending in an ellipsis when it was longer.</summary>
+    public static string Trim(string s, int w) => s.Length <= w ? s : s[..Math.Max(1, w - 1)] + "…";
 }

@@ -24,7 +24,7 @@ public sealed class Enemy
     /// <summary>The header of a darkness enemy's comm box ("SPAM"), built once at spawn; null for filler.</summary>
     public string? Header;
     public string[]? CommLines;
-    public int CommChars, CommAge;
+    public int CommAge, PageLines = 4;
     public bool Leaving;
     public double VY = 0.55;
     public double VX;
@@ -38,6 +38,11 @@ public sealed class Enemy
     public int Volleys, Burst;
     /// <summary>A diver past its wind-up, charging.</summary>
     public bool Dashing;
+    /// <summary>Frames left of the shiver before a sidestep, of the slide itself, and until it may sidestep again.</summary>
+    public int EvadeWind, EvadeSlide, EvadeCd;
+    /// <summary>-1 left, +1 right: where the sidestep goes.</summary>
+    public int EvadeDir;
+    public bool Evading => EvadeWind > 0 || EvadeSlide > 0;
     public bool Armed => Age >= Grace;
 }
 
@@ -61,6 +66,14 @@ public sealed class Popup { public string Text = ""; public double X, Y; public 
 /// </summary>
 public sealed partial class RaiderGame
 {
+    // field rows (the field is PH tall) where a gunship stops descending and where it starts to fire
+    private const double GunshipHoldRow = 22, GunshipFireRow = 16;
+    // radians per frame of each sideways sway: gunship, grunt (swaying, and the small wobble of a straight one), splitter, turret
+    private const double GunshipSwayRate = 0.035, GruntSwayRate = 0.06, GruntWobbleRate = 0.05, SplitterSwayRate = 0.05, TurretSwayRate = 0.03;
+    private const double TurretSwayCells = 4;
+    private const int WingFireGap = 8;        // frames between a wingman's shots
+    private const int TurretSettleFrames = 12;   // the beat after a turret settles, before its first wind-up
+
     public RaiderGame(ulong seed = 1)
     {
         _rs = Hashing.Mix(seed) | 1;
@@ -139,6 +152,8 @@ public sealed partial class RaiderGame
 
     // --- world ---
     public readonly List<Enemy> Enemies = [];
+    /// <summary>The last words of enemies that died or left mid-post: their boxes stay up until every page has been read.</summary>
+    public readonly List<Enemy> Echoes = [];
     public readonly List<Bullet> Bullets = [];
     public readonly List<Particle> Particles = [];
     public readonly List<Ring> Rings = [];
@@ -194,7 +209,7 @@ public sealed partial class RaiderGame
     {
         bool first = Layout.PCols == 0;
         Layout = lay;
-        if (first) { PX = PW / 2.0; PY = PH - 14; }
+        if (first) { PX = PW / 2.0; PY = PH - Tuning.PlayerStartAbove; }
         PX = Math.Clamp(PX, 6, Math.Max(6, PW - 6));
         PY = Math.Clamp(PY, 10, Math.Max(10, PH - 8));
     }
@@ -239,15 +254,15 @@ public sealed partial class RaiderGame
         double x = PX, y = PY - 8;
         foreach (var w in Wings) if (w.Post.Uri == post.Uri) { x = w.X; y = w.Y - w.Plane.H / 2.0 - 2; }
         Say($"liked @{BubbleText.Sanitize(post.AuthorHandle)}");
-        Popup("\u2665 liked", x, y, 0xff8fb1);   // \u2665 heart suit
-        AddRing(x, y + 2, 2, 12, 0xff5a8a, 12);
+        Popup("\u2665 liked", x, y, 0xff8fb1);
+        AddRing(x, y + 2, 2, 12, Palette.Pink, 12);
     }
 
     /// <summary>The host found the next post of <paramref name="of"/>'s thread: it opens under that post in its wingman's comm.
     /// Ignored when the wingman has gone, or has moved on from that post.</summary>
     public void ThreadOpened(string of, FeedPost next)
     {
-        if (!WingQueue.Eligible(next) || (PlainOnly && !RandomFeedSource.Plain(next))) { ThreadEnded(of); return; }
+        if (!WingQueue.Allowed(next, false) || !WingQueue.Plain(next) || (PlainOnly && !RandomFeedSource.Plain(next))) { ThreadEnded(of); return; }
         foreach (var w in Wings)
         {
             if (w.Post.Uri != of || w.Phase == WingPhase.Leave || w.Post.Uri == next.Uri) continue;
@@ -281,6 +296,7 @@ public sealed partial class RaiderGame
         {
             HitStop--;
             Input.EndFrame();
+            SaveBest();
             UpdateMusic();
             return;
         }
@@ -303,14 +319,19 @@ public sealed partial class RaiderGame
         UpdatePrompt();
         HandleLike();
         Input.EndFrame();
+        SaveBest();
         UpdateMusic();
     }
 
     private int _bestSaved;
 
-    private void UpdateMusic()
+    private void SaveBest()
     {
         if (OnBest is not null && Score > RecordToBeat && Score > _bestSaved && Frame % Tuning.Fps == 0) { _bestSaved = Score; OnBest(Score); }
+    }
+
+    private void UpdateMusic()
+    {
         Music?.Update(new MusicSnapshot(Deaths, Enemies.Any(e => e.Kind == EnemyKind.Gunship && e.Y > 0 && !e.Leaving),
             Hp, Wings.Count, LiveWavesCleared, Score, RecordToBeat));
     }
@@ -349,7 +370,7 @@ public sealed partial class RaiderGame
         var inp = Input;
         if (RespawnIn > 0)
         {
-            if (--RespawnIn == 0) { Hp = Tuning.PlayerHp; Bombs = Tuning.PlayerBombs; Invuln = Tuning.InvulnFrames; PX = PW / 2.0; PY = PH - 14; }
+            if (--RespawnIn == 0) { Hp = Tuning.PlayerHp; Bombs = Tuning.PlayerBombs; Invuln = Tuning.InvulnFrames; PX = PW / 2.0; PY = PH - Tuning.PlayerStartAbove; }
             inp.BombPressed = false; inp.HasTap = false; inp.DragCols = inp.DragRows = 0;
             return;
         }
@@ -410,11 +431,11 @@ public sealed partial class RaiderGame
         Sound(SfxNames.Bomb, PX);
         ScreenFlash = Tuning.ScreenFlashFrames;
         AddShake(Tuning.ShakeBomb, Tuning.HitStopBomb);
-        AddRing(PX, PY, 4, Math.Max(PW, PH) * 0.8, 0xbfe9ff, 20);
+        AddRing(PX, PY, 4, Math.Max(PW, PH) * 0.8, Palette.Ice, 20);
         Bullets.RemoveAll(b => !b.Friendly);
         foreach (var e in Enemies.ToArray())
             if (e.Y > -4) Damage(e, 30, e.X, e.Y, bomb: true);
-        Popup("BOMB", PX, PY - 8, 0xbfe9ff);
+        Popup("BOMB", PX, PY - 8, Palette.Ice);
     }
 
     // ---------------------------------------------------------------- waves
@@ -446,7 +467,7 @@ public sealed partial class RaiderGame
         _sinceWave = 0;
         WavesSpawned++;
         if (w.Live) { LiveWavesSpawned++; Sound(SfxNames.Darkness); }
-        string? header = w.Live && w.Kind is { } bk ? BaddieComm.Header(w.Label, bk, w.Source) : null;
+        string? header = w.Live && w.Kind is { } bk ? EnemyComm.Header(w.Label, bk, w.Source) : null;
         foreach (var s in w.Enemies) _pending.Add((Tick + 1 + s.Delay, s, w.Live, w.Kind, header));
     }
 
@@ -495,8 +516,8 @@ public sealed partial class RaiderGame
             Live = live,
             Source = src,
             Header = header,
-            FireCd = 50 + (int)(R() * 90),
-            VY = s.Kind == EnemyKind.Gunship ? 0.5 : 0.5 + R() * 0.15,
+            FireCd = Tuning.EnemyFirstShotMin + (int)(R() * Tuning.EnemyFirstShotJitter),
+            VY = s.Kind == EnemyKind.Gunship ? 0.5 : Tuning.EnemyFallMin + R() * Tuning.EnemyFallJitter,
             Grace = s.Kind == EnemyKind.Mine ? Tuning.MineArmFrames : s.Kind == EnemyKind.Shard ? Tuning.ShardGraceFrames : 0,
             Windup = -1,
         });
@@ -538,27 +559,28 @@ public sealed partial class RaiderGame
         foreach (var e in Enemies)
         {
             e.Age++;
-            BaddieComm.Update(e, Layout.PCols);
+            EnemyComm.Update(e, Layout.PCols, Layout.PRows);
             if (e.Flash > 0) e.Flash--;
             e.BaseX += e.KX; e.Y += e.KY;
             e.KX *= Tuning.KnockDecay; e.KY *= Tuning.KnockDecay;
+            if (e.Kind is EnemyKind.Grunt or EnemyKind.Carrier or EnemyKind.Splitter || e.Kind == EnemyKind.Diver && e.Windup < 0 && !e.Dashing) Evade(e);
             if (e.Kind >= EnemyKind.Mine)
             {
-                UpdateNewer(e);
+                UpdateUnlockedKinds(e);
             }
             else if (e.Kind == EnemyKind.Gunship)
             {
                 if (!e.Leaving && e.Age > Tuning.GunshipStayFrames) e.Leaving = true;
                 if (e.Leaving) e.Y -= 0.8;
-                else if (e.Y < 22) e.Y += e.VY;
-                e.X = e.BaseX + Math.Sin(e.Age * 0.035 + e.Phase) * e.Amp * PW;
+                else if (e.Y < GunshipHoldRow) e.Y += e.VY;
+                e.X = e.BaseX + Math.Sin(e.Age * GunshipSwayRate + e.Phase) * e.Amp * PW;
                 e.X = Math.Clamp(e.X, e.Sprite.W / 2.0, PW - e.Sprite.W / 2.0);
-                if (!e.Leaving && e.Y >= 16 && --e.FireCd <= 0) GunshipVolley(e);
+                if (!e.Leaving && e.Y >= GunshipFireRow && --e.FireCd <= 0) GunshipVolley(e);
             }
             else
             {
                 e.Y += e.VY;
-                e.X = e.BaseX + (e.Amp > 0 ? Math.Sin(e.Age * 0.06 + e.Phase) * e.Amp * PW * 0.5 : Math.Sin(e.Age * 0.05 + e.Phase) * 1.5);
+                e.X = e.BaseX + (e.Amp > 0 ? Math.Sin(e.Age * GruntSwayRate + e.Phase) * e.Amp * PW * 0.5 : Math.Sin(e.Age * GruntWobbleRate + e.Phase) * 1.5);
                 if (e.Y > 6 && e.Y < PH * 0.6 && --e.FireCd <= 0)
                 {
                     double gap = Ramp.FireGapMul(Stage);
@@ -567,13 +589,56 @@ public sealed partial class RaiderGame
                     if (Alive) EnemyShot(e.X, e.Y + 2, PX, PY, 0, Tuning.EnemyBulletSpeed * Ramp.BulletSpeedMul(Stage));
                 }
             }
+            if (e.EvadeWind > 0) e.X += e.Age % 4 < 2 ? -0.8 : 0.8;   // the tell: a shiver, then the slide
         }
-        Enemies.RemoveAll(e => e.Y > PH + 10 || e.Leaving && e.Y < -e.Sprite.H || e.X < -e.Sprite.W - 4 || e.X > PW + e.Sprite.W + 4);
+        for (int i = Enemies.Count - 1; i >= 0; i--)
+        {
+            var e = Enemies[i];
+            if (e.Y > PH + 10 || e.Leaving && e.Y < -e.Sprite.H || e.X < -e.Sprite.W - 4 || e.X > PW + e.Sprite.W + 4) { EnemyComm.Bury(this, e); Enemies.RemoveAt(i); }
+        }
+        for (int i = Echoes.Count - 1; i >= 0; i--)
+            if (++Echoes[i].CommAge >= EnemyComm.Frames(Echoes[i])) Echoes.RemoveAt(i);
+    }
+
+    /// <summary>Sidestep a player shot that is lined up on this enemy. The enemy must be on screen, off cooldown and not already moving;
+    /// it shivers for <see cref="Tuning.EvadeWindupFrames"/> (the tell), then slides away from the shot, so a shot already close still lands.
+    /// Cheap: one pass over the live bullets, and only for an enemy that is idle.</summary>
+    private void Evade(Enemy e)
+    {
+        if (e.EvadeCd > 0) e.EvadeCd--;
+        if (e.EvadeSlide > 0)
+        {
+            e.EvadeSlide--;
+            e.BaseX = Math.Clamp(e.BaseX + e.EvadeDir * Tuning.EvadeSpeed, e.Sprite.W / 2.0, PW - e.Sprite.W / 2.0);
+            return;
+        }
+        if (e.EvadeWind > 0)
+        {
+            if (--e.EvadeWind == 0) e.EvadeSlide = Tuning.EvadeSlideFrames;
+            return;
+        }
+        if (e.EvadeCd > 0 || e.Y < 0 || e.Hp <= 0) return;
+        double lane = e.Sprite.W / 2.0 + Tuning.EvadeLane, bottom = e.Y + e.Sprite.H / 2.0;
+        foreach (var b in Bullets)
+        {
+            if (!b.Friendly || b.VY >= 0) continue;
+            double dy = b.Y - bottom;
+            if (dy < -e.Sprite.H || dy > Tuning.EvadeSenseY) continue;
+            double bx = b.X + b.VX * Math.Max(0, (b.Y - e.Y) / -b.VY);   // where it will cross the enemy's row
+            double off = e.X - bx;
+            if (Math.Abs(off) > lane) continue;
+            int dir = Math.Abs(off) < 0.5 ? ((e.Age / 7 + (int)(e.Phase * 3)) % 2 == 0 ? 1 : -1) : Math.Sign(off);
+            double room = dir > 0 ? PW - e.Sprite.W / 2.0 - e.BaseX : e.BaseX - e.Sprite.W / 2.0;
+            e.EvadeDir = room < Tuning.EvadeSpeed * Tuning.EvadeSlideFrames * 0.5 ? -dir : dir;   // never into a wall
+            e.EvadeWind = Tuning.EvadeWindupFrames;
+            e.EvadeCd = Tuning.EvadeWindupFrames + Tuning.EvadeSlideFrames + Ramp.EvadeCooldown(Stage);
+            return;
+        }
     }
 
     /// <summary>The newer kinds. Each threat shows itself first: a grace while it cannot touch the ship (<see cref="Enemy.Grace"/>)
     /// or a wind-up while it shows where it will strike (<see cref="Enemy.Windup"/>).</summary>
-    private void UpdateNewer(Enemy e)
+    private void UpdateUnlockedKinds(Enemy e)
     {
         switch (e.Kind)
         {
@@ -587,10 +652,10 @@ public sealed partial class RaiderGame
                 break;
             case EnemyKind.Splitter:
                 e.Y += Tuning.SplitterFall;
-                e.X = e.BaseX + Math.Sin(e.Age * 0.05 + e.Phase) * e.Amp * PW;
+                e.X = e.BaseX + Math.Sin(e.Age * SplitterSwayRate + e.Phase) * e.Amp * PW;
                 break;
             case EnemyKind.Diver:
-                e.X = e.BaseX;
+                e.X = e.BaseX + (e.Dashing || e.Windup >= 0 ? 0 : Math.Sin(e.Age * Tuning.DiverWeaveRate + e.Phase) * Tuning.DiverWeaveAmp);
                 if (e.Dashing) { e.BaseX += e.VX; e.Y += e.VY; e.X = e.BaseX; break; }
                 if (e.Windup < 0)
                 {
@@ -606,7 +671,7 @@ public sealed partial class RaiderGame
                 e.Dashing = true;
                 break;
             case EnemyKind.Turret:
-                e.X = Math.Clamp(e.BaseX + Math.Sin(e.Age * 0.03 + e.Phase) * 4, e.Sprite.W / 2.0, PW - e.Sprite.W / 2.0);
+                e.X = Math.Clamp(e.BaseX + Math.Sin(e.Age * TurretSwayRate + e.Phase) * TurretSwayCells, e.Sprite.W / 2.0, PW - e.Sprite.W / 2.0);
                 if (e.Leaving) { e.Y -= 0.7; break; }
                 if (e.Y < PH * Tuning.TurretHoldRow) { e.Y += 0.6; break; }
                 if (e.Burst > 0)
@@ -622,7 +687,7 @@ public sealed partial class RaiderGame
                     if (--e.Windup == 0) { e.Burst = Tuning.TurretBurst; e.FireCd = 1; }
                     break;
                 }
-                if (e.Windup < 0) { e.Windup = 0; e.FireCd = 12; }   // just settled: a short beat, then the first wind-up
+                if (e.Windup < 0) { e.Windup = 0; e.FireCd = TurretSettleFrames; }   // just settled: a short beat, then the first wind-up
                 if (--e.FireCd <= 0) { LockAim(e); e.Windup = Tuning.TurretWindupFrames; }
                 break;
         }
@@ -632,7 +697,7 @@ public sealed partial class RaiderGame
     private void LockAim(Enemy e)
     {
         if (Alive) { e.AimX = PX; e.AimY = PY; }
-        else { e.AimX = PW / 2.0; e.AimY = PH - 14; }
+        else { e.AimX = PW / 2.0; e.AimY = PH - Tuning.PlayerStartAbove; }
     }
 
     private void TurretShot(Enemy e)
@@ -687,7 +752,7 @@ public sealed partial class RaiderGame
                         w.Y = w.HomeY + Math.Sin(t * 0.07 + w.Slot) * 4;
                         if (--w.FireCd <= 0)
                         {
-                            w.FireCd = 8; w.MuzzleFrames = Tuning.MuzzleFrames;
+                            w.FireCd = WingFireGap; w.MuzzleFrames = Tuning.MuzzleFrames;
                             Bullets.Add(new Bullet { X = w.X, Y = w.Y - w.Plane.H / 2.0, VY = -Tuning.PlayerBulletSpeed, Dmg = 0.9 * w.Firepower, Friendly = true, Wing = true });
                         }
                         break;
@@ -739,7 +804,7 @@ public sealed partial class RaiderGame
         ScreenFlash = Tuning.ScreenFlashFrames;
         Sound(SfxNames.Bomb, PW / 2.0);
         AddShake(Tuning.ShakeBomb, Tuning.HitStopBomb);
-        AddRing(PW / 2.0, PH / 2.0, 6, Math.Max(PW, PH), 0xffffff, 22);
+        AddRing(PW / 2.0, PH / 2.0, 6, Math.Max(PW, PH), Palette.White, 22);
         Bullets.RemoveAll(b => !b.Friendly);
         foreach (var e in Enemies.ToArray()) Damage(e, 9999, e.X, e.Y, bomb: true);
         _pending.Clear();
@@ -757,11 +822,14 @@ public sealed partial class RaiderGame
         double best = Tuning.LikeRadius;
         foreach (var w in Wings)
         {
-            if (w.Followed || w.Phase == WingPhase.Leave || w.Age < Tuning.WingEnterFrames / 2) continue;
+            if (!CanBeLiked(w)) continue;
             double d = Math.Sqrt((w.X - PX) * (w.X - PX) + (w.Y - PY) * (w.Y - PY));
             if (d <= best) { best = d; Prompt = w; }
         }
     }
+
+    /// <summary>Whether a like may target the wingman: on screen (past half its entry), still flying and not yet acted on.</summary>
+    private static bool CanBeLiked(Wingman w) => !(w.Followed || w.Phase == WingPhase.Leave || w.Age < Tuning.WingEnterFrames / 2);
 
     private bool InBombButton(double col, double row)
     {
@@ -788,7 +856,7 @@ public sealed partial class RaiderGame
             double bd = Tuning.LikeHoldRadius;
             foreach (var w in Wings)
             {
-                if (w.Followed || w.Phase == WingPhase.Leave || w.Age < Tuning.WingEnterFrames / 2) continue;
+                if (!CanBeLiked(w)) continue;
                 double d = Math.Sqrt((w.X - hx) * (w.X - hx) + (w.Y - hy) * (w.Y - hy));
                 if (d <= bd) { bd = d; best = w; }
             }
@@ -844,9 +912,9 @@ public sealed partial class RaiderGame
         {
             double a = i / (double)Tuning.HeartBurst * Math.PI * 2 + R();
             double sp = 0.5 + R() * 1.1;
-            AddParticle(new Particle { X = w.X, Y = w.Y, VX = Math.Cos(a) * sp, VY = Math.Sin(a) * sp - 0.5, Life = 22 + (int)(R() * 10), Color = 0xff5a8a, Kind = ParticleKind.Heart });
+            AddParticle(new Particle { X = w.X, Y = w.Y, VX = Math.Cos(a) * sp, VY = Math.Sin(a) * sp - 0.5, Life = 22 + (int)(R() * 10), Color = Palette.Pink, Kind = ParticleKind.Heart });
         }
-        AddRing(w.X, w.Y, 3, 14, 0xff5a8a, 14);
+        AddRing(w.X, w.Y, 3, 14, Palette.Pink, 14);
         if (write) Popup("POWER UP", PX, PY - 10, 0xff8fb1);
         AddShake(1.2);
         return true;
@@ -889,29 +957,39 @@ public sealed partial class RaiderGame
                 {
                     PlayerHit();
                     if (e.Kind == EnemyKind.Mine) Detonate(e);
-                    else Damage(e, 4, PX, PY - 2);
+                    else Damage(e, e.Kind == EnemyKind.Diver ? e.Hp : 4, PX, PY - 2, ram: true);   // a diver is spent on the ship
                     break;
                 }
     }
 
-    private void Damage(Enemy e, double dmg, double hx, double hy, bool bomb = false)
+    private void PingSpark(double x, double y) =>
+        AddParticle(new Particle { X = x, Y = y, VX = (R() - 0.5) * 2.2, VY = -R() * 1.6, Life = 5, Color = Palette.White, Kind = ParticleKind.Spark });
+
+    private void Damage(Enemy e, double dmg, double hx, double hy, bool bomb = false, bool ram = false)
     {
         if (e.Hp <= 0) return;
         if (e.Kind == EnemyKind.Mine && !bomb)
         {
             // armour: a bullet pings off with a spark and no shove, so firing can neither kill a mine nor hold it back
             e.Flash = 1;
-            AddParticle(new Particle { X = hx, Y = hy, VX = (R() - 0.5) * 2.2, VY = -R() * 1.6, Life = 5, Color = 0xffffff, Kind = ParticleKind.Spark });
+            PingSpark(hx, hy);
             return;
+        }
+        bool armoured = e.Kind == EnemyKind.Diver && e.Dashing && !bomb && !ram;
+        if (armoured)
+        {
+            // the dash plates: shots chip it for a share of their damage, ping off in sparks and cannot shove it off its line
+            dmg *= Tuning.DiverDashArmour;
+            PingSpark(hx, hy);
         }
         e.Hp -= dmg;
         e.Flash = Tuning.FlashFrames;
         e.Hits++;
         bool heavy = e.Kind == EnemyKind.Gunship;
         double k = heavy ? Tuning.KnockHeavy : Tuning.KnockHit;
-        e.KY -= k;
+        if (!armoured) e.KY -= k;
         for (int i = 0; i < Tuning.SparksPerHit; i++)
-            AddParticle(new Particle { X = hx, Y = hy, VX = (R() - 0.5) * 2.2, VY = -R() * 1.6, Life = 5 + (int)(R() * 5), Color = R() < 0.5 ? 0xffffffu : 0xffd166u, Kind = ParticleKind.Spark });
+            AddParticle(new Particle { X = hx, Y = hy, VX = (R() - 0.5) * 2.2, VY = -R() * 1.6, Life = 5 + (int)(R() * 5), Color = R() < 0.5 ? Palette.White : Palette.Gold, Kind = ParticleKind.Spark });
         if (e.Hp > 0)
         {
             if (!bomb) { Sound(SfxNames.Hit, hx); AddShake(Tuning.ShakeHit, heavy && e.Hits % 4 == 0 ? Tuning.HitStopHeavyHit : 0); }
@@ -929,13 +1007,14 @@ public sealed partial class RaiderGame
         for (int i = 0; i < Tuning.DebrisSmallKill; i++)
         {
             double a = R() * Math.PI * 2, sp = 0.4 + R() * 1.4;
-            AddParticle(new Particle { X = e.X, Y = e.Y, VX = Math.Cos(a) * sp, VY = Math.Sin(a) * sp, Life = 12 + (int)(R() * 10), Color = R() < 0.5 ? Art.MineLit : 0xffffffu, Kind = ParticleKind.Debris });
+            AddParticle(new Particle { X = e.X, Y = e.Y, VX = Math.Cos(a) * sp, VY = Math.Sin(a) * sp, Life = 12 + (int)(R() * 10), Color = R() < 0.5 ? Art.MineLit : Palette.White, Kind = ParticleKind.Debris });
         }
     }
 
     private void Kill(Enemy e, bool bomb)
     {
         Enemies.Remove(e);
+        EnemyComm.Bury(this, e);
         Kills++;
         bool cleared = e.Live && !Enemies.Any(x => x.Live) && !_pending.Any(p => p.Live);
         if (cleared) { LiveWavesCleared++; Sound(SfxNames.Clear); }
@@ -952,13 +1031,13 @@ public sealed partial class RaiderGame
         for (int i = 0; i < debris; i++)
         {
             double a = R() * Math.PI * 2, sp = (big ? 0.6 : 0.3) + R() * (big ? 2.0 : 1.2);
-            uint c = R() < 0.5 ? Art.Body(e.Kind) : R() < 0.5 ? 0xff3d6eu : 0x2a1740u;
+            uint c = R() < 0.5 ? Art.Body(e.Kind) : R() < 0.5 ? Palette.Crimson : Palette.Plum;
             AddParticle(new Particle { X = e.X + (R() - 0.5) * e.Sprite.W * 0.6, Y = e.Y + (R() - 0.5) * e.Sprite.H * 0.6, VX = Math.Cos(a) * sp, VY = Math.Sin(a) * sp - 0.3, Life = 14 + (int)(R() * 14), Color = c, Size = R() < 0.3 ? 2 : 1, Kind = ParticleKind.Debris });
         }
-        AddRing(e.X, e.Y, 2, big ? Tuning.RingRadiusBig : Tuning.RingRadiusSmall, big ? 0xffd166u : 0xff8fb1u, Tuning.RingFrames);
-        if (big) AddRing(e.X, e.Y, 1, Tuning.RingRadiusBig * 0.6, 0xffffff, Tuning.RingFrames - 4);
+        AddRing(e.X, e.Y, 2, big ? Tuning.RingRadiusBig : Tuning.RingRadiusSmall, big ? Palette.Gold : 0xff8fb1u, Tuning.RingFrames);
+        if (big) AddRing(e.X, e.Y, 1, Tuning.RingRadiusBig * 0.6, Palette.White, Tuning.RingFrames - 4);
         AddShake(big ? Tuning.ShakeBigKill : Tuning.ShakeSmallKill, big ? Tuning.HitStopBigKill : e.Kind is EnemyKind.Carrier or EnemyKind.Turret ? Tuning.HitStopCarrierKill : Tuning.HitStopSmallKill);
-        Popup("+" + pts, e.X, e.Y - 2, big ? 0xffd166u : 0xffffffu);
+        Popup("+" + pts, e.X, e.Y - 2, big ? Palette.Gold : Palette.White);
     }
 
     public static int ScoreFor(EnemyKind kind) => kind switch
@@ -982,9 +1061,9 @@ public sealed partial class RaiderGame
         Invuln = Tuning.InvulnFrames;
         AddShake(Tuning.ShakePlayerHit, Tuning.HitStopPlayerHit);
         ScreenFlash = 2;
-        AddRing(PX, PY, 2, 12, 0xff3d6e, 12);
+        AddRing(PX, PY, 2, 12, Palette.Crimson, 12);
         for (int i = 0; i < 14; i++)
-            AddParticle(new Particle { X = PX, Y = PY, VX = (R() - 0.5) * 3, VY = (R() - 0.5) * 3, Life = 10 + (int)(R() * 8), Color = R() < 0.5 ? 0xffffffu : 0xff3d6eu, Kind = ParticleKind.Spark });
+            AddParticle(new Particle { X = PX, Y = PY, VX = (R() - 0.5) * 3, VY = (R() - 0.5) * 3, Life = 10 + (int)(R() * 8), Color = R() < 0.5 ? Palette.White : Palette.Crimson, Kind = ParticleKind.Spark });
         if (Hp <= 0)
         {
             Deaths++;
@@ -993,11 +1072,11 @@ public sealed partial class RaiderGame
             RespawnIn = Tuning.RespawnFrames;
             Score = Math.Max(0, Score - Score / 4);
             AddShake(Tuning.ShakeBigKill, Tuning.HitStopBigKill);
-            AddRing(PX, PY, 2, Tuning.RingRadiusBig, 0xffd166, Tuning.RingFrames);
+            AddRing(PX, PY, 2, Tuning.RingRadiusBig, Palette.Gold, Tuning.RingFrames);
             for (int i = 0; i < Tuning.DebrisBigKill; i++)
             {
                 double a = R() * Math.PI * 2, sp = 0.5 + R() * 2;
-                AddParticle(new Particle { X = PX, Y = PY, VX = Math.Cos(a) * sp, VY = Math.Sin(a) * sp, Life = 16 + (int)(R() * 14), Color = R() < 0.5 ? 0xffd166u : 0xbfe9ffu, Size = R() < 0.3 ? 2 : 1, Kind = ParticleKind.Debris });
+                AddParticle(new Particle { X = PX, Y = PY, VX = Math.Cos(a) * sp, VY = Math.Sin(a) * sp, Life = 16 + (int)(R() * 14), Color = R() < 0.5 ? Palette.Gold : Palette.Ice, Size = R() < 0.3 ? 2 : 1, Kind = ParticleKind.Debris });
             }
             Bullets.RemoveAll(b => !b.Friendly);
             _powerUntil = -1;

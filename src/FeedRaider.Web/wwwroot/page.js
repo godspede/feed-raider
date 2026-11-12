@@ -228,16 +228,20 @@ export async function completeCallback({ callback, adopt, report = () => {}, han
 export const SIGNIN_REPORT = 'feed-raider(signin-report)';
 export const REPORT_MS = 30 * 60e3;
 export function noteSignIn(storage, step, extra = {}, now = Date.now()) {
-  try { storage?.setItem(SIGNIN_REPORT, JSON.stringify({ ...extra, step, at: now })); } catch { /* storage unavailable: best effort, the sign-in works without the report */ }
+  try { storage?.setItem(SIGNIN_REPORT, JSON.stringify({ ...extra, step, at: now })); } catch (e) { console.warn('sign-in report not saved: ' + e.message); /* best effort: the sign-in works without the report */ }
 }
 export function readSignIn(storage, now = Date.now()) {
   try {
     const r = JSON.parse(storage?.getItem(SIGNIN_REPORT) || 'null');
     return r && typeof r.step === 'string' && now - r.at >= 0 && now - r.at < REPORT_MS ? r : null;
-  } catch { return null; }
+  } catch (e) {
+    // an unreadable report is the same as none: it only helps a page that loads soon after a sign-in find the account
+    console.warn('sign-in report unreadable: ' + e.message);
+    return null;
+  }
 }
 export function clearSignIn(storage) {
-  try { storage?.removeItem(SIGNIN_REPORT); } catch { /* storage unavailable: best effort, nothing to clear */ }
+  try { storage?.removeItem(SIGNIN_REPORT); } catch (e) { console.warn('sign-in report not cleared: ' + e.message); /* best effort: a stale report ages out */ }
 }
 
 const SAVED_STEPS = ['saved', 'restored'];
@@ -307,7 +311,7 @@ export function watchSaved({ restore, onSession, signedIn = () => false, target 
         try {
           const s = await restore();
           if (s && !stopped) return onSession(s);
-        } catch { /* a failed restore leaves the page as it is; restoreSaved already keeps the reason for initError */ }
+        } catch (e) { console.warn('restoring the saved session failed: ' + e.message); /* the page stays as it is */ }
       } while (again && !stopped && !signedIn());
     } finally {
       checking = false;
@@ -331,7 +335,7 @@ export async function signIn(client, raw, { scope, state, open = globalThis.wind
   const target = signInTarget(raw);
   let probe = null;
   if (!standalone && typeof client.authorize === 'function' && typeof open === 'function') {
-    try { probe = open('about:blank', popupName, popupFeatures) || null; } catch { probe = null; }
+    try { probe = open('about:blank', popupName, popupFeatures) || null; } catch (e) { console.warn('the sign-in popup could not open, using a redirect: ' + e.message); probe = null; }
   }
   if (!probe) {
     await client.signInRedirect(target, { scope, state });
@@ -345,7 +349,7 @@ export async function signIn(client, raw, { scope, state, open = globalThis.wind
     probe.location.href = url.href;
     probe.focus?.();
   } catch (e) {
-    try { if (!probe.closed) probe.close(); } catch { /* already gone */ }
+    try { if (!probe.closed) probe.close(); } catch (closeErr) { console.warn('the sign-in popup could not be closed: ' + closeErr.message); }
     throw signal?.aborted ? new SignInCancelled() : e;
   }
   onWaiting();
@@ -420,8 +424,6 @@ export function avatarCid(url) {
   return m ? m[1] : null;
 }
 
-// Without an inlined manifest the music is music/fr-<cue>.mp3 beside the page.
-
 // --- game input, kept free of the DOM so node can test it ---
 
 export const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyF', 'KeyB', 'KeyE']);
@@ -446,7 +448,8 @@ export function isTextEntry(el) {
 }
 
 export const TAP_MS = 350;      // a press shorter than this that barely moved is a tap
-export const SLOP = 12;         // pixels of travel before a touch is a drag, not a press
+export const SLOP = 12;
+const SECOND_FINGER_MOVED = 99;   // a second finger down counts as travel far past SLOP: the touch is never a tap         // pixels of travel before a touch is a drag, not a press
 
 // Turns mouse and touch events into the host calls. A press only starts a hold; the game fills the charge (450 ms) and likes
 // when it is full, so a tap or click never likes. host: { holdStart(cell), holdEnd(), tap(cell), bomb() }, cells are [col, row].
@@ -466,7 +469,7 @@ export function createGestures(host, now = () => performance.now()) {
     // dx, dy: how far the finger went since the last move event, in pixels
     touchMove(count, dx, dy) {
       if (!t) return;
-      if (count !== 1) { t.moved += 99; host.holdEnd(); return; }
+      if (count !== 1) { t.moved += SECOND_FINGER_MOVED; host.holdEnd(); return; }
       t.moved += Math.abs(dx) + Math.abs(dy);
       if (t.moved >= SLOP) host.holdEnd();
     },

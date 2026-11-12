@@ -13,6 +13,9 @@ public static partial class Host
     private static RaiderGame? _game;
     private static PauseGate _pause = new();
     private static bool _hidden, _menu;
+    private static readonly TimeSpan HttpTimeout = TimeSpan.FromSeconds(20);
+    /// <summary>The avatar arrives as 8x8 pixels.</summary>
+    private const int AvatarPixels = 64;
 
     public static void Main() { }
 
@@ -55,7 +58,7 @@ public static partial class Host
     {
         _cts?.Cancel();
         _cts = new CancellationTokenSource();
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        using var http = new HttpClient { Timeout = HttpTimeout };
         SafeCue(MusicCues.Gameplay);
         var spectator = new Spectator(http, () => (_cols, _rows), new JsSink()) { Darkness = darkness != "off", DarknessDemo = darkness == "demo" };
         try
@@ -77,7 +80,7 @@ public static partial class Host
     {
         _cts?.Cancel();
         var cts = _cts = new CancellationTokenSource();
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        using var http = new HttpClient { Timeout = HttpTimeout };
         var game = new RaiderGame((ulong)Environment.TickCount64);
         var me = Bridge.SessionSource.Current;
         game.LoggedIn = me is not null;
@@ -87,7 +90,7 @@ public static partial class Host
         game.OnLike = post => _ = RaiderFeeds.LikeAsync(game, Bridge.LikeActions, post, cts.Token);
         // Reads only: the next post of the liked post's thread, through the session when signed in, else the public AppView.
         IThreadSource threads = me is not null ? new FallbackThreadSource(Bridge.ThreadSource, new PublicThreadSource(http)) : new PublicThreadSource(http);
-        game.ThreadWanted = post => _ = RaiderFeeds.ThreadAsync(game, threads, post, cts.Token);
+        game.ThreadWanted = post => _ = RaiderFeeds.ThreadAsync(game, threads, post, cts.Token, onTrouble: m => { lock (game) game.Say(m); });
         game.AvatarWanted = post => _ = AvatarAsync(game, post);
         game.RecordToBeat = Safe(BestScore);
         game.OnBest = score => Safe(() => SaveBestScore(score));
@@ -100,7 +103,7 @@ public static partial class Host
         pause.Hold("menu", _menu);
 
         // Signed in, the wingmen are the player's Following timeline unless ?feed= names another; see FeedPlan.
-        var plan = FeedPlan.Choose(feed, me is not null, handle, Bridge.TimelineSource, Bridge.FeedSource, new PublicFeedSource(http), h => new FollowsFeedSource(http, h));
+        var plan = FeedPlan.Choose(feed, me is not null, handle, Bridge.TimelineSource, Bridge.FeedSource, new PublicFeedSource(http), h => new FollowsFeedSource(http, h), m => { lock (game) game.Say(m); });
         if (plan is null) { ShowError("unknown feed (following, discover, foryou or an at:// feed generator uri)"); return; }
         game.PlainOnly = plan.FeedUri == Feeds.Random;
         var runner = new RaiderRunner(game, () => (_cols, _rows), new JsSink()) { ShowFps = showFps, Adaptive = adaptive, Pause = pause };
@@ -111,12 +114,20 @@ public static partial class Host
         catch (Exception ex) { ShowError(ex.Message); }
     }
 
-    // Music and sound effects are never allowed to break the game: a JS error from a cue or the best-score store is dropped.
+    // Music and sound effects are never allowed to break the game: a JS error from a cue or the best-score store is written to the
+    // browser console (the first one only, since a cue fires often) and the game plays on. Not a toast: Said itself goes through Safe.
     private static void SafeCue(string cue) => Safe(() => MusicCue(cue));
-    private static void Safe(Action act) { try { act(); } catch (JSException) { } }
-    private static int Safe(Func<int> get) { try { return get(); } catch (JSException) { return 0; } }
+    private static bool _jsFailureReported;
+    private static void ReportJsFailure(JSException e)
+    {
+        if (_jsFailureReported) return;
+        _jsFailureReported = true;
+        Console.Error.WriteLine($"a call into the page failed: {e.Message}");
+    }
+    private static void Safe(Action act) { try { act(); } catch (JSException e) { ReportJsFailure(e); } }
+    private static int Safe(Func<int> get) { try { return get(); } catch (JSException e) { ReportJsFailure(e); return 0; } }
 
-    // The avatar is fetched and downsampled to 8x8 in JS (canvas); a CORS failure just leaves the tinted fallback.
+    // The avatar is fetched and downsampled to 8x8 in JS (canvas); a CORS failure leaves the tinted fallback and is noted in the console.
     private static async Task AvatarAsync(RaiderGame game, FeedPost post)
     {
         try
@@ -124,9 +135,9 @@ public static partial class Host
             string? csv = await FetchAvatar(post.AuthorDid, post.AvatarUrl);
             if (csv is null) return;
             var px = csv.Split(',').Select(uint.Parse).ToArray();
-            if (px.Length == 64) lock (game) game.SetAvatar(post.AuthorDid, px);
+            if (px.Length == AvatarPixels) lock (game) game.SetAvatar(post.AuthorDid, px);
         }
-        catch (Exception ex) when (ex is JSException or FormatException or OverflowException) { }
+        catch (Exception ex) when (ex is JSException or FormatException or OverflowException) { Console.Error.WriteLine($"avatar not drawn: {ex.Message}"); }
     }
 
     /// <summary>The page's tab went to the background (or came back): the game loop, feed paging and both sockets stop, then resume.</summary>
@@ -153,14 +164,6 @@ public static partial class Host
         _cts?.Cancel();
         _game = null;
         SetMenu(false);
-    }
-
-    [JSExport]
-    public static void Stop()
-    {
-        _cts?.Cancel();
-        if (_game is { } g) lock (g) g.Music?.End();   // the run is over: the game-over song
-        _game = null;
     }
 
     // --- input from the page (main.js turns DOM events into these) ---

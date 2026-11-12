@@ -10,6 +10,7 @@ public static class BskyClient
 {
     public const string AppView = "https://public.api.bsky.app";
     public const int DefaultCap = 100;
+    private const int PageLimit = 100;   // the most follows getFollows returns in one page
 
     /// <summary>Fetches the accounts <paramref name="handle"/> follows, paginating up to <paramref name="cap"/>.
     /// getFollows takes a handle or a DID as the actor, so no separate resolve call is needed.</summary>
@@ -20,7 +21,7 @@ public static class BskyClient
         string? cursor = null;
         do
         {
-            string url = $"{AppView}/xrpc/app.bsky.graph.getFollows?actor={Uri.EscapeDataString(actor)}&limit={Math.Min(100, cap - follows.Count)}";
+            string url = $"{AppView}/xrpc/app.bsky.graph.getFollows?actor={Uri.EscapeDataString(actor)}&limit={Math.Min(PageLimit, cap - follows.Count)}";
             if (cursor is not null) url += "&cursor=" + Uri.EscapeDataString(cursor);
             using var resp = await http.GetAsync(url, ct).ConfigureAwait(false);
             string body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
@@ -111,9 +112,11 @@ public sealed class JetstreamSource : IEventSource, IHasState
             if (viaUpdate) url = BuildUrl(_endpoint, []);
 
             State = failures == 0 ? "connecting" : $"reconnecting ({failures})";
-            if (!await TryConnectAsync(ws, url, viaUpdate ? BuildOptionsUpdate(_dids) : null, ct))
+            var (connected, connectFailure) = await TryConnectAsync(ws, url, viaUpdate ? BuildOptionsUpdate(_dids) : null, ct);
+            if (!connected)
             {
                 failures++;
+                State = connectFailure is null ? $"reconnecting ({failures})" : $"reconnecting ({failures}: {connectFailure})";
                 try { await Task.Delay(Backoff(failures), ct); }
                 catch (OperationCanceledException) { yield break; }
                 continue;
@@ -124,34 +127,37 @@ public sealed class JetstreamSource : IEventSource, IHasState
             var buffer = new byte[ReceiveBufferBytes];
             while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
-                string? msg = await ReceiveTextAsync(ws, buffer, ct);
-                if (msg is null) { State = "reconnecting"; break; }
-                if (JetstreamParser.TryParse(msg, out var post)) yield return post!;
+                var (bytes, failure) = await ReceiveMessageAsync(ws, buffer, ct);
+                if (bytes is null) { State = failure is null ? "reconnecting" : $"reconnecting ({failure})"; break; }
+                if (JetstreamParser.TryParse(Encoding.UTF8.GetString(bytes), out var post)) yield return post!;
             }
         }
     }
 
-    private static async Task<bool> TryConnectAsync(ClientWebSocket ws, string url, string? firstMessage, CancellationToken ct)
+    /// <summary>Connects and sends the first message, if any. Failure says why it failed (null for a cancel), so the caller can
+    /// show the cause while it waits to retry.</summary>
+    private static async Task<(bool Connected, string? Failure)> TryConnectAsync(ClientWebSocket ws, string url, string? firstMessage, CancellationToken ct)
     {
         try
         {
             await ws.ConnectAsync(new Uri(url), ct).ConfigureAwait(false);
             if (firstMessage is not null)
                 await ws.SendAsync(Encoding.UTF8.GetBytes(firstMessage), WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
-            return true;
+            return (true, null);
         }
-        catch (Exception) when (!ct.IsCancellationRequested)
+        catch (Exception e) when (!ct.IsCancellationRequested)
         {
-            return false;
+            return (false, e.Message);
         }
         catch (OperationCanceledException)
         {
-            return false;
+            return (false, null);
         }
     }
 
-    /// <summary>One whole text message, or null if the socket closed or failed.</summary>
-    private static async Task<string?> ReceiveTextAsync(ClientWebSocket ws, byte[] buffer, CancellationToken ct)
+    /// <summary>One whole message. Message is null when the socket closed, was cancelled or failed; Failure then says why it failed
+    /// (null for a close or a cancel), so a caller that reconnects can still report the cause.</summary>
+    internal static async Task<(byte[]? Message, string? Failure)> ReceiveMessageAsync(ClientWebSocket ws, byte[] buffer, CancellationToken ct)
     {
         try
         {
@@ -159,15 +165,19 @@ public sealed class JetstreamSource : IEventSource, IHasState
             while (true)
             {
                 var r = await ws.ReceiveAsync(buffer, ct).ConfigureAwait(false);
-                if (r.MessageType == WebSocketMessageType.Close) return null;
+                if (r.MessageType == WebSocketMessageType.Close) return (null, null);
                 ms.Write(buffer, 0, r.Count);
                 if (r.EndOfMessage) break;
             }
-            return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
+            return (ms.ToArray(), null);
         }
-        catch (Exception)
+        catch (OperationCanceledException)
         {
-            return null;
+            return (null, null);
+        }
+        catch (Exception e) when (e is WebSocketException or ObjectDisposedException or InvalidOperationException)
+        {
+            return (null, e.Message);
         }
     }
 }

@@ -146,7 +146,7 @@ internal sealed class Frame
                     // (a guy's text in this cell is covered, since the sprite is in front of it)
                     fg = topUp ?? _pix[x, r * 2];
                     bg = topLo ?? _pix[x, r * 2 + 1];
-                    ch = fg is null && bg is null ? ' ' : '▀';
+                    ch = '▀';
                 }
                 else if (_text[x, r] is { } cell) { fg = cell.Fg; bg = cell.Bg; ch = cell.Ch; }
                 else

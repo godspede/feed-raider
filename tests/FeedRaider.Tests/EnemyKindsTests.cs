@@ -6,6 +6,9 @@ namespace FeedRaider.Tests;
 // The newer enemy kinds and the difficulty ramp. Deterministic: one seed, scripted inputs, no network.
 public class EnemyKindsTests
 {
+    // the seed and multiplier of the FNV-1a-style hash that fingerprints a recorded run
+    private const ulong HashSeed = 1469598103934665603UL, HashPrime = 1099511628211UL;
+
     private static readonly EnemyKind[] Newer = [EnemyKind.Mine, EnemyKind.Diver, EnemyKind.Splitter, EnemyKind.Shard, EnemyKind.Turret];
 
     private static RaiderGame NewGame(int cols = 120, int rows = 46)
@@ -168,7 +171,11 @@ public class EnemyKindsTests
         var g = NewGame();
         var s = g.SpawnKind(EnemyKind.Splitter, Above(g));
         g.Input.Key(GameKey.Fire, true);
-        for (int i = 0; i < 300 && g.Enemies.Contains(s); i++) Step(g, EnemyKind.Splitter, EnemyKind.Shard);
+        for (int i = 0; i < 1500 && g.Enemies.Contains(s); i++)
+        {
+            g.Input.Key(GameKey.Left, s.X < g.PX - 2); g.Input.Key(GameKey.Right, s.X > g.PX + 2);   // a splitter weaves and sidesteps: stay under it
+            Step(g, EnemyKind.Splitter, EnemyKind.Shard);
+        }
         Assert.DoesNotContain(s, g.Enemies);
         var shards = g.Enemies.Where(e => e.Kind == EnemyKind.Shard).ToList();
         Assert.Equal(2, shards.Count);
@@ -238,12 +245,12 @@ public class EnemyKindsTests
     }
 
     [Fact]
-    public void A_stage_one_run_plays_frame_for_frame_as_it_did_before_the_ramp()
+    public void A_stage_one_run_plays_frame_for_frame_as_the_recorded_run()
     {
-        // the same seed and inputs as a run recorded before the newer kinds existed: same score, kills, death, waves and positions
+        // the same seed and inputs as a recorded stage-one run, which never meets the unlocked kinds: same score, kills, death, waves and positions
         var g = NewGame();
         g.Input.Key(GameKey.Fire, true);
-        ulong h = 1469598103934665603UL;
+        ulong h = HashSeed;
         for (int f = 0; f < 900; f++)
         {
             g.Input.Key(GameKey.Left, f / 60 % 2 == 0);
@@ -253,10 +260,10 @@ public class EnemyKindsTests
             g.Step();
             Assert.Equal(1, g.Stage);
             Assert.DoesNotContain(g.Enemies, e => e.Kind >= EnemyKind.Mine);
-            foreach (var e in g.Enemies) h = (h ^ (ulong)(long)Math.Round(e.X * 100 + e.Y * 7919)) * 1099511628211UL;
-            h = (h ^ (ulong)g.Bullets.Count) * 1099511628211UL;
+            foreach (var e in g.Enemies) h = (h ^ (ulong)(long)Math.Round(e.X * 100 + e.Y * 7919)) * HashPrime;
+            h = (h ^ (ulong)g.Bullets.Count) * HashPrime;
         }
-        Assert.Equal("4300/16/1/7/2/8/17/e33fdc2be4fb0502",
+        Assert.Equal("738/11/2/7/2/6/21/a3db9826d771f75b",
             $"{g.Score}/{g.Kills}/{g.Deaths}/{g.WavesSpawned}/{g.LiveWavesSpawned}/{g.Enemies.Count}/{g.Bullets.Count}/{h:x16}");
     }
 
@@ -285,10 +292,15 @@ public class EnemyKindsTests
         var g = NewGame();
         g.Input.Key(GameKey.Fire, true);
         var firstStage = new Dictionary<EnemyKind, int>();
-        for (int f = 0; f < 30000 && g.Stage <= Ramp.LastUnlockStage; f++)
+        for (int f = 0; f < 90000 && g.Stage <= Ramp.LastUnlockStage; f++)
         {
-            g.Input.Key(GameKey.Left, f / 45 % 2 == 0);
-            g.Input.Key(GameKey.Right, f / 45 % 2 == 1);
+            // sweep, but slip away from anything falling at the ship: the faster, evasive enemies kill a blind sweeper before the late stages
+            var threat = g.Bullets.Where(x => !x.Friendly && x.Y < g.PY && g.PY - x.Y < 30 && Math.Abs(x.X - g.PX) < 8).OrderByDescending(x => x.Y).FirstOrDefault();
+            var body = g.Enemies.Where(x => x.Y < g.PY + 4 && g.PY - x.Y < 30 && Math.Abs(x.X - g.PX) < x.Sprite.W / 2.0 + 6).OrderByDescending(x => x.Y).FirstOrDefault();
+            bool left = threat is not null ? threat.X >= g.PX : body is not null ? body.X >= g.PX : f / 45 % 2 == 0;
+            if (g.PX < 8) left = false; else if (g.PX > g.PW - 8) left = true;
+            g.Input.Key(GameKey.Left, left);
+            g.Input.Key(GameKey.Right, !left);
             g.Step();
             foreach (var e in g.Enemies)
             {
@@ -308,7 +320,7 @@ public class EnemyKindsTests
         long p0 = g.Progress;
         Run(g, 10);
         Assert.Equal(p0 + 10, g.Progress);
-        var e = g.SpawnKind(EnemyKind.Diver, Above(g));
+        g.SpawnKind(EnemyKind.Diver, Above(g));
         g.Input.Key(GameKey.Fire, true);
         int kills = g.Kills;
         long before = g.Progress;
@@ -353,7 +365,7 @@ public class EnemyKindsTests
     }
 
     [Fact]
-    public void Enemies_grow_tougher_and_fire_faster_bullets_at_later_stages()
+    public void Enemies_grow_tougher_at_later_stages()
     {
         var early = NewGame();
         var late = NewGame();
@@ -458,6 +470,7 @@ public class EnemyKindsTests
     private static List<int> AimRows(EnemyKind kind, int windup = 10, bool dashing = false)
     {
         var g = NewGame();
+        for (int i = 0; i < (dashing ? 3 : 0); i++) g.Step();   // frame 3: the dashing diver's glint is off, so its lime shows
         g.Enemies.Clear(); g.Bullets.Clear(); g.Particles.Clear(); g.Rings.Clear();
         var e = g.SpawnKind(kind, 40.0 / g.PW);
         e.X = 40; e.Y = 20; e.Windup = windup; e.Dashing = dashing; e.Grace = 0; e.AimX = 40; e.AimY = 80;

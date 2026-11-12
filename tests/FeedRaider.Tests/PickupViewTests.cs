@@ -26,7 +26,7 @@ public class PickupViewTests
     /// <summary>The 6x6 body as letters: d dark rim, c colour, l light mark, . untouched.</summary>
     private static string Body(Surface f, PickupKind kind)
     {
-        uint c = RaiderGame.PickupColor(kind), dark = Surface.Mix(c, 0x0b1c44, 0.55), light = Surface.Mix(c, 0xffffff, 0.6);
+        uint c = RaiderGame.PickupColor(kind), dark = Surface.Mix(c, Palette.SkyTop, 0.55), light = Surface.Mix(c, 0xffffff, 0.6);
         var rows = new List<string>();
         for (int y = Cy - 3; y < Cy + 3; y++)
         {
@@ -60,7 +60,7 @@ public class PickupViewTests
     public void The_body_stays_inside_its_six_pixel_box()
     {
         var f = Drawn(PickupKind.Bomb, 3);
-        uint c = RaiderGame.PickupColor(PickupKind.Bomb), dark = Surface.Mix(c, 0x0b1c44, 0.55);
+        uint c = RaiderGame.PickupColor(PickupKind.Bomb), dark = Surface.Mix(c, Palette.SkyTop, 0.55);
         for (int y = 0; y < f.H; y++)
             for (int x = 0; x < f.W; x++)
                 if ((f.Get(x, y) == c && (x < Cx - 2 || x > Cx + 1 || y < Cy - 2 || y > Cy + 1)) || (f.Get(x, y) == dark && (x < Cx - 3 || x > Cx + 2 || y < Cy - 3 || y > Cy + 2))) Assert.Fail($"body pixel outside the body at {x},{y}");

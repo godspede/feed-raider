@@ -235,13 +235,13 @@ public sealed class DiffEncoder
             while (c < cols)
             {
                 int i = r * cols + c;
-                if (!full && Same(sch[i], sfg[i], sbg[i], i)) { c++; continue; }
+                if (!full && Same(sch[i], Sn(sfg[i]), Sn(sbg[i]), i)) { c++; continue; }
                 // a run: extend over short unchanged gaps
                 int start = c, end = c, gap = 0;
                 for (int k = c; k < cols; k++)
                 {
                     int ik = r * cols + k;
-                    if (full || !Same(sch[ik], sfg[ik], sbg[ik], ik)) { end = k; gap = 0; }
+                    if (full || !Same(sch[ik], Sn(sfg[ik]), Sn(sbg[ik]), ik)) { end = k; gap = 0; }
                     else if (++gap > GapMerge) break;
                 }
                 if (curR == r && curC < start) { _sb.Append("\x1b["); AppendInt(start - curC); _sb.Append('C'); }
@@ -250,7 +250,8 @@ public sealed class DiffEncoder
                 {
                     int ik = r * cols + k;
                     char ch = sch[ik]; uint fg = sfg[ik], bg = sbg[ik];
-                    if (Snap is { } snap) { fg = snap[fg]; bg = snap[bg]; }
+                    fg = Sn(fg); bg = Sn(bg);
+                    uint sentFg = fg, sentBg = bg;
                     char glyph = ch;
                     bool needFg = true, needBg = true;
                     if (ch == ' ') needFg = false;
@@ -274,13 +275,13 @@ public sealed class DiffEncoder
                     if (needFg || needBg)
                     {
                         _sb.Append("\x1b[");
-                        if (needFg) { _sb.Append("38;2;"); Rgb(fg); lastFg = fg; }
+                        if (needFg) { _sb.Append("38;2;"); AppendRgb(fg); lastFg = fg; }
                         if (needFg && needBg) _sb.Append(';');
-                        if (needBg) { _sb.Append("48;2;"); Rgb(bg); lastBg = bg; }
+                        if (needBg) { _sb.Append("48;2;"); AppendRgb(bg); lastBg = bg; }
                         _sb.Append('m');
                     }
                     _sb.Append(glyph);
-                    _ch[ik] = ch; _fg[ik] = sfg[ik]; _bg[ik] = sbg[ik];
+                    _ch[ik] = ch; _fg[ik] = sentFg; _bg[ik] = sentBg;
                     changed++;
                 }
                 curR = r; curC = end + 1;
@@ -292,11 +293,14 @@ public sealed class DiffEncoder
         return _sb.ToString();
     }
 
+    // what the terminal is sent for a colour: its snapped value, so a colour that moved within the palette's reach is no change
+    private uint Sn(uint c) => Snap is { } snap ? snap[c] : c;
+
     // a glyph on a space-like cell hides its foreground (and a full block its background), so those changes are no change
     private bool Same(char ch, uint fg, uint bg, int i) =>
         _ch[i] == ch && (_bg[i] == bg || ch == '█') && (_fg[i] == fg || ch == ' ');
 
-    private void Rgb(uint c) =>
+    private void AppendRgb(uint c) =>
         _sb.Append(Num[c >> 16 & 255]).Append(';').Append(Num[c >> 8 & 255]).Append(';').Append(Num[c & 255]);
 
     private void AppendInt(int n)

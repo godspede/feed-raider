@@ -59,11 +59,11 @@ public class PowerupTests
             }
             return drops / (double)kills;
         }
-        Assert.InRange(Rate(EnemyKind.Grunt, 5), 0.05, 0.11);
-        Assert.InRange(Rate(EnemyKind.Carrier, 5), 0.19, 0.31);
+        Assert.InRange(Rate(EnemyKind.Grunt, 5), 0.01, 0.06);
+        Assert.InRange(Rate(EnemyKind.Carrier, 5), 0.08, 0.16);
         Assert.True(RaiderGame.DropChance(EnemyKind.Carrier) > RaiderGame.DropChance(EnemyKind.Grunt));
         Assert.Equal(Rate(EnemyKind.Grunt, 9), Rate(EnemyKind.Grunt, 9));
-        Assert.Equal(0.08, RaiderGame.DropChance(EnemyKind.Grunt));
+        Assert.Equal(Tuning.DropGrunt, RaiderGame.DropChance(EnemyKind.Grunt));
     }
 
     [Fact]
@@ -137,7 +137,6 @@ public class PowerupTests
         var (s, b, p) = g.DropWeights();
         Assert.True(s < s0 && b < b0 && p < p0);
         Assert.True(b > 0 && p > 0);                          // fewer, not none
-        // and the draws follow the weights
         var counts = new Dictionary<PickupKind, int>();
         for (int i = 0; i < 1000; i++)
         {
@@ -161,7 +160,7 @@ public class PowerupTests
         double y0 = p.Y; var xs = new HashSet<double>();
         for (int i = 0; i < 2000 && p.Age < 30; i++) { g.Step(); xs.Add(Math.Round(p.X, 3)); }
         Assert.InRange(p.Y - y0, 30 * Tuning.PickupDrift - 0.01, 30 * Tuning.PickupDrift + 0.01);
-        Assert.True(xs.Count > 10);                           // it bobs
+        Assert.True(xs.Count > 10);
         Assert.InRange(xs.Max() - xs.Min(), 1, 2 * Tuning.PickupBobAmp + 0.01);
         Assert.False(p.Blinking);
         AgeTo(g, p, Tuning.PickupLifeFrames - Tuning.PickupBlinkFrames - 1);
@@ -186,7 +185,6 @@ public class PowerupTests
         g.Step();
         Assert.Contains(far, g.Pickups); Assert.Contains(near, g.Pickups);
         Assert.Equal(0, g.Shield);
-        // steer the ship over the near one
         for (int i = 0; i < 40 && g.Pickups.Contains(near); i++) { g.Input.Key(GameKey.Right, true); g.Step(); }
         g.Input.Key(GameKey.Right, false);
         Assert.DoesNotContain(near, g.Pickups);

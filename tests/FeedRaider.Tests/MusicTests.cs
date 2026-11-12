@@ -103,7 +103,8 @@ public class MusicTests
         for (int i = 0; i < 2000 && g.Deaths == 0; i++) g.Step();   // sitting still, the patrols hit the player
         Assert.True(g.Deaths > 0);
         Assert.Equal(["gameplay"], cues);
-        Assert.True(saved.Count == 0 || saved[^1] > 0);
+        Assert.NotEmpty(saved);
+        Assert.True(saved[^1] > 0, "a best score was saved, not nothing");
     }
 
     [Fact]
@@ -112,7 +113,12 @@ public class MusicTests
         var g = NewGame(out var cues);
         g.OfferDark(new DarkPost(DarknessKind.Spam, 3, "buy followers now cheap"));
         g.Input.Key(GameKey.Fire, true);
-        for (int i = 0; i < 3000 && g.LiveWavesCleared == 0; i++) g.Step();
+        for (int i = 0; i < 9000 && g.LiveWavesCleared == 0; i++)
+        {
+            var t = g.Enemies.Where(e => e.Hp > 0).OrderByDescending(e => e.Y).FirstOrDefault();   // enemies sidestep a lone lane of fire: follow one
+            g.Input.Key(GameKey.Left, t is not null && t.X < g.PX - 2); g.Input.Key(GameKey.Right, t is not null && t.X > g.PX + 2);
+            g.Step();
+        }
         Assert.Equal(1, g.LiveWavesCleared);
         Assert.DoesNotContain("victory", cues);
         Assert.All(cues, c => Assert.Contains(c, new[] { "gameplay", "boss", "gameover" }));

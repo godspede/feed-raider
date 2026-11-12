@@ -11,6 +11,7 @@ test('the granular scope reads the timeline with the same aud as the feed, and c
   const aud = 'aud=did:web:api.bsky.app%23bsky_appview';
   assert.ok(parts.includes(`rpc:app.bsky.feed.getTimeline?${aud}`));
   assert.ok(parts.includes(`rpc:app.bsky.feed.getFeed?${aud}`));
+  assert.ok(parts.includes(`rpc:app.bsky.feed.getFeedSkeleton?${aud}`));
   assert.ok(parts.includes(`rpc:app.bsky.feed.getPostThread?${aud}`));
   assert.ok(scope.granular.includes('getTimeline'));
   assert.ok(!/app\.bsky\.feed\.post/.test(scope.granular));
@@ -73,4 +74,14 @@ test('dragging cancels the hold; a two-finger tap bombs', () => {
   log.length = 0; at(5000);
   g.touchStart(1, 0, 0, [2, 2]); g.touchStart(2, 0, 0, [2, 2]); at(5100); g.touchEnd(1); g.touchEnd(0);
   assert.ok(log.includes('bomb'));
+});
+
+// A feed generator's posts (Discover, For You, any at:// feed) are read with app.bsky.feed.getFeed. Bluesky's servers answer
+// that call only when the sign-in also allows app.bsky.feed.getFeedSkeleton for the same service: without it the feed fails
+// with 'Missing required scope "rpc:app.bsky.feed.getFeedSkeleton?aud=..."'.
+test('the sign-in asks for both permissions a feed generator read needs', () => {
+  const asked = scope.granular.split(' ');
+  const aud = '?aud=did:web:api.bsky.app%23bsky_appview';
+  assert.ok(asked.includes('rpc:app.bsky.feed.getFeed' + aud), 'getFeed');
+  assert.ok(asked.includes('rpc:app.bsky.feed.getFeedSkeleton' + aud), 'getFeedSkeleton, which getFeed needs');
 });

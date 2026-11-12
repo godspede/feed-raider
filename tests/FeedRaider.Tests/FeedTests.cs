@@ -4,7 +4,7 @@ namespace FeedRaider.Tests;
 
 public class FeedTests
 {
-    private static FeedPage Page() => FeedMapper.ParsePage(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "feed-page.json")));
+    private static FeedPage Page() => FeedMapper.ParsePage(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "feed-page.json")), skipReposts: false);
 
     [Fact]
     public void ParsePage_maps_posts_counts_and_cursor()

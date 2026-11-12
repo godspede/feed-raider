@@ -269,6 +269,13 @@ function fakeWake() {
   return { watch: (fn) => { wakes.add(fn); return () => wakes.delete(fn); }, fire: () => { for (const fn of wakes) fn(); }, count: () => wakes.size };
 }
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+// Lets every promise already queued run: enough turns for signIn to reach its wait, with no real time passing.
+const settle = async () => { for (let i = 0; i < 10; i++) await flush(); };
+// Waits for a condition a real timer in the code under test brings about, failing rather than hanging.
+const until = async (cond, what) => {
+  for (let i = 0; i < 2000 && !cond(); i++) await tick(1);
+  assert.ok(cond(), what);
+};
 // The key the popup's sign-in put in the authorization request's state, as the callback page reads it back.
 const keyOf = (client) => popupKey(client.calls.find((c) => c[0] === 'authorize')[2].state);
 
@@ -276,7 +283,7 @@ test('sign-in: the popup is opened in the click, then pointed at the authorizati
   const client = fakeClient(), win = fakeWindow(), opened = [], bus = fakeBus(), wake = fakeWake();
   let saved = null, waiting = 0;
   const run = signIn(client, '@Alice', { scope: 's', state: '?x', open: (...a) => { opened.push(a); return win; }, restore: async () => saved, onWaiting: () => waiting++, channel: bus.channel, watch: wake.watch, pollMs: 5 });
-  await tick(10);
+  await settle();
   assert.equal(opened[0][0], 'about:blank');
   assert.deepEqual(client.calls.map((c) => c[0]), ['authorize']);
   assert.equal(client.calls[0][1], 'alice.bsky.social');
@@ -295,9 +302,8 @@ test('sign-in: the popup is opened in the click, then pointed at the authorizati
 });
 
 test('sign-in: the authorization server cuts the popup off (closed reads true at once), which is no cancel', async (t) => {
-  // on a mocked clock: with real timers a stall of the machine longer than the 200ms timeout made the run settle before the check
+  // on a mocked clock, so a stalled machine cannot outlast the 200ms timeout before the check
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
-  const flush = () => new Promise((r) => setImmediate(r));
   const pass = async (ms) => { await flush(); t.mock.timers.tick(ms); await flush(); };
   const client = fakeClient(), win = fakeWindow();
   let settled = false, restores = 0;
@@ -318,7 +324,7 @@ test('sign-in: the popup closes with no hand-off, and the session it saved is re
   const win = fakeWindow();
   let saved = null;
   const run = signIn(fakeClient(), 'dave', { open: () => win, restore: async () => saved, channel: fakeBus().channel, watch: fakeWake().watch, pollMs: 5 });
-  await tick(10);
+  await settle();
   saved = { sub: 'did:plc:dave' }; // the callback saved it, but its message never came
   win.closed = true;
   assert.deepEqual((await run).session, { sub: 'did:plc:dave' });
@@ -328,9 +334,9 @@ test('sign-in: back on a phone tab after the callback finished in another tab, f
   const wake = fakeWake();
   let saved = null;
   const run = signIn(fakeClient(), 'erin', { open: () => fakeWindow(), restore: async () => saved, channel: fakeBus().channel, watch: wake.watch, pollMs: 5 });
-  await tick(10);
+  await settle();
   wake.fire(); // back too soon: nothing saved yet, keep waiting
-  await tick(5);
+  await settle();
   saved = { sub: 'did:plc:erin' };
   wake.fire();
   assert.deepEqual((await run).session, { sub: 'did:plc:erin' });
@@ -341,9 +347,9 @@ test('sign-in: a wake during a slow restore asks again, so a session saved meanw
   let saved = null, first = true, release;
   const restore = async () => { if (first) { first = false; await new Promise((r) => { release = r; }); return null; } return saved; };
   const run = signIn(fakeClient(), 'fay', { open: () => fakeWindow(), restore, channel: fakeBus().channel, watch: wake.watch, pollMs: 5 });
-  await tick(10);
+  await settle();
   wake.fire();
-  await tick(1);
+  await settle();
   saved = { sub: 'did:plc:fay' };
   wake.fire();
   release();
@@ -353,7 +359,7 @@ test('sign-in: a wake during a slow restore asks again, so a session saved meanw
 test('sign-in: a callback that failed in the popup rejects with its reason, which the start page shows as one line', async () => {
   const client = fakeClient(), bus = fakeBus();
   const run = signIn(client, 'gus', { open: () => fakeWindow(), channel: bus.channel, watch: fakeWake().watch, pollMs: 5 });
-  await tick(10);
+  await settle();
   assert.equal(await handOff(keyOf(client), { error: 'Issuer mismatch' }, { channel: bus.channel }), true);
   await assert.rejects(run, (e) => signInFailed(e) === "Sign-in didn't finish: something went wrong. Try again.");
 });
@@ -361,7 +367,7 @@ test('sign-in: a callback that failed in the popup rejects with its reason, whic
 test('sign-in: a restore that throws rejects with its error', async () => {
   const win = fakeWindow();
   const run = signIn(fakeClient(), 'hal', { open: () => win, restore: async () => { throw new Error('session was deleted'); }, channel: fakeBus().channel, watch: fakeWake().watch, pollMs: 5 });
-  await tick(10);
+  await settle();
   win.closed = true;
   await assert.rejects(run, /session was deleted/);
 });
@@ -369,7 +375,7 @@ test('sign-in: a restore that throws rejects with its error', async () => {
 test('sign-in: an empty box signs in at the bsky.social entryway; pressing again gives up on the old one quietly', async () => {
   const client = fakeClient(), ac = new AbortController();
   const run = signIn(client, '', { open: () => fakeWindow(), channel: fakeBus().channel, watch: fakeWake().watch, signal: ac.signal });
-  await tick(5);
+  await settle();
   assert.equal(client.calls[0][1], 'https://bsky.social');
   ac.abort();
   await assert.rejects(run, (e) => e instanceof SignInCancelled);
@@ -408,7 +414,7 @@ test('sign-in: a popup closed before the authorization page loads is a cancel', 
 test('sign-in: no hand-off, no wake and a popup that never reads closed: asking every so often still finds the saved session', async () => {
   let saved = null;
   const run = signIn(fakeClient(), 'kim', { open: () => fakeWindow(), restore: async () => saved, channel: fakeBus().channel, watch: fakeWake().watch, pollMs: 5, restoreMs: 20, timeoutMs: 500 });
-  await tick(10);
+  await settle();
   saved = { sub: 'did:plc:kim' }; // the callback saved it; its message was lost and the page never lost focus
   assert.deepEqual((await run).session, { sub: 'did:plc:kim' });
 });
@@ -417,12 +423,11 @@ test('sign-in: a session found before the hand-off arrives still answers the lat
   const bus = fakeBus(), client = fakeClient();
   let saved = null;
   const run = signIn(client, 'kim', { open: () => fakeWindow(), restore: async () => saved, channel: bus.channel, watch: fakeWake().watch, pollMs: 5, restoreMs: 10, ackMs: 100, timeoutMs: 500 });
-  await tick(5);
+  await settle();
   saved = { sub: 'did:plc:kim' }; // the callback restored it (storage changed) before it got to hand off
   assert.deepEqual((await run).session, { sub: 'did:plc:kim' });
   assert.equal(await handOff(keyOf(client), { sub: 'did:plc:kim' }, { channel: bus.channel, waitMs: 50 }), true);
-  await tick(150);
-  assert.equal(bus.open(), 0, 'the channel closes once no hand-off can still come');
+  await until(() => bus.open() === 0, 'the channel closes once no hand-off can still come');
 });
 
 test('sign-in: a signal aborted as soon as the popup shows the authorization page still cancels', async () => {
@@ -443,7 +448,7 @@ test('sign-in: another page of the site writing storage (the callback saving the
   await withFakePage(async (window) => {
     let saved = null;
     const run = signIn(fakeClient(), 'lou', { open: () => fakeWindow(), restore: async () => saved, channel: fakeBus().channel, pollMs: 5, timeoutMs: 300 });
-    await tick(10);
+    await settle();
     saved = { sub: 'did:plc:lou' };
     window.dispatchEvent(new Event('storage'));
     assert.deepEqual((await run).session, { sub: 'did:plc:lou' });
@@ -455,19 +460,19 @@ test('watchSaved: a session saved by another page while this one is signed out s
   let saved = null, signedIn = false, restores = 0;
   const stop = watchSaved({ restore: async () => { restores++; return saved; }, onSession: (s) => got.push(s), signedIn: () => signedIn, target });
   target.dispatchEvent(new Event('storage')); // another tab saved its handle: no session yet
-  await tick(1);
+  await settle();
   saved = { sub: 'did:plc:mo' }; // the popup whose sign-in this page stopped waiting for saved one
   target.dispatchEvent(new Event('storage'));
-  await tick(1);
+  await settle();
   assert.deepEqual(got, [{ sub: 'did:plc:mo' }]);
   signedIn = true;
   target.dispatchEvent(new Event('storage'));
-  await tick(1);
+  await settle();
   assert.equal(restores, 2);
   stop();
   signedIn = false;
   target.dispatchEvent(new Event('storage'));
-  await tick(1);
+  await settle();
   assert.equal(restores, 2, 'stopped');
 });
 
@@ -480,11 +485,11 @@ test('watchSaved: a broken saved session leaves the page signed out; an event du
   };
   watchSaved({ restore, onSession: (s) => got.push(s), target });
   target.dispatchEvent(new Event('storage'));
-  await tick(1);
+  await settle();
   saved = { sub: 'did:plc:ned' };
   target.dispatchEvent(new Event('storage'));
   release();
-  await tick(5);
+  await settle();
   assert.deepEqual(got, [{ sub: 'did:plc:ned' }]);
 });
 

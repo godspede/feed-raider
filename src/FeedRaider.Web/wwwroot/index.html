@@ -15,7 +15,7 @@
   <meta property="og:image:alt" content="Feed Raider: pixel-art ships at stage 4 flying through a Bluesky-style feed, a lit mine and a pink splitter drifting down, a wingman's speech box with the author's self-thread opened in it, beside the text: Bluesky posts fly in as wingmen; AT Protocol OAuth sign-in; GitHub Pages, static, no server.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="https://feed-raider.famelos.com/og.png">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23101316'/%3E%3Cpath d='M16 5l9 21-9-5-9 5z' fill='%23a3b35f'/%3E%3Ccircle cx='16' cy='17' r='2' fill='%23eef2d6'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23181a11'/%3E%3Cpath d='M16 5l9 21-9-5-9 5z' fill='%23a3b35f'/%3E%3Ccircle cx='16' cy='17' r='2' fill='%23e9ead3'/%3E%3C/svg%3E">
   <!-- Sign-in on a local server needs the loopback IP, not "localhost", and the sign-in library would otherwise move the page
        there while the runtime is loading. Moving before anything else loads keeps the path, the query and the fragment. -->
   <script>if (location.hostname === 'localhost') { const u = new URL(location.href); u.hostname = '127.0.0.1'; window.stop(); location.replace(u.href); }</script>
@@ -24,47 +24,49 @@
   <link rel="stylesheet" href="./xterm/xterm.min.css">
   <style>
     /* one look for the page and the game: the terminal's own monospace face, the game's palette, square pixel edges.
-       The ▌ bar is the game's mark for the wingman who is talking; the olive glow and faint scanlines give it a terminal look. */
+       Colours are "Olive dusk": olive ground, olive accents, periwinkle links; the glow and faint scanlines give it a terminal look. */
     :root {
-      --ground: #101316; --text: #d8cba3; --cream: #eef2d6; --olive: #a3b35f; --field: #18223a; --navy: #95a3cf; --wine: #a8324d;
-      --olive-light: #b9c76e; --olive-deep: #5d6a35; --frame: #4f5f8c; --sky: #b6c1e2;
+      --ground: #181a11; --paper: #2b2d24; --panel2: #34362d; --line: #484a41;
+      --text: #e9ead3; --dim: #c0c1ab; --accent: #98a8e1;
+      --ok: #a3b35f; --warn: #d8b86a; --crit: #e2919f;
+      --olive: #a3b35f; --olive-light: #b9c76e; --olive-deep: #5d6a35; --wine: #a8324d;
       --mono: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
       --glow: 0 0 10px rgba(163, 179, 95, .45);
+      --scan: rgba(0, 0, 0, .22);
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; background: var(--ground); color: var(--text); font: 14px/1.5 var(--mono); }
     body { display: flex; flex-direction: column; }
-    header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; min-height: 40px; padding: 4px 12px; border-bottom: 2px solid var(--field); }
-    /* the wordmark: bold, spaced capitals after the talking-wingman bar */
-    h1, #menu-title { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--cream); white-space: nowrap; }
-    h1::before, #menu-title::before { content: "▌"; color: var(--olive); margin-right: .35em; letter-spacing: 0; }
+    header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; min-height: 40px; padding: 4px 12px; border-bottom: 2px solid var(--line); }
+    /* the wordmark: bold, spaced capitals */
+    h1, #menu-title { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--text); white-space: nowrap; }
     form { display: flex; gap: 8px; }
-    input { background: var(--ground); color: var(--cream); caret-color: var(--olive); border: 2px solid var(--frame); border-radius: 0; padding: 4px 8px; font: inherit; width: 16em; }
-    input::placeholder { color: var(--navy); opacity: 1; }
+    input { background: var(--ground); color: var(--text); caret-color: var(--olive); border: 2px solid var(--line); border-radius: 0; padding: 4px 8px; font: inherit; width: 16em; }
+    input::placeholder { color: var(--dim); opacity: 1; }
     input:focus { border-color: var(--olive); }
     button { background: var(--olive); color: var(--ground); border: 0; border-radius: 0; padding: 5px 12px; font: inherit; font-weight: 700; cursor: pointer; box-shadow: 0 3px 0 var(--olive-deep); }
     button:hover:not(:disabled) { background: var(--olive-light); box-shadow: 0 3px 0 var(--olive-deep), var(--glow); }
     button:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 1px 0 var(--olive-deep); }
-    :focus-visible { outline: 2px solid var(--cream); outline-offset: 2px; }
-    #note { color: var(--text); font-size: 13px; }
-    #note a { color: var(--navy); }
-    #error { color: #f4f8e4; background: var(--wine); padding: 6px 16px; display: none; box-shadow: inset 4px 0 0 var(--cream); }
+    :focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+    #note { color: var(--dim); font-size: 13px; }
+    #note a { color: var(--dim); }
+    #error { color: var(--text); background: var(--wine); padding: 6px 16px; display: none; border: 2px solid var(--crit); }
     #right { margin-left: auto; display: flex; gap: 8px 12px; align-items: center; }
-    #who { display: flex; gap: 8px; align-items: center; color: var(--cream); }
+    #who { display: flex; gap: 8px; align-items: center; color: var(--text); }
     /* music: a speaker button and a volume slider, in the pause menu (in the header for the spectator view) */
     #mute { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 28px; padding: 0; }
     #mute[hidden], #vol[hidden] { display: none; }
-    #mute.muted { background: transparent; color: var(--text); box-shadow: inset 0 0 0 2px var(--frame); }
-    #mute.muted:hover { color: var(--cream); box-shadow: inset 0 0 0 2px var(--olive); }
+    #mute.muted { background: transparent; color: var(--text); box-shadow: inset 0 0 0 2px var(--line); }
+    #mute.muted:hover { color: var(--text); box-shadow: inset 0 0 0 2px var(--olive); }
     #mute .wave { display: inline; }
     #mute.muted .wave { display: none; }
     #mute .cross { display: none; }
     #mute.muted .cross { display: inline; }
     /* the volume slider as a HUD gauge: a framed track, olive fill, a square thumb */
     #vol { -webkit-appearance: none; appearance: none; width: 7em; height: 20px; padding: 0; border: 0; background: transparent; cursor: pointer; }
-    #vol::-webkit-slider-runnable-track { height: 8px; background: var(--field); border: 2px solid var(--frame); }
+    #vol::-webkit-slider-runnable-track { height: 8px; background: var(--paper); border: 2px solid var(--line); }
     #vol::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 18px; margin-top: -7px; background: var(--olive); border: 0; border-radius: 0; box-shadow: 0 0 0 2px var(--ground); }
-    #vol::-moz-range-track { height: 4px; background: var(--field); border: 2px solid var(--frame); }
+    #vol::-moz-range-track { height: 4px; background: var(--paper); border: 2px solid var(--line); }
     #vol::-moz-range-progress { height: 4px; background: var(--olive); }
     #vol::-moz-range-thumb { width: 10px; height: 18px; background: var(--olive); border: 0; border-radius: 0; box-shadow: 0 0 0 2px var(--ground); }
     #vol:hover::-webkit-slider-thumb { background: var(--olive-light); box-shadow: 0 0 0 2px var(--ground), var(--glow); }
@@ -72,19 +74,19 @@
     .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
     #play-title { display: none; }
     body.playing #play-title { display: block; }
-    #debug { display: none; max-height: 40vh; overflow: auto; padding: 8px 16px; border-bottom: 2px solid var(--field); font-size: 13px; }
-    #debug h2 { margin: 0 0 6px; font-size: 14px; color: var(--cream); }
-    #debug .post { border-top: 1px solid var(--field); padding: 6px 0; }
-    #debug .meta { color: var(--navy); }
-    #debug .text { color: var(--cream); white-space: pre-wrap; margin: 2px 0 4px; }
+    #debug { display: none; max-height: 40vh; overflow: auto; padding: 8px 16px; border-bottom: 2px solid var(--line); font-size: 13px; }
+    #debug h2 { margin: 0 0 6px; font-size: 14px; color: var(--text); }
+    #debug .post { border-top: 1px solid var(--line); padding: 6px 0; }
+    #debug .meta { color: var(--dim); }
+    #debug .text { color: var(--text); white-space: pre-wrap; margin: 2px 0 4px; }
     #debug .result { margin-left: 8px; word-break: break-all; }
     #debug button { margin-right: 6px; padding: 2px 10px; }
-    #debug textarea { display: block; width: min(40em, 100%); background: var(--ground); color: var(--cream); border: 2px solid var(--frame); border-radius: 0; font: inherit; margin-bottom: 4px; }
+    #debug textarea { display: block; width: min(40em, 100%); background: var(--ground); color: var(--text); border: 2px solid var(--line); border-radius: 0; font: inherit; margin-bottom: 4px; }
     button:disabled { opacity: .5; cursor: default; }
     #term { flex: 1; min-height: 0; padding: 8px 12px; }
     /* game: the terminal is the playfield, so no scrolling, selecting or long-press menus on it */
     body.game { overscroll-behavior: none; position: fixed; inset: 0; }
-    body.game #term, body.game #term * { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+    body.game #term, body.game #term * { touch-action: none; user-select: none; -moz-user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
     body.game #term { cursor: crosshair; padding: 0; }
     /* game: no header bar; the title, sound and sign-in live in the pause menu. ?debug=feed keeps it for its sign-in. */
     body.game:not(.debug) header { display: none; }
@@ -94,58 +96,58 @@
        reaches it; a press never takes focus from the game, and Space and the arrows stay with the game. */
     #gear { position: fixed; z-index: 2; padding: 0; background: transparent; box-shadow: none; cursor: pointer; }
     #gear[hidden], #side[hidden] { display: none; }
-    #gear .face { position: absolute; display: flex; align-items: center; justify-content: center; background: var(--field); color: var(--olive); box-shadow: inset 0 0 0 2px var(--frame); }
+    #gear .face { position: absolute; display: flex; align-items: center; justify-content: center; background: var(--paper); color: var(--olive); box-shadow: inset 0 0 0 2px var(--line); }
     #gear svg { width: 70%; height: 70%; }
-    #gear .hole { fill: var(--field); }
+    #gear .hole { fill: var(--paper); }
     #gear:hover:not(:disabled) { background: transparent; box-shadow: none; }
     #gear:hover .face { color: var(--olive-light); box-shadow: inset 0 0 0 2px var(--olive), var(--glow); }
     #gear:active:not(:disabled) { transform: none; box-shadow: none; }
     /* how to play and what it is: one text, in the pause menu and, on a wide window, in the empty margin right of the field */
     .info { font-size: 13px; }
-    .info h2 { margin: 0 0 8px; font-size: 13px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--cream); }
+    .info h2 { margin: 0 0 8px; font-size: 13px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--text); }
     .info h2::before { content: "> "; color: var(--olive); letter-spacing: 0; }
     .info section + section { margin-top: 18px; }
     .info p, .info ul { margin: 0 0 8px; }
     .info ul { padding-left: 1.2em; }
     .info li + li { margin-top: 4px; }
-    .info b { color: var(--cream); }
-    .info a { color: var(--sky); text-underline-offset: 3px; }
-    .info a:hover { color: var(--cream); }
+    .info b { color: var(--text); }
+    .info a { color: var(--accent); text-underline-offset: 3px; }
+    .info a:hover { color: var(--text); }
     .info dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 10px; }
     .info dt { color: var(--olive); font-weight: 700; }
     .info dd { margin: 0; }
-    kbd { display: inline-block; padding: 0 4px; font: inherit; line-height: 1.3; color: var(--cream); background: var(--field); border: 1px solid var(--frame); border-bottom-width: 2px; }
-    /* the side panel looks like a comm panel: a navy field in a frame with the talking bar down its left edge */
-    #side { position: fixed; z-index: 1; overflow-y: auto; padding: 14px 16px 14px 20px; background: var(--field); border: 2px solid var(--frame); box-shadow: inset 4px 0 0 var(--frame); }
+    kbd { display: inline-block; padding: 0 4px; font: inherit; line-height: 1.3; color: var(--text); background: var(--paper); border: 1px solid var(--line); border-bottom-width: 2px; }
+    /* the side panel looks like a comm panel: a paper field in a line frame */
+    #side { position: fixed; z-index: 1; overflow-y: auto; padding: 14px 16px; background: var(--paper); border: 2px solid var(--line); }
     #side kbd { background: var(--ground); }
     /* the pause menu: a real dialog over a dimmed game; the controls on the left, the help beside them, stacked on a phone */
-    #menu { width: min(60em, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0; overflow: auto; color: var(--text); border: 2px solid var(--frame); background:
-      repeating-linear-gradient(to bottom, transparent 0 2px, rgba(24, 34, 58, .45) 2px 3px), var(--ground);
-      box-shadow: inset 4px 0 0 var(--olive), 0 0 24px rgba(163, 179, 95, .18); }
-    #menu::backdrop { background: rgba(16, 19, 22, .75); }
+    #menu { width: min(60em, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0; overflow: auto; color: var(--text); border: 2px solid var(--line); background:
+      repeating-linear-gradient(to bottom, transparent 0 2px, var(--scan) 2px 3px), var(--ground);
+      box-shadow: 0 0 24px rgba(163, 179, 95, .14); }
+    #menu::backdrop { background: rgba(24, 26, 17, .78); }
     #menu[open] { display: grid; grid-template-columns: minmax(16em, 20em) 1fr; }
-    #menu .controls { display: flex; flex-direction: column; gap: 12px; padding: 22px 20px 22px 24px; border-right: 2px solid var(--field); }
+    #menu .controls { display: flex; flex-direction: column; gap: 12px; padding: 22px 20px 22px 24px; border-right: 2px solid var(--line); }
     #menu-title { font-size: 24px; letter-spacing: .14em; white-space: normal; text-shadow: 3px 3px 0 var(--olive-deep), var(--glow); }
-    #menu-title::before { text-shadow: var(--glow); }
     #menu .paused { margin: -4px 0 4px; }
     #menu .paused::before { content: "> "; color: var(--olive); }
     #menu button { min-height: 44px; padding: 8px 16px; }
-    #menu .ghost { background: transparent; color: var(--cream); box-shadow: inset 0 0 0 2px var(--frame); }
+    #menu .ghost { background: transparent; color: var(--text); box-shadow: inset 0 0 0 2px var(--line); }
     #menu .ghost:hover:not(:disabled) { background: transparent; box-shadow: inset 0 0 0 2px var(--olive), var(--glow); }
     #menu .ghost:active:not(:disabled) { transform: translateY(1px); box-shadow: inset 0 0 0 2px var(--olive); }
     /* a fieldset is min-content wide by default, which pushed the slider past the column's edge */
-    #menu-sound { display: flex; align-items: center; gap: 12px; min-width: 0; margin: 0; padding: 10px 12px; border: 2px solid var(--field); }
+    #menu-sound { display: flex; align-items: center; gap: 12px; min-width: 0; margin: 0; padding: 10px 12px; border: 2px solid var(--line); }
     #menu-sound[hidden] { display: none; }
-    #menu-sound legend { padding: 0 6px; color: var(--cream); font-weight: 700; }
+    #menu-sound legend { padding: 0 6px; color: var(--text); font-weight: 700; }
     #menu #mute { width: 44px; height: 36px; min-height: 0; padding: 0; }
     #menu #vol { flex: 1 1 0; width: 0; min-width: 6em; height: 36px; }
-    #menu-who { margin: 0; color: var(--cream); overflow-wrap: anywhere; }
-    #menu-signout, #menu-signout:hover:not(:disabled) { align-self: flex-start; min-height: 44px; padding: 6px 0; background: transparent; color: var(--sky); font-weight: 400; text-decoration: underline; text-underline-offset: 3px; box-shadow: none; }
+    #menu-who { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+    #menu #menu-signout, #menu #menu-signout:hover:not(:disabled), #menu #menu-signout:active:not(:disabled) { align-self: flex-start; min-height: 44px; padding: 6px 0; background: transparent; color: var(--accent); font-weight: 400; text-decoration: underline; text-underline-offset: 3px; box-shadow: none; transform: none; }
+    #menu #menu-signout:hover:not(:disabled) { color: var(--text); }
     #menu-signout[hidden] { display: none; }
     #menu .info { padding: 22px 24px; }
     @media (max-width: 720px) {
       #menu[open] { grid-template-columns: 1fr; }
-      #menu .controls { border-right: 0; border-bottom: 2px solid var(--field); }
+      #menu .controls { border-right: 0; border-bottom: 2px solid var(--line); }
       #menu .info { padding: 18px 20px 20px 24px; }
     }
     /* game: no text selection or highlight anywhere; inputs stay selectable so a handle can be typed and fixed */
@@ -154,13 +156,12 @@
     /* start page: plain HTML and CSS, painted before any script runs; it covers the page until the game starts.
        A navy haze from the top and faint scanlines sit behind the content, never over it. */
     #start { position: fixed; inset: 0; z-index: 5; overflow-y: auto; background:
-      repeating-linear-gradient(to bottom, transparent 0 2px, rgba(24, 34, 58, .45) 2px 3px),
-      radial-gradient(ellipse 90% 55% at 50% 0%, rgba(79, 95, 140, .28), transparent 70%),
+      repeating-linear-gradient(to bottom, transparent 0 2px, var(--scan) 2px 3px),
+      radial-gradient(ellipse 90% 55% at 50% 0%, rgba(163, 179, 95, .10), transparent 70%),
       var(--ground); }
     html.spectator #start { display: none; }
     #start-form { min-height: 100%; max-width: 28em; margin: 0 auto; padding: 24px 18px; display: flex; flex-direction: column; justify-content: center; gap: 14px; }
     #start h1 { font-size: 30px; letter-spacing: .14em; white-space: normal; text-shadow: 3px 3px 0 var(--olive-deep), var(--glow); animation: pulse 3.87s ease-in-out infinite; }
-    #start h1::before { text-shadow: var(--glow); }
     /* eight beats at 124 bpm, the house tempo of the soundtrack: the glow swells on the one and settles */
     @keyframes pulse { 0%, 100% { text-shadow: 3px 3px 0 var(--olive-deep), 0 0 6px rgba(163, 179, 95, .25); } 12% { text-shadow: 3px 3px 0 var(--olive-deep), 0 0 16px rgba(163, 179, 95, .6); } }
     #start .tagline { margin: -6px 0 6px; color: var(--text); }
@@ -169,55 +170,64 @@
     #start [hidden] { display: none !important; }
     #start-load { display: flex; flex-direction: column; gap: 8px; }
     /* the load bar is segmented like the HUD's bomb pips */
-    #start-bar { height: 16px; padding: 2px; border: 2px solid var(--frame); background: var(--ground); overflow: hidden; }
+    #start-bar { height: 16px; padding: 2px; border: 2px solid var(--line); background: var(--ground); overflow: hidden; }
     #start-bar span { display: block; height: 100%; width: 0; background: repeating-linear-gradient(to right, var(--olive) 0 8px, transparent 8px 10px); transition: width .2s; }
     #start-bar.indeterminate span { width: 35%; animation: slide 1.2s ease-in-out infinite alternate; }
     @keyframes slide { from { margin-left: 0; } to { margin-left: 65%; } }
     #start-load-text { margin: 0; font-size: 13px; }
     #start-retry { align-self: flex-start; }
-    #start-load.failed #start-load-text { color: #f4f8e4; background: var(--wine); padding: 8px 12px; box-shadow: inset 4px 0 0 var(--cream); }
+    #start-load.failed #start-load-text { color: var(--text); background: var(--wine); padding: 8px 12px; border: 2px solid var(--crit); }
     #start-handle-form, #start-signed { display: flex; flex-direction: column; gap: 10px; }
     #start-choices { display: flex; flex-direction: column; gap: 12px; }
-    /* each choice is a comm panel: a navy field in a frame, with the talking bar down its left edge that lights up olive
-       on the one being pointed at or typed in */
-    #start .choice { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px 16px 20px; background: var(--field); border: 2px solid var(--frame); box-shadow: inset 4px 0 0 var(--frame); transition: box-shadow .15s; }
-    #start .choice:hover, #start .choice:focus-within { box-shadow: inset 4px 0 0 var(--olive), 0 0 14px rgba(163, 179, 95, .18); }
-    #start .choice h2 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: .04em; color: var(--cream); }
+    /* each choice is a comm panel: a paper field in a line frame. Pointed at or typed in, it lifts on a hard olive
+       shadow (the card never moves, so what is inside it holds still under the pointer) and four corner brackets snap in, stepping out from each corner like pixels drawing. */
+    #start .choice { --br: linear-gradient(var(--olive), var(--olive)); display: flex; flex-direction: column; gap: 10px; padding: 16px 18px 18px; background:
+      var(--br) 0 0 / 0 4px no-repeat, var(--br) 0 0 / 4px 0 no-repeat,
+      var(--br) 100% 0 / 0 4px no-repeat, var(--br) 100% 0 / 4px 0 no-repeat,
+      var(--br) 0 100% / 0 4px no-repeat, var(--br) 0 100% / 4px 0 no-repeat,
+      var(--br) 100% 100% / 0 4px no-repeat, var(--br) 100% 100% / 4px 0 no-repeat,
+      var(--paper); background-origin: border-box; border: 2px solid var(--line); transition: box-shadow .12s steps(2), border-color .12s steps(2), background-size .18s steps(3); }
+    #start .choice:hover, #start .choice:focus-within { border-color: var(--olive-deep); box-shadow: 4px 4px 0 var(--olive-deep); background-size: 20px 4px, 4px 20px, 20px 4px, 4px 20px, 20px 4px, 4px 20px, 20px 4px, 4px 20px, auto; }
+    #start .choice h2 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: .04em; color: var(--text); }
     #start .blurb { margin: 0; font-size: 13px; flex: 1; }
     @media (min-width: 900px) {
       #start-form { max-width: 64em; gap: 16px; }
       #start h1 { font-size: 46px; }
       #start-choices { flex-direction: row; align-items: stretch; gap: 16px; }
-      #start .choice { flex: 1 1 0; min-width: 0; padding: 20px 20px 20px 24px; gap: 14px; }
+      #start .choice { flex: 1 1 0; min-width: 0; padding: 22px 22px 24px; gap: 14px; }
       #start .choice h2 { font-size: 18px; }
       #start .blurb { font-size: 14px; }
       #start .primary { padding: 10px 12px; letter-spacing: .05em; }
     }
     .combo { position: relative; }
     #start input { width: 100%; min-height: 48px; font-size: 16px; padding: 8px 12px; }
-    #start-suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 2; margin: 2px 0 0; padding: 0; list-style: none; background: var(--ground); border: 2px solid var(--frame); overflow: hidden; }
+    #start-suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 2; margin: 2px 0 0; padding: 0; list-style: none; background: var(--ground); border: 2px solid var(--line); overflow: hidden; }
     #start-suggest li { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 6px 12px; cursor: pointer; color: var(--text); }
-    #start-suggest li + li { border-top: 1px solid var(--field); }
-    #start-suggest li:hover { background: var(--field); }
-    #start-suggest li[aria-selected="true"] { background: var(--frame); color: #ffffff; box-shadow: inset 4px 0 0 var(--olive); }
-    #start-suggest img, #start-avatar { width: 32px; height: 32px; border-radius: 0; background: var(--frame); object-fit: cover; flex: none; }
-    #start-suggest .name { display: block; color: var(--cream); font-weight: 700; }
-    #start-suggest li[aria-selected="true"] .name { color: #ffffff; }
+    #start-suggest li + li { border-top: 1px solid var(--line); }
+    #start-suggest li:hover { background: var(--panel2); }
+    #start-suggest li[aria-selected="true"] { background: var(--panel2); color: var(--text); box-shadow: inset 0 0 0 2px var(--olive); }
+    #start-suggest img, #start-avatar { width: 32px; height: 32px; border-radius: 0; background: var(--line); object-fit: cover; flex: none; }
+    #start-suggest .name { display: block; color: var(--text); font-weight: 700; }
+    #start-suggest li[aria-selected="true"] .name { color: var(--text); }
     #start-suggest .at { display: block; font-size: 12px; }
     #start .primary { width: 100%; min-height: 50px; font-size: 15px; letter-spacing: .08em; text-transform: uppercase; box-shadow: 0 4px 0 var(--olive-deep); }
     #start .primary:hover:not(:disabled) { box-shadow: 0 4px 0 var(--olive-deep), var(--glow); }
     #start .primary:active:not(:disabled) { box-shadow: 0 1px 0 var(--olive-deep); transform: translateY(3px); }
     #start-signed { align-items: stretch; }
-    #start-who { display: flex; align-items: center; gap: 12px; color: var(--cream); font-weight: 700; }
-    #start-signout, #start-signout:hover:not(:disabled) { align-self: center; background: transparent; color: var(--sky); font-weight: 400; text-decoration: underline; text-underline-offset: 3px; min-height: 44px; padding: 6px 8px; font-size: 13px; box-shadow: none; }
-    #start .hint { margin: 0; font-size: 13px; color: var(--sky); }
-    #start-note { margin: 0; color: var(--cream); background: var(--field); padding: 8px 12px 8px 16px; font-size: 14px; box-shadow: inset 4px 0 0 var(--olive); }
-    #start-error { display: none; margin: 0; color: #f4f8e4; background: var(--wine); padding: 8px 12px 8px 16px; font-size: 14px; box-shadow: inset 4px 0 0 var(--cream); }
+    #start-who { display: flex; align-items: center; gap: 12px; color: var(--text); font-weight: 700; }
+    /* the link is a button, so `#start button` (padding 10px 20px, 15px type, glow and press-down rules) out-ranked a bare
+       `#start-signout` at rest while the :hover rule here out-ranked it back: padding and type size changed on hover and the
+       link jumped. Every state now comes from one selector set with one box; hover changes colour only. */
+    #start #start-signout, #start #start-signout:hover:not(:disabled), #start #start-signout:active:not(:disabled) { align-self: center; background: transparent; color: var(--accent); font-weight: 400; font-size: 13px; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; min-height: 44px; padding: 6px 8px; box-shadow: none; transform: none; }
+    #start #start-signout:hover:not(:disabled) { color: var(--text); }
+    #start .hint { margin: 0; font-size: 13px; color: var(--accent); }
+    #start-note { margin: 0; color: var(--text); background: var(--paper); padding: 8px 12px; font-size: 14px; border: 2px solid var(--line); }
+    #start-error { display: none; margin: 0; color: var(--text); background: var(--wine); padding: 8px 12px; font-size: 14px; border: 2px solid var(--crit); }
     #start .controls { margin: 0; font-size: 13px; }
     #start .alt { margin: 0; font-size: 13px; text-align: center; }
     #start.booting #start-choices, #start.booting .hint, #start.booting .controls, #start.booting .alt { display: none !important; }
-    #start .alt a { color: var(--sky); display: inline-block; padding: 12px 8px; text-underline-offset: 3px; }
-    #start .alt a:hover { color: var(--cream); }
+    #start .alt a { color: var(--accent); display: inline-block; padding: 12px 8px; text-underline-offset: 3px; }
+    #start .alt a:hover { color: var(--text); }
     @media (max-width: 640px) {
       body.game header { min-height: 36px; padding: 3px 8px; gap: 4px 8px; }
       body.game input { width: 11em; }

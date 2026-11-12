@@ -11,10 +11,14 @@ public enum GameKey { Left, Right, Up, Down, Fire }
 public sealed class InputState
 {
     public const int LikeLatchFrames = 8;
-    private const int HoldFrames = (Tuning.KeyHoldMs * Tuning.Fps + 999) / 1000;
+    private static readonly int KeyCount = Enum.GetValues<GameKey>().Length;
+    private static readonly int HoldFrames = MsToFrames(Tuning.KeyHoldMs);
 
-    private readonly bool[] _down = new bool[5];
-    private readonly int[] _hold = new int[5];
+    private readonly bool[] _down = new bool[KeyCount];
+    private readonly int[] _hold = new int[KeyCount];
+
+    /// <summary>A span in milliseconds as whole sim frames, rounded up.</summary>
+    private static int MsToFrames(int ms) => (ms * Tuning.Fps + 999) / 1000;
 
     /// <summary>F toggles this: keep firing without holding Space.</summary>
     public bool AutoToggle { get; private set; }
@@ -51,6 +55,15 @@ public sealed class InputState
     public void Press(GameKey k)
     {
         _hold[(int)k] = HoldFrames;
+        PointerLast = false;
+    }
+
+    /// <summary>A press from a terminal that reports no releases. A key not yet held is the first press and holds long enough to
+    /// bridge the OS repeat delay; a key still held is an auto-repeat and holds until the next one is due.</summary>
+    public void Press(GameKey k, KeyRepeatTiming timing)
+    {
+        int ms = _hold[(int)k] > 0 ? timing.RepeatHoldMs : timing.FirstHoldMs;
+        _hold[(int)k] = Math.Max(_hold[(int)k], MsToFrames(ms));
         PointerLast = false;
     }
 

@@ -7,22 +7,26 @@ namespace FeedRaider.Engine;
 /// </summary>
 public static class Wander
 {
+    private const int Waves = 3;
+    private const double MinPeriodS = 5, PeriodSpreadS = 9;
+    private const int YLaneBase = 10;
+
     /// <summary>Offset in [-1,1] on both axes. Scale it by the room's slack.</summary>
     public static (double X, double Y) Offset(string did, long timeMs)
     {
         ulong h = Hashing.Fnv64(did);
-        return (Axis(h, 0, timeMs), Axis(h, 10, timeMs));
+        return (Axis(h, 0, timeMs), Axis(h, YLaneBase, timeMs));
     }
 
     private static double Axis(ulong h, int laneBase, long timeMs)
     {
         double sum = 0;
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < Waves; i++)
         {
-            double periodS = 5 + 9 * Hashing.Unit(h, laneBase + i * 2);
-            double phase = 2 * Math.PI * Hashing.Unit(h, laneBase + i * 2 + 1);
-            sum += Math.Sin(2 * Math.PI * (timeMs / 1000.0) / periodS + phase);
+            double periodS = MinPeriodS + PeriodSpreadS * Hashing.Unit(h, laneBase + i * 2);
+            double phase = Math.Tau * Hashing.Unit(h, laneBase + i * 2 + 1);
+            sum += Math.Sin(Math.Tau * (timeMs / 1000.0) / periodS + phase);
         }
-        return sum / 3;
+        return sum / Waves;
     }
 }

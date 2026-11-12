@@ -16,6 +16,8 @@ const DUCKS = { bomb: 250, boom: 500, death: 400 };
 // the fewest ms between two plays of a sound (the game rate-limits too; this protects the page from any caller)
 const GAP_MS = { shot: 60, hit: 45, kill: 40, hurt: 90, like: 80, nolike: 150, bomb: 150, comm: 250, clear: 400, darkness: 1500, pickup_shield: 100, pickup_bomb: 100, pickup_power: 100, shield_hit: 90 };
 
+const SILENCE = 0.0001;                   // the floor of an exponential ramp, which cannot reach 0
+
 let master = null, duck = null, off = true, warned = false;
 let bus = null, busCtx = null, whiteBuf = null, brownBuf = null;
 // soft saturation, slope 1 at zero: also the limiter curve on the bus (it tops out at about -2.8 dBFS)
@@ -45,21 +47,17 @@ function noiseBuffers(ctx) {
   return [white, brown];
 }
 
-function getBus(ctx) {
+function ensureBus(ctx) {
   if (bus && busCtx === ctx) return bus;
   busCtx = ctx;
   [whiteBuf, brownBuf] = noiseBuffers(ctx);
   const gain = ctx.createGain();
   gain.gain.value = BUS_LEVEL;
-  if (ctx.createWaveShaper) {
-    // a limiter so several loud voices together do not clip; unlike a compressor it adds no unknown makeup gain
-    const lim = ctx.createWaveShaper();
-    lim.curve = SATURATE;
-    gain.connect(lim);
-    lim.connect(master.node);
-  } else {
-    gain.connect(master.node);
-  }
+  // a limiter so several loud voices together do not clip; unlike a compressor it adds no unknown makeup gain
+  const lim = ctx.createWaveShaper();
+  lim.curve = SATURATE;
+  gain.connect(lim);
+  lim.connect(master.node);
   bus = gain;
   return bus;
 }
@@ -76,7 +74,7 @@ function makeVoice(ctx, pan, k = 1, trim = 1) {
     out.connect(p);
     head = p;
   }
-  head.connect(getBus(ctx));
+  head.connect(ensureBus(ctx));
   const v = {
     ctx, out, head, k, trim, sources: [], live: 0, end: 0,
     track(src, stopAt) {
@@ -114,9 +112,9 @@ function tone(v, { type = 'square', f0, f1 = f0, at = 0, dur = 0.1, vol = 0.2, a
   o.frequency.setValueAtTime(clampF(f0 * v.k), t);
   if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(clampF(f1 * v.k), t + dur);
   if (detune) o.detune.value = detune;
-  g.gain.setValueAtTime(0.0001, t);
+  g.gain.setValueAtTime(SILENCE, t);
   g.gain.linearRampToValueAtTime(vol * v.trim, t + attack);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  g.gain.exponentialRampToValueAtTime(SILENCE, t + dur);
   let head = o;
   if (lp) {
     const f = ctx.createBiquadFilter();
@@ -140,9 +138,9 @@ function noise(v, { buf = 'white', type = 'lowpass', f0 = 2000, f1 = f0, q = 0.7
   f.type = type; f.Q.value = q;
   f.frequency.setValueAtTime(clampF(f0 * v.k), t);
   if (f1 !== f0) f.frequency.exponentialRampToValueAtTime(clampF(f1 * v.k), t + dur);
-  g.gain.setValueAtTime(0.0001, t);
+  g.gain.setValueAtTime(SILENCE, t);
   g.gain.linearRampToValueAtTime(vol * v.trim, t + attack);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  g.gain.exponentialRampToValueAtTime(SILENCE, t + dur);
   s.connect(f);
   if (shape && ctx.createWaveShaper) {
     // a little grit: overdrive the filtered noise before its envelope
@@ -162,9 +160,9 @@ function noise(v, { buf = 'white', type = 'lowpass', f0 = 2000, f1 = f0, q = 0.7
 /** A slow swell envelope on the whole voice: silence -> peak at `peakAt` -> silence at `dur`. */
 function swell(v, peak, peakAt, dur) {
   const t = v.ctx.currentTime;
-  v.out.gain.setValueAtTime(0.0001, t);
+  v.out.gain.setValueAtTime(SILENCE, t);
   v.out.gain.linearRampToValueAtTime(peak, t + peakAt);
-  v.out.gain.linearRampToValueAtTime(0.0001, t + dur);
+  v.out.gain.linearRampToValueAtTime(SILENCE, t + dur);
 }
 
 // ---------------------------------------------------------------- the sounds (A minor, saw and square, a little grit)

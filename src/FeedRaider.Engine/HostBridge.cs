@@ -28,13 +28,13 @@ public sealed record FeedPlan(IFeedSource Primary, IFeedSource? Fallback, string
 {
     /// <summary>Signed in, the default is the player's Following timeline; <c>?feed=discover</c>, <c>foryou</c> or a generator URI
     /// pick that feed instead. Signed out: the follows of <paramref name="handle"/> if given, else public Discover (or the named
-    /// feed). <c>?feed=random</c> is the Random mix in either case. Null when the feed name is unknown.</summary>
+    /// feed). <c>?feed=random</c> is the Random mix in either case; <paramref name="onTrouble"/> hears why one of its feeds was dropped. Null when the feed name is unknown.</summary>
     public static FeedPlan? Choose(string? feed, bool signedIn, string handle, IFeedSource timeline, IFeedSource generator,
-        IFeedSource publicSource, Func<string, IFeedSource> follows)
+        IFeedSource publicSource, Func<string, IFeedSource> follows, Action<string>? onTrouble = null)
     {
         var uri = Feeds.Resolve(feed);
         if (uri is null) return null;
-        if (uri == Feeds.Random) return new FeedPlan(new Raider.RandomFeedSource(publicSource, publicSource), null, Feeds.Random, "public comedy feeds");
+        if (uri == Feeds.Random) return new FeedPlan(new Raider.RandomFeedSource(publicSource, publicSource, onTrouble), null, Feeds.Random, "public comedy feeds");
         if (signedIn)
             return Feeds.WantsTimeline(feed)
                 ? new FeedPlan(timeline, publicSource, Feeds.Discover, "your Following timeline")
@@ -71,14 +71,16 @@ public static class Plain
         return $"could not load {name}: {Short(ex.Message)}";
     }
 
-    private static bool Network(string m) => Has(m, "failed to fetch") || Has(m, "networkerror") || Has(m, "network") || Has(m, "timed out") || Has(m, "timeout");
+    private static bool Network(string m) => Has(m, "failed to fetch") || Has(m, "network") || Has(m, "timed out") || Has(m, "timeout");
 
     private static bool Has(string m, string part) => m.Contains(part, StringComparison.OrdinalIgnoreCase);
+
+    private const int ShortLength = 60;
 
     private static string Short(string m)
     {
         m = m.Trim().Replace('\n', ' ');
-        return m.Length == 0 ? "unknown error" : m.Length > 60 ? m[..60] + "..." : m;
+        return m.Length == 0 ? "unknown error" : m.Length > ShortLength ? m[..ShortLength] + "..." : m;
     }
 }
 

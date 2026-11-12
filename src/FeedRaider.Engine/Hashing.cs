@@ -6,6 +6,8 @@ namespace FeedRaider.Engine;
 /// client a different scene, so everything that must agree across clients goes through here.</summary>
 public static class Hashing
 {
+    /// <summary>FNV-1a 64 of the string's UTF-8 bytes, passed through <see cref="Mix"/>. It is not the plain FNV-64 value, so it
+    /// will not match a reference FNV-64 output; only the scene's agreement across clients depends on it.</summary>
     public static ulong Fnv64(string s)
     {
         ulong h = 14695981039346656037UL;

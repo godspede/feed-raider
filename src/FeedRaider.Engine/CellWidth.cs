@@ -41,7 +41,7 @@ public static class CellWidth
     }
 
     /// <summary>True when xterm gives the char exactly one cell, so it can stand in a cell of the engine's grid.</summary>
-    public static bool Single(char c) => c < 0x300 ? c >= 0x20 && (c < 0x7F || c >= 0xA0) : Of(c) == 1;
+    public static bool Single(char c) => Of(c) == 1;
 
     private static bool In(ushort[] ranges, char c)
     {

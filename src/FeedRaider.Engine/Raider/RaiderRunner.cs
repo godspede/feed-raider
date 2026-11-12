@@ -37,6 +37,8 @@ public sealed class FollowsFeedSource(HttpClient http, string handle, Func<TimeS
     private int _next;
 
     private const int FailCooldownMs = 30_000, MaxRetryAfterMs = 120_000;
+    // Follows asked for when the list loads, and posts asked for per author page (original posts only, so most of it is dropped).
+    private const int FollowsLimit = 60, AuthorPageLimit = 12;
 
     public async Task<FeedPage> GetPageAsync(string feedUri, string? cursor, int limit, CancellationToken ct)
     {
@@ -71,7 +73,7 @@ public sealed class FollowsFeedSource(HttpClient http, string handle, Func<TimeS
         lock (_left) _left.TryGetValue(f.Did, out q);
         if (q is null || q.Count == 0)
         {
-            var page = await FetchAuthorAsync(f, ct).ConfigureAwait(false);
+            var page = await FetchAuthorOrCoolDownAsync(f, ct).ConfigureAwait(false);
             if (page is null) return [];
             q = new Queue<FeedPost>(page.Posts);
             lock (_left) _left[f.Did] = q;
@@ -90,7 +92,7 @@ public sealed class FollowsFeedSource(HttpClient http, string handle, Func<TimeS
             if (i > 0) await _delay(TimeSpan.FromSeconds(1 << i), ct).ConfigureAwait(false);
             try
             {
-                var follows = await BskyClient.FetchFollowsAsync(http, handle, 60, ct).ConfigureAwait(false);
+                var follows = await BskyClient.FetchFollowsAsync(http, handle, FollowsLimit, ct).ConfigureAwait(false);
                 if (follows.Count > 0) return follows;
                 _failure = new FollowsUnavailableException($"{who} follows nobody");
                 throw _failure;
@@ -105,9 +107,9 @@ public sealed class FollowsFeedSource(HttpClient http, string handle, Func<TimeS
 
     /// <summary>One follow's recent posts, or null when the request failed (that follow then sits out for a while; a 429 also
     /// pauses every follow for its Retry-After).</summary>
-    private async Task<FeedPage?> FetchAuthorAsync(Follow f, CancellationToken ct)
+    private async Task<FeedPage?> FetchAuthorOrCoolDownAsync(Follow f, CancellationToken ct)
     {
-        string url = $"{BskyClient.AppView}/xrpc/app.bsky.feed.getAuthorFeed?actor={Uri.EscapeDataString(f.Did)}&limit=12&filter=posts_no_replies";
+        string url = $"{BskyClient.AppView}/xrpc/app.bsky.feed.getAuthorFeed?actor={Uri.EscapeDataString(f.Did)}&limit={AuthorPageLimit}&filter=posts_no_replies";
         try
         {
             using var resp = await http.GetAsync(url, ct).ConfigureAwait(false);
@@ -128,6 +130,8 @@ public sealed class FollowsFeedSource(HttpClient http, string handle, Func<TimeS
             var page = FeedMapper.ParsePage(await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false), skipReposts: true, signedOut: true);
             return new FeedPage(page.Posts.Where(p => p.AuthorDid == f.Did).ToList(), null);
         }
+        // Any failure of one follow's request (network, a bad body) is not worth stopping the others for: that follow sits out
+        // for FailCooldownMs and the page is built from the rest. There is no caller to tell, so nothing is reported.
         catch (Exception) when (!ct.IsCancellationRequested) { Cool(f, FailCooldownMs); return null; }
     }
 
@@ -152,7 +156,7 @@ public static class RaiderFeeds
             Task.Run(() => DarknessFeed.RunHiddenAsync(hidden, fetch, Offer, stats, ct, pause: pause), ct));
     }
 
-    private const int RepeatWaitMs = 4000;
+    private const int RepeatWaitMs = 4000, PageLimit = 30;
     private const int MaxBackoffMs = 15_000, RetryAfterUnexpectedMs = 8000, QueueFullWaitMs = 1000, EmptyPageWaitMs = 5000, NextPageWaitMs = 400;
 
     /// <summary>The one like call: the host's session writes it, then the game says "liked @author" or why it failed.</summary>
@@ -171,12 +175,14 @@ public static class RaiderFeeds
     }
 
     /// <summary>Looks up the post's next thread post off the game loop and hands it to the game. A failed or slow lookup (past
-    /// <see cref="Tuning.ThreadLookupMs"/>) ends the thread without a word: no toast, nothing for the frame to wait on.</summary>
-    public static async Task ThreadAsync(RaiderGame game, IThreadSource threads, FeedPost post, CancellationToken ct = default, int timeoutMs = Tuning.ThreadLookupMs)
+    /// <see cref="Tuning.ThreadLookupMs"/>) ends the thread and nothing waits on it; <paramref name="onTrouble"/> hears why a lookup
+    /// failed (a timeout or a cancel is not a failure to report).</summary>
+    public static async Task ThreadAsync(RaiderGame game, IThreadSource threads, FeedPost post, CancellationToken ct = default, int timeoutMs = Tuning.ThreadLookupMs, Action<string>? onTrouble = null)
     {
         FeedPost? next = null;
         try { next = await threads.NextAsync(post, ct).WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), ct).ConfigureAwait(false); }
-        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or JsonException or TimeoutException or OperationCanceledException) { }
+        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException) { }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or JsonException) { onTrouble?.Invoke($"a thread could not be read: {ex.Message}"); }
         lock (game)
         {
             if (next is null) game.ThreadEnded(post.Uri); else game.ThreadOpened(post.Uri, next);
@@ -216,7 +222,7 @@ public static class RaiderFeeds
                 }
                 if (queued >= lowWater) { await Task.Delay(QueueFullWaitMs, ct).ConfigureAwait(false); continue; }
                 FeedPage page;
-                try { page = await (usingFallback ? fallback! : primary).GetPageAsync(feedUri, cursor, 30, ct).ConfigureAwait(false); }
+                try { page = await (usingFallback ? fallback! : primary).GetPageAsync(feedUri, cursor, PageLimit, ct).ConfigureAwait(false); }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex) when (!usingFallback)
                 {
@@ -334,11 +340,13 @@ public sealed class AdaptiveQuality
 /// <c>skipRender</c>; the sim still steps and the next frame carries the difference.</summary>
 public sealed class RaiderRunner
 {
+    /// <summary>The most ticks one drawn frame catches up; past it the sim drops the backlog rather than spiral behind.</summary>
+    private const int MaxCatchUpTicks = 3;
     public RaiderGame Game { get; }
     public RaiderView View { get; }
     private readonly Func<(int Cols, int Rows)> _size;
     private readonly IFrameSink _sink;
-    private readonly Screen[] _screens = new Screen[1];
+    private Screen? _screen;
     // snapped, so a glyph-atlas renderer sees a bounded set of colours (see ColourSnap)
     private readonly DiffEncoder _enc = DiffEncoder.Snapped();
     internal DiffEncoder Encoder => _enc;
@@ -387,17 +395,18 @@ public sealed class RaiderRunner
                 if (due <= stepped) continue;
                 long t0 = Stopwatch.GetTimestamp();
                 var (cols, rows) = _size();
-                if (_screens[0] is null || _screens[0].Cols != cols || _screens[0].Rows != rows)
+                var screen = _screen;
+                if (screen is null || screen.Cols != cols || screen.Rows != rows)
                 {
-                    _screens[0] = new Screen(Math.Max(1, cols), Math.Max(1, rows));
+                    _screen = screen = new Screen(Math.Max(1, cols), Math.Max(1, rows));
                     _enc.Invalidate();
                 }
                 string? frame = null;
                 lock (Game)
                 {
-                    int n = (int)Math.Min(3, due - stepped);
+                    int n = (int)Math.Min(MaxCatchUpTicks, due - stepped);
                     for (int i = 0; i < n; i++) Game.Step();
-                    stepped = n == 3 ? due : stepped + n;
+                    stepped = n == MaxCatchUpTicks ? due : stepped + n;
                     qTicks++;
                     if (n > 1) qPushed++;
                     bool turn = ++sinceDraw >= _quality.Divisor;
@@ -407,8 +416,8 @@ public sealed class RaiderRunner
                         else
                         {
                             sinceDraw = 0;
-                            View.Render(Game, _screens[0], ShowFps ? $"{Fps:F0}fps {FrameMs:F1}ms{(_quality.Divisor > 1 ? " /" + _quality.Divisor : "")}" : null);
-                            frame = _enc.Encode(_screens[0]);
+                            View.Render(Game, screen, ShowFps ? $"{Fps:F0}fps {FrameMs:F1}ms{(_quality.Divisor > 1 ? " /" + _quality.Divisor : "")}" : null);
+                            frame = _enc.Encode(screen);
                         }
                     }
                 }

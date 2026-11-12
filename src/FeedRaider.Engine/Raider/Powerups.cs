@@ -57,7 +57,7 @@ public sealed partial class RaiderGame
     {
         if (Pickups.Count >= Tuning.MaxPickups) return;
         if (!waveCleared && DropR() >= DropChance(e.Kind)) return;
-        Pickups.Add(new Pickup { Kind = PickDropKind(), X = e.X, BaseX = e.X, Y = e.Y });
+        Pickups.Add(new Pickup { Kind = KindFor(DropR(), DropWeights()), X = e.X, BaseX = e.X, Y = e.Y });
     }
 
     /// <summary>The weights of the three kinds as the player stands now: a kind they are full on comes up a quarter as often.</summary>
@@ -65,11 +65,6 @@ public sealed partial class RaiderGame
         Tuning.WeightShield * (Shield >= Tuning.ShieldHits ? Tuning.WeightFull : 1),
         Tuning.WeightBomb * (Bombs >= Tuning.BombCap ? Tuning.WeightFull : 1),
         Tuning.WeightPower * (WeaponLevel >= Tuning.MaxWeaponLevel ? Tuning.WeightFull : 1));
-
-    private PickupKind PickDropKind()
-    {
-        return KindFor(DropR(), DropWeights());
-    }
 
     /// <summary>The kind a uniform draw <paramref name="u"/> (0..1) picks from these weights.</summary>
     internal static PickupKind KindFor(double u, (double Shield, double Bomb, double Power) w)
@@ -105,9 +100,12 @@ public sealed partial class RaiderGame
         }
     }
 
-    private const uint ShieldColor = 0x4fe8ff;
+    private const uint ShieldColor = 0x4fe8ff, BombColor = 0xff9a3c, PowerColor = 0xffd84a;
 
-    public static uint PickupColor(PickupKind k) => k switch { PickupKind.Shield => ShieldColor, PickupKind.Bomb => 0xff9a3c, _ => 0xffd84a };
+    public static uint PickupColor(PickupKind k) => k switch { PickupKind.Shield => ShieldColor, PickupKind.Bomb => BombColor, _ => PowerColor };
+
+    /// <summary>Sparks in the ring that bursts from a collected pickup.</summary>
+    private const int CollectSparks = 12;
 
     private void Collect(Pickup p)
     {
@@ -134,10 +132,10 @@ public sealed partial class RaiderGame
         }
         if (wasted) { Score += Tuning.ScorePickupOverflow; text = "+" + Tuning.ScorePickupOverflow; }
         Sound(sound, p.X);
-        for (int i = 0; i < 12; i++)
+        for (int i = 0; i < CollectSparks; i++)
         {
-            double a = i / 12.0 * Math.PI * 2 + R() * 0.5, sp = 0.5 + R() * 1.3;
-            AddParticle(new Particle { X = p.X, Y = p.Y, VX = Math.Cos(a) * sp, VY = Math.Sin(a) * sp, Life = 12 + (int)(R() * 8), Color = i % 3 == 0 ? 0xffffffu : color, Kind = ParticleKind.Spark });
+            double a = i / (double)CollectSparks * Math.PI * 2 + R() * 0.5, sp = 0.5 + R() * 1.3;
+            AddParticle(new Particle { X = p.X, Y = p.Y, VX = Math.Cos(a) * sp, VY = Math.Sin(a) * sp, Life = 12 + (int)(R() * 8), Color = i % 3 == 0 ? Palette.White : color, Kind = ParticleKind.Spark });
         }
         AddRing(p.X, p.Y, 2, 10, color, 12);
         Popup(text, PX, PY - 10, color);
@@ -156,11 +154,11 @@ public sealed partial class RaiderGame
         Sound(SfxNames.ShieldHit, PX);
         AddShake(Tuning.ShakeShield);
         AddRing(PX, PY, 7, 16, PickupColor(PickupKind.Shield), 10);
-        AddRing(PX, PY, 5, 11, 0xffffff, 7);
+        AddRing(PX, PY, 5, 11, Palette.White, 7);
         foreach (var e in Enemies)
         {
             double dx = e.X - PX, dy = e.Y - PY, d = Math.Max(1, Math.Sqrt(dx * dx + dy * dy));
-            if (d < 24) { e.KX += dx / d * Tuning.KnockShield; e.KY += dy / d * Tuning.KnockShield; }
+            if (d < Tuning.ShieldShoveRadius) { e.KX += dx / d * Tuning.KnockShield; e.KY += dy / d * Tuning.KnockShield; }
         }
         for (int i = 0; i < 8; i++)
         {
@@ -182,11 +180,11 @@ public sealed partial class RaiderGame
         Shot[] basis = level switch
         {
             1 => [new(0, 0, 0, 1, 2.0)],
-            2 => [new(-2, 0, 0, 1, 1.5), new(2, 0, 0, 1, 1.5)],
-            3 => [new(-2, 0, 0, 1, 1.5), new(2, 0, 0, 1, 1.5), new(-4, 2, -0.55, 0.95, 1.0), new(4, 2, 0.55, 0.95, 1.0)],
-            _ => [new(0, 0, 0, 1, 1.0), new(-2, 1, -0.45, 0.98, 1.0), new(2, 1, 0.45, 0.98, 1.0), new(-4, 2, -0.95, 0.93, 1.0), new(4, 2, 0.95, 0.93, 1.0)],
+            2 => [new(-2, 0, 0, 1, 1.1), new(2, 0, 0, 1, 1.1)],
+            3 => [new(-2, 0, 0, 1, 1.0), new(2, 0, 0, 1, 1.0), new(-4, 2, -0.75, 0.95, 0.4), new(4, 2, 0.75, 0.95, 0.4)],
+            _ => [new(0, 0, 0, 1, 1.0), new(-2, 1, -0.6, 0.98, 0.5), new(2, 1, 0.6, 0.98, 0.5), new(-4, 2, -1.2, 0.93, 0.4), new(4, 2, 1.2, 0.93, 0.4)],
         };
-        if (liked && level < 3) basis = [.. basis, new(-4, 2, -0.55, 0.95, 1.0), new(4, 2, 0.55, 0.95, 1.0)];
+        if (liked && level < 3) basis = [.. basis, new(-4, 2, -0.75, 0.95, 0.4), new(4, 2, 0.75, 0.95, 0.4)];
         return basis;
     }
 

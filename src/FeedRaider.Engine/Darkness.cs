@@ -90,6 +90,12 @@ public sealed class Darkness
     public const int DispelGuys = 3;
     public const int DispelAfterMs = 900;
 
+    private const long BruteLifeMs = 16000, MoteLifeMs = 9000;
+    /// <summary>A guy counts as "near" a monster (for dispelling it) within this many pixels either side on x, and on y.</summary>
+    private const double DispelReachX = 20, DispelReachY = 14;
+    /// <summary>A monster pushes a guy within this many pixels either side on x, and on y.</summary>
+    private const double FlinchReachX = 16, FlinchReachY = 12;
+
     private readonly List<Monster> _monsters = [];
     private readonly Queue<DarkPost> _pending = new();
     private long _lastSpawnMs = long.MinValue / 2;
@@ -108,7 +114,7 @@ public sealed class Darkness
         while (_pending.Count > MaxPending) _pending.Dequeue();
     }
 
-    private static long LifeMs(Monster m) => m.Kind == DarknessKind.Rude ? 16000 : 9000;
+    private static long LifeMs(Monster m) => m.Kind == DarknessKind.Rude ? BruteLifeMs : MoteLifeMs;
 
     /// <summary>Advance the monsters. <paramref name="guys"/> are the guys' top-left positions this frame.</summary>
     public void Update(long ms, IReadOnlyList<(string Did, (double X, double Y) Pos)> guys, int cols, int pixelHeight)
@@ -129,7 +135,7 @@ public sealed class Darkness
             if (ms - m.SpawnMs > LifeMs(m)) { m.DissolveStartMs = ms; continue; }
 
             double mx = m.X + m.Width / 2.0, my = m.Y + m.Height / 2.0;
-            int near = guys.Count(g => Math.Abs(g.Pos.X + GuyBuilder.Width / 2.0 - mx) <= 20 && Math.Abs(g.Pos.Y + GuyBuilder.Height / 2.0 - my) <= 14);
+            int near = guys.Count(g => Math.Abs(g.Pos.X + GuyBuilder.Width / 2.0 - mx) <= DispelReachX && Math.Abs(g.Pos.Y + GuyBuilder.Height / 2.0 - my) <= DispelReachY);
             if (near >= DispelGuys)
             {
                 if (m.NearSinceMs < 0) m.NearSinceMs = ms;
@@ -178,7 +184,7 @@ public sealed class Darkness
             if (m.Dissolving) continue;
             double cx = m.X + m.Width / 2.0 - (guyX + GuyBuilder.Width / 2.0);
             double cy = m.Y + m.Height / 2.0 - (guyY + GuyBuilder.Height / 2.0);
-            if (Math.Abs(cx) > 16 || Math.Abs(cy) > 12) continue;
+            if (Math.Abs(cx) > FlinchReachX || Math.Abs(cy) > FlinchReachY) continue;
             double force = m.Kind == DarknessKind.Rude ? 3 : 1;
             ox -= Math.Sign(cx) * force;
             oy += ((ms / 90) & 1) == 0 ? 1 : 0;

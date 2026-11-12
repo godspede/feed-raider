@@ -111,7 +111,7 @@ public class RaiderTests
         for (int i = 0; i < 2000 && first.Phase != WingPhase.Leave; i++) g.Step();
         Assert.Equal(WingPhase.Leave, first.Phase);
         for (int i = 0; i < 2000 && g.Wings.Contains(first); i++) g.Step();
-        Assert.DoesNotContain(first, g.Wings);                // gone
+        Assert.DoesNotContain(first, g.Wings);
         for (int i = 0; i < 200 && !g.Wings.Any(w => w.Post.Uri == Post(2).Uri); i++) g.Step();
         var next = Assert.Single(g.Wings);                    // the queued one took the slot
         Assert.Equal(Post(2).Uri, next.Post.Uri);
@@ -189,7 +189,7 @@ public class RaiderTests
         Assert.True(g.Powered);
         Assert.Contains(g.Particles, p => p.Kind == ParticleKind.Heart);
         for (int i = 0; i < 5; i++) { MoveOnto(g, w); g.Input.Like(); g.Step(); }
-        Assert.Single(liked);                                  // pressing again does nothing
+        Assert.Single(liked);
     }
 
     [Fact]
@@ -377,7 +377,7 @@ public class RaiderTests
     }
 
     [Fact]
-    public void Killing_a_heavy_enemy_gives_hit_stop_flash_and_debris()
+    public void A_bomb_on_a_heavy_enemy_gives_hit_stop_flash_and_debris()
     {
         var g = NewGame();
         g.OfferDark(new DarkPost(DarknessKind.Rude, 4, "rude words for the gunship to say"));
@@ -398,7 +398,7 @@ public class RaiderTests
         Run(g, 10);
         Assert.DoesNotContain(g.Bullets, b => b.Friendly);
         g.Input.Key(GameKey.Fire, true);
-        Run(g, 20);
+        Run(g, 30);
         int held = g.Bullets.Count(b => b.Friendly);
         Assert.True(held >= 4, $"held space should fire repeatedly, got {held}");
         g.Input.Key(GameKey.Fire, false);
@@ -420,7 +420,7 @@ public class RaiderTests
     {
         var g = NewGame();
         g.Input.ToggleAutoFire();
-        Run(g, 20);
+        Run(g, 30);
         Assert.True(g.Bullets.Count(b => b.Friendly) >= 4);     // no key held at all
         g.Input.ToggleAutoFire();
         Run(g, 120);

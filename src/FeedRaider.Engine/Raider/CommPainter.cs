@@ -7,20 +7,27 @@ namespace FeedRaider.Engine.Raider;
 public sealed class CommPainter
 {
     public const uint PanelBg = 0x0c1830, TextFg = 0xe6eefc;
-    private const uint Dim = 0x6f86ad;
+    private const uint Dim = Palette.Dim;
 
     private readonly QuadComposer[] _avQuad = [new(), new()];
-    private readonly Surface _avSurface = new(8, 8);
-    private readonly Screen _avCells = new(4, 4);
+    // The avatar is a square of AvatarCells cells, each two pixels across, drawn one cell in from the box's left edge and
+    // followed by a one-cell gap; the handle and the text sit past that.
+    private const int AvatarCells = 4, TextInset = AvatarCells + 2;
+    private readonly Surface _avSurface = new(AvatarCells * 2, AvatarCells * 2);
+    private readonly Screen _avCells = new(AvatarCells, AvatarCells);
     private Screen _scr = null!;
     private CellRect _clip;
+
+    /// <summary>The boxes drawn by the last <see cref="Draw"/>, so the view can lay the units back over them.</summary>
+    public List<CellRect> Boxes { get; } = [];
 
     public void Draw(RaiderGame g, Screen scr, FieldLayout lay)
     {
         _scr = scr;
+        Boxes.Clear();
         _clip = new CellRect(lay.Col0, 2, lay.PCols, Math.Min(lay.PRows, scr.Rows) - 2);
         // the darkness speaks first, so a wingman's box is whole where the two meet
-        foreach (var e in BaddieComm.Visible(g, lay, g.MaxWings)) DrawBaddie(e, BaddieComm.Box(e, lay));
+        foreach (var e in EnemyComm.Visible(g, lay, g.MaxWings)) DrawEnemyComm(e, EnemyComm.Box(e, lay));
         // the speaker last, so where two boxes overlap the one being read is whole
         foreach (var w in g.Wings) if (w != g.Comms.Speaker) DrawComm(w, Box(w, lay), speaking: false);
         if (g.Comms.Speaker is { } sp && g.Wings.Contains(sp)) DrawComm(sp, Box(sp, lay), speaking: true);
@@ -46,23 +53,24 @@ public sealed class CommPainter
     private void DrawComm(Wingman w, CellRect r, bool speaking)
     {
         if (!r.Overlaps(_clip)) return;
+        Boxes.Add(r);
         uint ac = w.Accent, bg = Surface.Mix(PanelBg, ac, 0.22);
         Frame(r, ac, bg);
         // a pointer on the top edge ties the comm to the ship above it
         Put(r.C + r.W / 2, r.R, '▲', ac, bg);
 
-        FillAvatar(w);
+        RaiderView.FillAvatar(w, _avSurface);
         _avQuad[w.Slot & 1].Compose(_avSurface, 0, 0, _avCells, 0, 0);
-        for (int y = 0; y < 4 && y < r.H - 2; y++)
-            for (int x = 0; x < 4; x++)
+        for (int y = 0; y < _avCells.Rows && y < r.H - 2; y++)
+            for (int x = 0; x < _avCells.Cols; x++)
             {
                 int i = y * _avCells.Cols + x;
                 Put(r.C + 1 + x, r.R + 1 + y, _avCells.Ch[i], _avCells.Fg[i], _avCells.Bg[i]);
             }
-        Text(r.C + 6, r.R + 1, w.HandleTag, Surface.Legible(ac, bg), bg);
+        Text(r.C + TextInset, r.R + 1, w.HandleTag, Surface.Legible(ac, bg), bg);
         // an open thread reads down: stubs of the oldest posts, the previous post shortened, then the newest. The whole page is
         // always on show; the typewriter only brightens it, so nothing appears or vanishes as it is read out
-        int y0 = r.R + 2, x0 = r.C + 6;
+        int y0 = r.R + 2, x0 = r.C + TextInset;
         uint dim = Surface.Legible(Dim, bg);
         foreach (var stub in WingComms.Stubs(w, w.CommTextW)) Text(x0, y0++, stub, dim, bg);
         uint prevFg = Surface.Legible(Surface.Mix(TextFg, bg, 0.45), bg), unread = Surface.Legible(Surface.Mix(TextFg, bg, 0.4), bg);
@@ -81,24 +89,27 @@ public sealed class CommPainter
         if (WingComms.Pages(w) > 1) Text(r.Right - 5, r.Bottom - 1, $"{page + 1}/{WingComms.Pages(w)}", dim, bg);
     }
 
-    /// <summary>A baddie's comm: the wingmen's box with the label for a name, red on near-black, a pointer facing down at the enemy.</summary>
-    private void DrawBaddie(Enemy e, CellRect r)
+    /// <summary>An enemy's comm: the wingmen's box with the label for a name, red on near-black, a pointer facing down at the enemy.</summary>
+    private void DrawEnemyComm(Enemy e, CellRect r)
     {
         if (!r.Overlaps(_clip)) return;
-        const uint bg = BaddieComm.PanelBg, ac = BaddieComm.Edge;
+        Boxes.Add(r);
+        const uint bg = EnemyComm.PanelBg, ac = EnemyComm.Edge;
         Frame(r, ac, bg);
-        Put(r.C + r.W / 2, r.Bottom - 1, '▼', ac, bg);
-        Text(r.C + 2, r.R + 1, e.Header!, BaddieComm.HeaderFg, bg);
-        int shown = WingComms.Revealed(e.CommAge, e.CommChars);
+        if (EnemyComm.IsBelow(e, r)) Put(r.C + r.W / 2, r.R, '▲', ac, bg); else Put(r.C + r.W / 2, r.Bottom - 1, '▼', ac, bg);
+        Text(r.C + 2, r.R + 1, e.Header!, EnemyComm.HeaderFg, bg);
+        var (page, shown) = WingComms.Progress(e.CommLines!, e.PageLines, e.CommAge);
         bool cursor = true;
-        for (int i = 0; i < e.CommLines!.Length; i++)
+        for (int i = 0, first = page * e.PageLines; i < e.PageLines && first + i < e.CommLines!.Length; i++)
         {
-            string line = e.CommLines[i];
+            string line = e.CommLines[first + i];
             int n = Math.Min(line.Length, shown);
             shown -= n;
-            for (int k = 0; k < line.Length; k++) Put(r.C + 2 + k, r.R + 2 + i, line[k], k < n ? BaddieComm.TextFg : BaddieComm.UnreadFg, bg);
+            for (int k = 0; k < line.Length; k++) Put(r.C + 2 + k, r.R + 2 + i, line[k], k < n ? EnemyComm.TextFg : EnemyComm.UnreadFg, bg);
             if (cursor && n < line.Length) { Put(r.C + 2 + n, r.R + 2 + i, '▌', ac, bg); cursor = false; }
         }
+        int pages = WingComms.Pages(e.CommLines!, e.PageLines);
+        if (pages > 1) Text(r.Right - 5, r.Bottom - 1, $"{page + 1}/{pages}", EnemyComm.UnreadFg, bg);
     }
 
     private void Frame(CellRect r, uint fg, uint bg)
@@ -117,6 +128,4 @@ public sealed class CommPainter
         var s = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         return s.Length <= w ? s : s[..Math.Max(0, w - 1)] + "…";
     }
-
-    private void FillAvatar(Wingman w) => RaiderView.FillAvatar(w, _avSurface);
 }

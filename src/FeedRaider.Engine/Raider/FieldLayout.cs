@@ -5,17 +5,14 @@ public readonly record struct FieldLayout(int Cols, int Rows, int Col0, int PCol
 {
     public int PW => PCols * 2;
     public int PH => PRows * 2;
-    public bool Ok => PCols >= Tuning.FieldMinCols && PRows >= Tuning.FieldMinRows;
-    /// <summary>Spare columns left of the field; a wide terminal puts the dialogue panel there.</summary>
-    public int Margin => Col0;
-
-    /// <summary>Width in columns of each side column, or 0 when the margin cannot hold one: as wide as the margin allows
+    public bool FitsMinimum => PCols >= Tuning.FieldMinCols && PRows >= Tuning.FieldMinRows;
+    /// <summary>Width in columns of each side column, or 0 when the margin left of the field (<see cref="Col0"/> spare columns) cannot hold one: as wide as the margin allows
     /// after the gap to the field and one spare column, up to <see cref="Tuning.SidePanelMaxCols"/>.</summary>
     public int PanelCols
     {
         get
         {
-            int w = Math.Min(Tuning.SidePanelMaxCols, Margin - Tuning.SideGapCols - 1);
+            int w = Math.Min(Tuning.SidePanelMaxCols, Col0 - Tuning.SideGapCols - 1);
             return w >= Tuning.SidePanelMinCols ? w : 0;
         }
     }

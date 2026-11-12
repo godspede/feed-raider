@@ -54,7 +54,7 @@ sealed class MiniTerm(int cols, int rows)
                 for (int k = 0; k < p.Length; k++)
                 {
                     if (p[k] == 0) { _fg = 0xFFFFFF; _bg = 0; }
-                    else if (p[k] is 38 or 48 && k + 4 < p.Length + 0 && p[k + 1] == 2)
+                    else if (p[k] is 38 or 48 && k + 4 < p.Length && p[k + 1] == 2)
                     {
                         uint c = (uint)(p[k + 2] << 16 | p[k + 3] << 8 | p[k + 4]);
                         if (p[k] == 38) _fg = c; else _bg = c;

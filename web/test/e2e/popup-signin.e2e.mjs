@@ -19,6 +19,8 @@ import { startMockAs } from './mock-as.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const wwwroot = fileURLToPath(new URL('../../../src/FeedRaider.Web/wwwroot/', import.meta.url));
+const PAGE_READY_MS = 30e3;   // the opening page's Sign in button turns on (or, after a reload, the session is found) within this
+const POPUP_MS = 15e3;        // the popup opens, and its authorization page shows, within this
 const noBus = process.argv.includes('--no-bus');
 const abandon = process.argv.includes('--abandon');
 const reload = process.argv.includes('--reload');
@@ -83,7 +85,7 @@ try {
   const opener = await context.newPage();
   watchConsole(opener, 'opener');
   await opener.goto(site.origin);
-  await opener.waitForFunction(() => !document.getElementById('start-login').disabled, null, { timeout: 30e3 });
+  await opener.waitForFunction(() => !document.getElementById('start-login').disabled, null, { timeout: PAGE_READY_MS });
   // the start page signs in at bsky.social; here the same signIn goes to the mock, from a click so the popup is allowed
   await opener.evaluate(({ target, abandon }) => {
     const b = document.createElement('button');
@@ -98,11 +100,11 @@ try {
     };
     document.body.append(b);
   }, { target: as.origin, abandon });
-  const popupSeen = context.waitForEvent('page', { timeout: 15e3 });
+  const popupSeen = context.waitForEvent('page', { timeout: POPUP_MS });
   await opener.click('#e2e-signin');
   const popup = await popupSeen;
   watchConsole(popup, 'popup');
-  await popup.waitForSelector('#go', { timeout: 15e3 });
+  await popup.waitForSelector('#go', { timeout: POPUP_MS });
   const severed = await popup.evaluate(() => window.opener === null); // COOP took effect: the popup lost its opener
   await popup.click('#go');
   let popupClosed = false;
@@ -122,7 +124,7 @@ try {
     if (!popupClosed) await popup.close();
     if (loseSub) await opener.evaluate(() => localStorage.removeItem('@@atproto/oauth-client-browser(sub)'));
     await opener.reload();
-    await opener.waitForFunction(() => document.getElementById('start-signed')?.hidden === false || !document.getElementById('start-login').disabled, null, { timeout: 30e3 });
+    await opener.waitForFunction(() => document.getElementById('start-signed')?.hidden === false || !document.getElementById('start-login').disabled, null, { timeout: PAGE_READY_MS });
     const again = await opener.evaluate(() => ({
       who: document.getElementById('start-signed')?.hidden === false ? document.getElementById('start-who-name')?.textContent || '?' : '',
       error: document.getElementById('start-error')?.style.display === 'block' ? document.getElementById('start-error').textContent : '',

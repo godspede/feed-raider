@@ -5,7 +5,7 @@ using FeedRaider.Engine.Raider;
 namespace FeedRaider.Tests;
 
 // The comm box under each wingman: the whole post (never a two-word chip), pinned below its ship at one offset,
-// one size for the life of a post, cropped by the field's edge, and a solid panel over the ships and bullets.
+// one size for the life of a post, cropped by the field's edge, and a solid panel, under the ships and bullets that pass it.
 public class CommBoxTests
 {
     private const string Long = "this is a perfectly ordinary post with enough words in it to run well past three short lines of comm text";
@@ -158,7 +158,7 @@ public class CommBoxTests
                 if (c < lay.Col0 || c >= lay.Col0 + lay.PCols || row < 2 || row >= lay.Rows) continue;
                 char got = scr.CharAt(c, row);
                 uint boxBg = Surface.Mix(CommPainter.PanelBg, w.Accent, 0.22);
-                if (got != ch && scr.BgAt(c, row) == CommPainter.PanelBg) continue;   // the narrow screen's panel draws over the field's top rows
+                if (got != ch && (scr.BgAt(c, row) == CommPainter.PanelBg || "▘▝▀▖▌▞▛▗▚▐▜▄▙▟█".Contains(got))) continue;   // a ship passing over the corner, or the narrow screen's panel drawn over the field's top rows
                 Assert.True(got == ch, $"frame {f}: '{ch}' expected at ({c},{row}), got '{got}' bg {scr.BgAt(c, row):x6} box bg {boxBg:x6}");
                 corners++;
             }
@@ -169,7 +169,7 @@ public class CommBoxTests
     // ---------------------------------------------------------------- a solid panel
 
     [Fact]
-    public void The_box_is_a_solid_panel_that_hides_what_flies_under_it()
+    public void The_box_is_a_solid_panel_with_the_shots_flying_over_it()
     {
         var g = Game(48, 60, Long);
         var w = g.Wings.Single();
@@ -184,13 +184,14 @@ public class CommBoxTests
         var scr = Render(g, 48, 60, quiet: false);
         uint panel = Surface.Mix(CommPainter.PanelBg, w.Accent, 0.22);
         int i = br * scr.Cols + r.C + 8;
-        Assert.True(scr.Bg[i] == panel && scr.Fg[i] is not (0xff3d6e or 0xffffff), $"the bullet is under the box (fg {scr.Fg[i]:x6} bg {scr.Bg[i]:x6})");
+        Assert.True(scr.Fg[i] == Palette.Crimson || scr.Bg[i] == Palette.Crimson, $"the bullet is over the box (fg {scr.Fg[i]:x6} bg {scr.Bg[i]:x6})");
         // every cell of the box, border and padding too, is the panel colour or the wingman's accent: no backdrop through it
         for (int y = r.R; y < r.Bottom; y++)
             for (int x = r.C + 5; x < r.Right; x++)   // right of the avatar
             {
                 if (x < lay.Col0 || x >= lay.Col0 + lay.PCols || y < 2 || y >= lay.PRows) continue;
                 int k = y * scr.Cols + x;
+                if (k == i) continue;   // the bullet
                 Assert.True(scr.Bg[k] == panel, $"cell {x},{y} bg {scr.Bg[k]:x6}");
             }
         Assert.Contains(w.HandleTag, Row(scr, r.R + 1));

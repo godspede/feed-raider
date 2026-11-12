@@ -21,20 +21,6 @@ public sealed class Sprite
         return s;
     }
 
-    public Sprite Mirrored()
-    {
-        var s = new Sprite(W, H);
-        for (int y = 0; y < H; y++)
-            for (int x = 0; x < W; x++) s.Px[y * W + x] = Px[y * W + W - 1 - x];
-        return s;
-    }
-
-    public Sprite FlippedV()
-    {
-        var s = new Sprite(W, H);
-        for (int y = 0; y < H; y++) Array.Copy(Px, y * W, s.Px, (H - 1 - y) * W, W);
-        return s;
-    }
 }
 
 public static class SurfaceSprites
@@ -53,7 +39,7 @@ public static class SurfaceSprites
                 int dx = x + sx;
                 if ((uint)dx >= (uint)s.W) continue;
                 uint c = v & 0xFFFFFF;
-                s.P[dy * s.W + dx] = white > 0 ? Surface.Mix(c, 0xFFFFFF, white) : c;
+                s.P[dy * s.W + dx] = white > 0 ? Surface.Mix(c, Palette.White, white) : c;
             }
         }
     }
@@ -64,11 +50,11 @@ public static class Art
 {
     private static readonly Dictionary<char, uint> DarkPal = new()
     {
-        ['#'] = 0x2a1740,
+        ['#'] = Palette.Plum,
         ['o'] = 0x4b2a78,
-        ['+'] = 0x7a3fb0,
-        ['r'] = 0xff3d6e,
-        ['y'] = 0xffd166,
+        ['+'] = DarkViolet,
+        ['r'] = Palette.Crimson,
+        ['y'] = Palette.Gold,
         ['.'] = 0,
     };
 
@@ -116,7 +102,7 @@ public static class Art
     ], DarkPal);
 
     // the newer kinds keep the dark husk outline and each wears one colour of its own, so they read apart at a glance
-    public const uint MineLit = 0xffb347, DiverLime = 0x9dff5a, SplitterPink = 0xff6be0, TurretTeal = 0x3fe0d0;
+    public const uint MineLit = 0xffb347, DiverLime = 0x9dff5a, SplitterPink = 0xff6be0, TurretTeal = 0x3fe0d0, SplitterMagenta = 0xc23aa8, DarkViolet = 0x7a3fb0;
 
     private static Dictionary<char, uint> With(params (char C, uint V)[] extra)
     {
@@ -137,7 +123,7 @@ public static class Art
     ];
 
     /// <summary>A mine, armed: an amber spiked orb. Bullets ping off it.</summary>
-    public static readonly Sprite Mine = Sprite.FromArt(MineRows, With(('a', MineLit), ('y', 0xffd166)));
+    public static readonly Sprite Mine = Sprite.FromArt(MineRows, With(('a', MineLit), ('y', Palette.Gold)));
 
     /// <summary>A mine before it arms: the same orb, unlit.</summary>
     public static readonly Sprite MineCold = Sprite.FromArt(MineRows, With(('a', 0x6b4f3a), ('y', 0x8a6a4a)));
@@ -166,7 +152,7 @@ public static class Art
         "#mMm#mMm#",
         ".#mm#mm#.",
         "..##.##..",
-    ], With(('m', 0xc23aa8), ('M', SplitterPink)));
+    ], With(('m', SplitterMagenta), ('M', SplitterPink)));
 
     /// <summary>Half a splitter, flying off on its own.</summary>
     public static readonly Sprite Shard = Sprite.FromArt(
@@ -175,7 +161,7 @@ public static class Art
         "#mM#",
         "#mm#",
         ".##.",
-    ], With(('m', 0xc23aa8), ('M', SplitterPink)));
+    ], With(('m', SplitterMagenta), ('M', SplitterPink)));
 
     /// <summary>A turret: a teal hex pod with its barrel down.</summary>
     public static readonly Sprite Turret = Sprite.FromArt(
@@ -198,22 +184,13 @@ public static class Art
         EnemyKind.Diver => DiverLime,
         EnemyKind.Splitter or EnemyKind.Shard => SplitterPink,
         EnemyKind.Turret => TurretTeal,
-        _ => 0x7a3fb0,
+        _ => DarkViolet,
     };
-
-    public static readonly Sprite Heart = Sprite.FromArt(
-    [
-        ".#.#.",
-        "#####",
-        "#####",
-        ".###.",
-        "..#..",
-    ], new() { ['#'] = 0xff5a8a });
 }
 
 /// <summary>
-/// The plane generator. <see cref="Make"/> is the only function the game calls: swap its body for something fancier
-/// without touching anything else. The placeholder builds a symmetric little fighter from the DID's hash.
+/// The plane generator: <see cref="Make"/> builds a symmetric little fighter from the DID's hash, and
+/// <see cref="Accent"/> gives its accent colour.
 /// </summary>
 public static class PlaneFactory
 {
@@ -229,7 +206,7 @@ public static class PlaneFactory
         uint body = Hsv(hue, 0.55, 0.95);
         uint wing = Hsv((hue + 0.08 + Hashing.Unit(h, 2) * 0.1) % 1, 0.7, 0.75);
         uint trim = Hsv((hue + 0.5) % 1, 0.25, 1.0);
-        uint glass = 0xbfe9ff;
+        uint glass = Palette.Ice;
         uint dark = Surface.Mix(wing, 0, 0.5);
         int wingStart = 4 + (int)(Hashing.Unit(h, 3) * 3);          // row where the wings begin
         int span = 3 + (int)(Hashing.Unit(h, 4) * 3);               // half-width of the wings, past the fuselage
@@ -258,9 +235,8 @@ public static class PlaneFactory
             P(c - 1 - i, H - 1, twinTail ? dark : body); P(c + 1 + i, H - 1, twinTail ? dark : body);
         }
         if (twinTail) { P(c - 2, H - 3, wing); P(c + 2, H - 3, wing); P(c - 2, H - 2, wing); P(c + 2, H - 2, wing); }
-        // a lit nose and engine
         P(c, 0, trim);
-        P(c, H - 1, 0xffd166);
+        P(c, H - 1, Palette.Gold);
         return sp;
     }
 

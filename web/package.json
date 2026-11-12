@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
+    "bench": "node bench/frame-bench.mjs",
     "test": "node --test \"test/*.test.mjs\""
   },
   "dependencies": {

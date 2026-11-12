@@ -8,7 +8,12 @@ public sealed class RaiderView
     public static readonly uint Ground = Surface.Pack(0x05, 0x07, 0x11);
     public static readonly uint Rail = Surface.Pack(0x1c, 0x3a, 0x6e);
     public static readonly uint Blue = Surface.Pack(0x00, 0x85, 0xff);
-    private const uint HudBg = 0x0a1224, PanelBg = CommPainter.PanelBg, PanelEdge = 0x1c3a6e, Dim = 0x6f86ad, Pink = 0xff5a8a, Ice = 0xbfe9ff;
+    private const uint HudBg = 0x0a1224, PanelBg = CommPainter.PanelBg, PanelEdge = 0x1c3a6e, Dim = Palette.Dim, Pink = Palette.Pink, Ice = Palette.Ice;
+    private const uint TooSmallText = 0xd8cba3, ChargeTrack = 0x4a2038, BulletGlow = 0xffe29a, Flame = 0xffb347, WaveCarrierMark = 0xff6b9a;
+    private const uint PostText = 0xe3c8ff, PostBg = 0x1a1030, LikeHintBg = 0x2a1030, EnemyCommText = 0xffd0e0;
+    private const uint ShipDownBg = 0x5a1030, ToastBg = 0x3a1030, BombReady = 0x1a3a6a, BombSpent = 0x16202e;
+    private const uint BannerFlashA = 0x4a1040, BannerFlashB = 0x2a0a30;
+    private const int ChargeRingSteps = 48;   // points round a full like-charge ring
     private int PanelW = Tuning.SidePanelMinCols;
 
     private readonly QuadComposer _quad = new();
@@ -29,9 +34,9 @@ public sealed class RaiderView
     {
         scr.Clear(Ground);
         var lay = FieldLayout.Compute(scr.Cols, scr.Rows);
-        if (!lay.Ok)
+        if (!lay.FitsMinimum)
         {
-            scr.Text(1, 1, "terminal too small", 0xd8cba3);
+            scr.Text(1, 1, "terminal too small", TooSmallText);
             return;
         }
         if (g.Layout != lay) g.SetLayout(lay);
@@ -52,12 +57,54 @@ public sealed class RaiderView
             scr.Put(lay.Col0 + lay.PCols, r, '│', Rail, Ground);
         }
         DrawText(g, scr, lay, debug);
+        LayUnitsOverPosts(g, scr, lay, sx, sy);
     }
 
     // ---------------------------------------------------------------- pixels
 
+    private readonly List<CellRect> _posts = [];
+    private Surface? _units;
+    private const uint NoUnit = Surface.None;
+
+    /// <summary>Puts the units and shots back over the post boxes. The boxes are text cells drawn after the pixel field, so where a ship or
+    /// a shot passes behind one, the cell is rebuilt from the unit pixels (quadrants, as the field is) and the box colour fills the rest
+    /// of that cell. Only the cells of boxes are looked at, and nothing is drawn when no box is up.</summary>
+    private void LayUnitsOverPosts(RaiderGame g, Screen scr, FieldLayout lay, int sx, int sy)
+    {
+        _posts.Clear();
+        _posts.AddRange(_comms.Boxes);
+        _posts.AddRange(_enemyPosts);
+        if (_posts.Count == 0) return;
+        if (_units is null || _units.W != lay.PW || _units.H != lay.PH) _units = new Surface(lay.PW, lay.PH) { SkipBlends = true };
+        var u = _units;
+        u.Fill(NoUnit);
+        DrawUnits(g, u);
+        DrawRings(g, u);   // blasts and the shield hurt or guard, so they show over a box too
+        int cols = u.W / 2, rows = u.H / 2;
+        var px = new uint[4];
+        int top = 2, bottom = Math.Min(lay.PRows, scr.Rows);
+        foreach (var b in _posts)
+            for (int r = Math.Max(b.R, top); r < Math.Min(b.Bottom, bottom); r++)
+                for (int c = Math.Max(b.C, lay.Col0); c < Math.Min(b.Right, lay.Col0 + lay.PCols); c++)
+                {
+                    int cx = c - lay.Col0, cy = r;
+                    int x0 = Math.Clamp(cx * 2 - sx, 0, u.W - 1), x1 = Math.Clamp(cx * 2 + 1 - sx, 0, u.W - 1);
+                    int y0 = Math.Clamp(cy * 2 - sy, 0, u.H - 1), y1 = Math.Clamp(cy * 2 + 1 - sy, 0, u.H - 1);
+                    uint a = u.P[y0 * u.W + x0], bb = u.P[y0 * u.W + x1], cc = u.P[y1 * u.W + x0], d = u.P[y1 * u.W + x1];
+                    if (a == NoUnit && bb == NoUnit && cc == NoUnit && d == NoUnit) continue;
+                    int i = r * scr.Cols + c;
+                    uint back = scr.Bg[i];
+                    px[0] = a == NoUnit ? back : a; px[1] = bb == NoUnit ? back : bb; px[2] = cc == NoUnit ? back : cc; px[3] = d == NoUnit ? back : d;
+                    int mask = QuadComposer.SplitMask(px, out uint fg, out uint bgc);
+                    if (mask == 15) bgc = fg;   // one colour all through: the split leaves the other group empty
+                    scr.Ch[i] = QuadRenderer.GlyphFor(mask); scr.Fg[i] = fg; scr.Bg[i] = bgc;
+                }
+    }
+
+    private readonly List<CellRect> _enemyPosts = [];
+
     /// <summary>The newer kinds and their telegraphs. All of it is pixels, so the comm bubble's text always draws over it.</summary>
-    private static void DrawNewer(RaiderGame g, Surface f, Enemy e)
+    private static void DrawUnlockedKinds(RaiderGame g, Surface f, Enemy e)
     {
         var sp = e.Sprite;
         double white = e.Flash > 0 ? 0.85 : 0;
@@ -68,8 +115,9 @@ public sealed class RaiderView
         {
             white = Math.Max(white, g.Frame / 2 % 2 == 0 ? 0.7 : 0);
             Aim(f, e.X, e.Y + sp.H / 2.0, e.AimX, e.AimY, Art.DiverLime, 3);
-            Cross(f, (int)Math.Round(e.AimX), (int)Math.Round(e.AimY), 2, g.Frame / 3 % 2 == 0 ? Art.DiverLime : 0xffffffu);
+            Cross(f, (int)Math.Round(e.AimX), (int)Math.Round(e.AimY), 2, g.Frame / 3 % 2 == 0 ? Art.DiverLime : Palette.White);
         }
+        else if (e.Kind == EnemyKind.Diver && e.Dashing && white == 0 && g.Frame / 3 % 2 == 0) white = 0.4;   // the dash plates glint: shots bounce
         if (e.Kind == EnemyKind.Turret && e.Windup > 0)
         {
             double t = 1 - e.Windup / (double)Tuning.TurretWindupFrames;
@@ -79,13 +127,13 @@ public sealed class RaiderView
         }
         int x0 = (int)Math.Round(e.X - sp.W / 2.0), y0 = (int)Math.Round(e.Y - sp.H / 2.0);
         f.Draw(sp, x0, y0, white);
-        if (e.Kind == EnemyKind.Turret && e.Windup > 0) f.Set(x0 + sp.W / 2, y0 + sp.H, 0xffffff);   // the barrel lights
+        if (e.Kind == EnemyKind.Turret && e.Windup > 0) f.Set(x0 + sp.W / 2, y0 + sp.H, Palette.White);   // the barrel lights
         if (e.Kind == EnemyKind.Splitter && e.Hp <= e.MaxHp / 2)
         {
             // cracks, and a seam that glows: it is about to burst
             int cx = x0 + sp.W / 2, cy = y0 + sp.H / 2;
-            f.Set(cx - 2, cy - 1, 0x2a1740); f.Set(cx - 3, cy, 0x2a1740); f.Set(cx + 2, cy + 1, 0x2a1740); f.Set(cx + 3, cy, 0x2a1740);
-            uint seam = g.Frame / 3 % 2 == 0 ? 0xffffffu : Art.SplitterPink;
+            f.Set(cx - 2, cy - 1, Palette.Plum); f.Set(cx - 3, cy, Palette.Plum); f.Set(cx + 2, cy + 1, Palette.Plum); f.Set(cx + 3, cy, Palette.Plum);
+            uint seam = g.Frame / 3 % 2 == 0 ? Palette.White : Art.SplitterPink;
             f.Set(cx, cy - 1, seam); f.Set(cx, cy, seam); f.Set(cx, cy + 1, seam);
         }
     }
@@ -119,15 +167,22 @@ public sealed class RaiderView
 
     private void DrawWorld(RaiderGame g, Surface f)
     {
+        DrawUnits(g, f);
+        DrawEffects(g, f);
+    }
+
+    /// <summary>The things that must stay readable over a post box: enemies, pickups, wingmen, the player and every shot.</summary>
+    private void DrawUnits(RaiderGame g, Surface f)
+    {
         foreach (var e in g.Enemies)
         {
-            if (e.Kind >= EnemyKind.Mine) { DrawNewer(g, f, e); continue; }
+            if (e.Kind >= EnemyKind.Mine) { DrawUnlockedKinds(g, f, e); continue; }
             f.Draw(e.Sprite, (int)Math.Round(e.X - e.Sprite.W / 2.0), (int)Math.Round(e.Y - e.Sprite.H / 2.0), e.Flash > 0 ? 0.85 : 0);
             if (e.Kind == EnemyKind.Gunship && e.Hp < e.MaxHp)
             {
                 int bw = e.Sprite.W, x0 = (int)Math.Round(e.X - bw / 2.0), y0 = (int)Math.Round(e.Y - e.Sprite.H / 2.0) - 3;
-                f.Rect(x0, y0, bw, 1, 0x2a1740);
-                f.Rect(x0, y0, (int)(bw * Math.Max(0, e.Hp) / e.MaxHp), 1, 0xff3d6e);
+                f.Rect(x0, y0, bw, 1, Palette.Plum);
+                f.Rect(x0, y0, (int)(bw * Math.Max(0, e.Hp) / e.MaxHp), 1, Palette.Crimson);
             }
         }
         foreach (var pk in g.Pickups) DrawPickup(g, f, pk);
@@ -139,25 +194,22 @@ public sealed class RaiderView
             if (b.Aimed)
             {
                 f.Set(x, y - 1, Art.TurretTeal); f.Set(x - 1, y, Art.TurretTeal); f.Set(x + 1, y, Art.TurretTeal); f.Set(x, y + 1, Art.TurretTeal);
-                f.Set(x, y, 0xffffff);
+                f.Set(x, y, Palette.White);
             }
-            else if (!b.Friendly) { f.Rect(x - 1, y - 1, 2, 2, 0xff3d6e); f.Set(x, y, 0xffffff); }
-            else if (b.Wing) { f.Rect(x, y - 1, 1, 3, 0xffe29a); }
-            else { f.Rect(x, y - 2, 1, 4, 0xbfe9ff); f.Set(x, y - 3, 0xffffff); }
+            else if (!b.Friendly) { f.Rect(x - 1, y - 1, 2, 2, Palette.Crimson); f.Set(x, y, Palette.White); }
+            else if (b.Wing) { f.Rect(x, y - 1, 1, 3, BulletGlow); }
+            else { f.Rect(x, y - 2, 1, 4, Palette.Ice); f.Set(x, y - 3, Palette.White); }
         }
-        foreach (var r in g.Rings)
-        {
-            double t = 1 - r.Life / (double)r.Max, e = 1 - (1 - t) * (1 - t);
-            double rad = r.R0 + (r.R1 - r.R0) * e;
-            double a = 1 - t;
-            f.Ring(r.X, r.Y, rad, r.Color, 0.35 + 0.65 * a);
-            if (rad > 3) f.Ring(r.X, r.Y, rad - 1, r.Color, 0.25 * a);
-        }
+    }
+
+    private static void DrawEffects(RaiderGame g, Surface f)
+    {
+        DrawRings(g, f);
         foreach (var p in g.Particles)
         {
             int x = (int)Math.Round(p.X), y = (int)Math.Round(p.Y);
             double fade = Math.Min(1, p.Life / (double)Math.Max(1, p.MaxLife) * 1.6);
-            uint c = fade < 1 ? Surface.Mix(0x0b1c44, p.Color, fade) : p.Color;
+            uint c = fade < 1 ? Surface.Mix(Palette.SkyTop, p.Color, fade) : p.Color;
             if (p.Kind == ParticleKind.Heart) { f.Set(x - 1, y, c); f.Set(x + 1, y, c); f.Rect(x - 1, y + 1, 3, 1, c); f.Set(x, y + 2, c); }
             else f.Rect(x, y, p.Size, p.Size, c);
         }
@@ -165,7 +217,19 @@ public sealed class RaiderView
         {
             double a = 0.5 * g.ScreenFlash / Tuning.ScreenFlashFrames;
             var px = f.P;
-            for (int i = 0; i < px.Length; i++) px[i] = Surface.Mix(px[i], 0xFFFFFF, a);
+            for (int i = 0; i < px.Length; i++) px[i] = Surface.Mix(px[i], Palette.White, a);
+        }
+    }
+
+    private static void DrawRings(RaiderGame g, Surface f)
+    {
+        foreach (var r in g.Rings)
+        {
+            double t = 1 - r.Life / (double)r.Max, e = 1 - (1 - t) * (1 - t);
+            double rad = r.R0 + (r.R1 - r.R0) * e;
+            double a = 1 - t;
+            f.Ring(r.X, r.Y, rad, r.Color, 0.35 + 0.65 * a);
+            if (rad > 3) f.Ring(r.X, r.Y, rad - 1, r.Color, 0.25 * a);
         }
     }
 
@@ -187,11 +251,11 @@ public sealed class RaiderView
     private static void ChargeRing(Surface f, double cx, double cy, double progress)
     {
         const double r = 9;
-        f.Ring(cx, cy, r, 0x4a2038, 0.5);
-        int n = (int)Math.Round(progress * 48);
+        f.Ring(cx, cy, r, ChargeTrack, 0.5);
+        int n = (int)Math.Round(progress * ChargeRingSteps);
         for (int i = 0; i < n; i++)
         {
-            double a = -Math.PI / 2 + i / 48.0 * Math.PI * 2;
+            double a = -Math.PI / 2 + i / (double)ChargeRingSteps * Math.PI * 2;
             f.Set((int)Math.Round(cx + Math.Cos(a) * r), (int)Math.Round(cy + Math.Sin(a) * r), Pink);
         }
     }
@@ -200,12 +264,12 @@ public sealed class RaiderView
     {
         int x = (int)Math.Round(cx), y = (int)Math.Round(cy);
         int fl = 1 + (int)(frame % 3);
-        f.Rect(x, y + plane.H / 2, 1, fl, 0xffb347);
+        f.Rect(x, y + plane.H / 2, 1, fl, Flame);
         if (muzzle)
         {
             int ny = y - plane.H / 2 - 1;
-            f.Rect(x - 2, ny - 1, 5, 3, 0xffe29a);
-            f.Rect(x - 1, ny - 2, 3, 5, 0xffffff);
+            f.Rect(x - 2, ny - 1, 5, 3, BulletGlow);
+            f.Rect(x - 1, ny - 2, 3, 5, Palette.White);
         }
     }
 
@@ -213,7 +277,7 @@ public sealed class RaiderView
     private static void DrawPickup(RaiderGame g, Surface f, Pickup p)
     {
         if (p.Blinking && g.Frame / 3 % 2 == 0) return;
-        uint c = RaiderGame.PickupColor(p.Kind), dark = Surface.Mix(c, 0x0b1c44, 0.55), light = Surface.Mix(c, 0xffffff, 0.6);
+        uint c = RaiderGame.PickupColor(p.Kind), dark = Surface.Mix(c, Palette.SkyTop, 0.55), light = Surface.Mix(c, Palette.White, 0.6);
         double pulse = 0.5 + 0.5 * Math.Sin(g.Frame * 0.3 + p.Age * 0.1);
         f.Ring(p.X, p.Y, 5 + pulse * 2, c, 0.3 + 0.35 * pulse);
         int x = (int)Math.Round(p.X) - 3, y = (int)Math.Round(p.Y) - 3;
@@ -235,7 +299,7 @@ public sealed class RaiderView
         f.Ring(g.PX, g.PY, 8.5, shield, a);
         f.Ring(g.PX, g.PY, 7.5, shield, a * 0.4);
         long since = g.Frame - g.ShieldHitFrame;
-        if (since < 6) f.Ring(g.PX, g.PY, 8.5 + since, 0xffffff, 0.9 - since * 0.13);
+        if (since < 6) f.Ring(g.PX, g.PY, 8.5 + since, Palette.White, 0.9 - since * 0.13);
     }
 
     private static void DrawPlayer(RaiderGame g, Surface f)
@@ -244,7 +308,7 @@ public sealed class RaiderView
         {
             double pulse = 0.5 + 0.5 * Math.Sin(g.Frame * 0.6);
             f.Ring(g.PX, g.PY, 9 + pulse * 2, Pink, 0.5);
-            if (g.PowerLeft < Tuning.Fps && g.Frame % 6 < 3) f.Ring(g.PX, g.PY, 12, 0xffffff, 0.4);
+            if (g.PowerLeft < Tuning.Fps && g.Frame % 6 < 3) f.Ring(g.PX, g.PY, 12, Palette.White, 0.4);
         }
         if (g.Shield > 0) DrawShield(g, f);
         if (g.Invuln > 0 && !g.InvulnIsShield && g.Frame / 3 % 2 == 0) return;
@@ -276,8 +340,10 @@ public sealed class RaiderView
     private static readonly string[] ShortStageText = Enumerable.Range(0, Tuning.StageCap + 1).Select(i => "ST " + i).ToArray();
     private static readonly string[] NumberText = Enumerable.Range(0, Tuning.StageCap + 1).Select(i => i.ToString()).ToArray();
 
-    private static string Hearts(int n) => new('\u2665', Math.Max(0, n));   // \u2665 heart suit
+    private static string Hearts(int n) => new('\u2665', Math.Max(0, n));
 
+    /// <summary>Draws the HUD and every text overlay, and records the boxes of the darkness text in <c>_enemyPosts</c> for
+    /// <see cref="LayUnitsOverPosts"/>, which must run after it.</summary>
     private void DrawText(RaiderGame g, Screen scr, FieldLayout lay, string? debug)
     {
         int c0 = lay.Col0, cols = lay.PCols;
@@ -285,19 +351,19 @@ public sealed class RaiderView
         int Cy(double y) => (int)(y / 2);
 
         // HUD
-        scr.Blank(c0, 0, cols, 0xffffff, HudBg);
-        scr.Blank(c0, 1, cols, 0xffffff, HudBg);
-        scr.Text(c0 + 1, 0, $"SCORE {g.Score:D6}", 0xffffff, HudBg);
+        scr.Blank(c0, 0, cols, Palette.White, HudBg);
+        scr.Blank(c0, 1, cols, Palette.White, HudBg);
+        scr.Text(c0 + 1, 0, $"SCORE {g.Score:D6}", Palette.White, HudBg);
         scr.Text(c0 + 15, 0, Hearts(g.Hp), Pink, HudBg);
         scr.Text(c0 + 20, 0, "B" + new string('•', g.Bombs), Ice, HudBg);
         Pips(scr, c0 + 20, 1, 'W', g.WeaponLevel, Tuning.MaxWeaponLevel, RaiderGame.PickupColor(PickupKind.Power));
         Pips(scr, c0 + 26, 1, 'S', g.Shield, Tuning.ShieldHits, RaiderGame.PickupColor(PickupKind.Shield));
         string wave = g.WaveLabel();
-        scr.Text(c0 + 1, 1, wave, wave[0] == '◉' ? 0xff6b9a : Dim, HudBg);
+        scr.Text(c0 + 1, 1, wave, wave[0] == '◉' ? WaveCarrierMark : Dim, HudBg);
         if (g.Powered)
         {
             int n = Math.Max(1, g.PowerLeft * 8 / Tuning.PowerUpFrames);
-            scr.Text(c0 + cols - 15, 1, "\u2665 POWER " + new string('█', n), Pink, HudBg);   // \u2665 heart suit
+            scr.Text(c0 + cols - 15, 1, "\u2665 POWER " + new string('█', n), Pink, HudBg);
         }
         string stage = StageReadout(g.Stage, cols - 28);
         int stageCol = c0 + cols - stage.Length - 1;
@@ -305,13 +371,16 @@ public sealed class RaiderView
         if (debug is not null) scr.Text(stageCol - debug.Length - 1, 0, debug, Dim, HudBg);
 
         // text carried by the darkness
+        _enemyPosts.Clear();
         foreach (var e in g.Enemies)
         {
             if (e.Text is not { Length: > 0 } t || e.Y < 4 || e.Header is not null) continue;   // a labelled enemy speaks in a comm box
             if (e.Kind == EnemyKind.Carrier)
             {
                 int col = Math.Clamp(Cx(e.X) - t.Length / 2, c0, c0 + cols - t.Length);
-                scr.Text(col, Math.Max(2, Cy(e.Y - e.Sprite.H / 2.0) - 1), t, 0xe3c8ff, 0x1a1030);
+                int crow = Math.Max(2, Cy(e.Y - e.Sprite.H / 2.0) - 1);
+                scr.Text(col, crow, t, PostText, PostBg);
+                _enemyPosts.Add(new CellRect(col, crow, t.Length, 1));
             }
             else if (e.Kind == EnemyKind.Gunship)
             {
@@ -321,10 +390,11 @@ public sealed class RaiderView
                 int row = Cy(e.Y + e.Sprite.H / 2.0) + 1;
                 for (int i = 0; i < lines.Length; i++)
                 {
-                    scr.Text(col, row + i, " " + lines[i].PadRight(w - 2) + " ", 0xffd0e0, 0x2a1740);
-                    scr.Put(col, row + i, i % 2 == 0 ? '▌' : '▐', 0xff3d6e, 0x2a1740);
-                    scr.Put(col + w - 1, row + i, i % 2 == 0 ? '▐' : '▌', 0xff3d6e, 0x2a1740);
+                    scr.Text(col, row + i, " " + lines[i].PadRight(w - 2) + " ", EnemyCommText, Palette.Plum);
+                    scr.Put(col, row + i, i % 2 == 0 ? '▌' : '▐', Palette.Crimson, Palette.Plum);
+                    scr.Put(col + w - 1, row + i, i % 2 == 0 ? '▐' : '▌', Palette.Crimson, Palette.Plum);
                 }
+                _enemyPosts.Add(new CellRect(col, row, w, lines.Length));
             }
         }
 
@@ -336,11 +406,11 @@ public sealed class RaiderView
             int row = lay.PRows * 2 / 5;
             string title = StageTitle(g.StageShown);
             int tc = c0 + (cols - title.Length) / 2;
-            scr.Text(tc, row, title, 0xffffff, 0x2a1740);
+            scr.Text(tc, row, title, Palette.White, Palette.Plum);
             if (Ramp.Hint(g.StageShown) is { } hint && hint.Length <= cols - 2)
             {
                 int hc = c0 + (cols - hint.Length) / 2;
-                scr.Text(hc, row + 1, hint, Art.Body(Ramp.Introduces(g.StageShown)!.Value), 0x1a1030);
+                scr.Text(hc, row + 1, hint, Art.Body(Ramp.Introduces(g.StageShown)!.Value), PostBg);
             }
         }
 
@@ -349,10 +419,10 @@ public sealed class RaiderView
         // like prompt
         if (g.Prompt is { } w2)
         {
-            string s = g.LoggedIn ? "\u2665 E / hold" : RaiderGame.SignInHint;   // \u2665 heart suit
-            uint col = g.Frame / 5 % 2 == 0 ? Pink : 0xffffff;
+            string s = g.LoggedIn ? "\u2665 E / hold" : RaiderGame.SignInHint;
+            uint col = g.Frame / 5 % 2 == 0 ? Pink : Palette.White;
             int pc = Math.Clamp(Cx(w2.X) - s.Length / 2, c0, c0 + cols - s.Length);
-            scr.Text(pc, Math.Max(2, Cy(w2.Y - w2.Plane.H / 2.0) - 2), s, col, 0x2a1030);
+            scr.Text(pc, Math.Max(2, Cy(w2.Y - w2.Plane.H / 2.0) - 2), s, col, LikeHintBg);
         }
 
         DrawPanels(g, scr, lay);
@@ -362,18 +432,18 @@ public sealed class RaiderView
             var lines = BubbleText.Format(banner, cols - 6, 3);
             int w = lines.Max(l => l.Length) + 4;
             int row = Math.Max(3, lay.Rows / 4);
-            uint bg = g.Frame / 4 % 2 == 0 ? 0x4a1040u : 0x2a0a30u;
+            uint bg = g.Frame / 4 % 2 == 0 ? BannerFlashA : BannerFlashB;
             for (int i = 0; i < lines.Length; i++)
-                scr.Text(c0 + (cols - w) / 2, row + i, ("  " + lines[i]).PadRight(w), 0xffffff, bg);
+                scr.Text(c0 + (cols - w) / 2, row + i, ("  " + lines[i]).PadRight(w), Palette.White, bg);
         }
-        if (!g.Alive) CenterText(scr, c0, cols, lay.Rows / 2, " SHIP DOWN ", 0xffffff, 0x5a1030);
+        if (!g.Alive) CenterText(scr, c0, cols, lay.Rows / 2, " SHIP DOWN ", Palette.White, ShipDownBg);
         else if (g.Tick < 5 * Tuning.Fps && g.Input.PointerLast) CenterText(scr, c0, cols, lay.Rows - 2, " drag to move - hold a pilot to like ", Dim, HudBg);
         else if (g.Tick < 10 * Tuning.Fps && !g.Input.PointerLast) CenterText(scr, c0, cols, lay.Rows - 2, cols >= 50 ? " WASD move  SPACE fire  B bomb  E like  F auto " : " WASD SPACE B E ", Dim, HudBg);
-        if (g.Toast is { } toast) CenterText(scr, c0, cols, lay.Rows - 4, " " + toast + " ", 0xffffff, 0x3a1030);
+        if (g.Toast is { } toast) CenterText(scr, c0, cols, lay.Rows - 4, " " + toast + " ", Palette.White, ToastBg);
         if (g.Input.PointerLast)
         {
             var (bc, br, bw, bh) = g.BombButton;
-            uint bb = g.Bombs > 0 ? 0x1a3a6au : 0x16202eu;
+            uint bb = g.Bombs > 0 ? BombReady : BombSpent;
             for (int i = 0; i < bh; i++) scr.Blank(bc, br + i, bw, Ice, bb);
             scr.Text(bc + 1, br, "  BOMB  ", g.Bombs > 0 ? Ice : Dim, bb);
             scr.Text(bc + 1, br + 1, ("  " + new string('•', g.Bombs)).PadRight(8), g.Bombs > 0 ? Ice : Dim, bb);
@@ -383,6 +453,8 @@ public sealed class RaiderView
     private static void CenterText(Screen scr, int c0, int cols, int row, string s, uint fg, uint bg) =>
         scr.Text(c0 + Math.Max(0, (cols - s.Length) / 2), row, s, fg, bg);
 
+    /// <summary>Draws the side log or the phone panel. It also sets <c>PanelW</c>, which the log's wrapping and drawing read, so it
+    /// must run before them.</summary>
     private void DrawPanels(RaiderGame g, Screen scr, FieldLayout lay)
     {
         PanelW = lay.PanelCols;
@@ -478,7 +550,7 @@ public sealed class RaiderView
         int height = LogHeader + lines.Length;
         for (int r = Math.Max(row, top); r < Math.Min(row + height, bottom + 1); r++)
         {
-            scr.Blank(col, r, PanelW, 0xffffff, PanelBg);
+            scr.Blank(col, r, PanelW, Palette.White, PanelBg);
             scr.Put(col, r, '▌', bar, PanelBg);
         }
         bool In(int r) => r >= top && r <= bottom;
@@ -486,13 +558,13 @@ public sealed class RaiderView
         // avatar: 8x8 pixels is 4x4 cells, drawn only when all of it is inside the column
         if (In(row + 1) && In(row + 4))
         {
-            FillAvatar(w);
+            FillAvatar(w, _avSurface);
             if (gone) for (int i = 0; i < _avSurface.P.Length; i++) _avSurface.P[i] = Surface.Mix(_avSurface.P[i], PanelBg, 0.6);
             _avQuad.Compose(_avSurface, 0, 0, scr, col + 1, row + 1);
         }
         int tx = col + 6, tw = PanelW - 7;
-        if (In(row + 1)) scr.Text(tx, row + 1, Trim("@" + w.Handle, tw), handle, PanelBg);
-        string likes = w.Liked ? "\u2665 liked" : w.LikesTag;   // \u2665 heart suit
+        if (In(row + 1)) scr.Text(tx, row + 1, WingComms.Trim("@" + w.Handle, tw), handle, PanelBg);
+        string likes = w.Liked ? "\u2665 liked" : w.LikesTag;
         if (In(row + 2)) scr.Text(tx, row + 2, likes, likesFg, PanelBg);
         for (int i = 0; i < lines.Length; i++)
         {
@@ -506,16 +578,12 @@ public sealed class RaiderView
 
     private static void DrawPanelLine(Screen scr, Wingman w, int col, int row, int width, bool speaking)
     {
-        scr.Blank(col, row, width, 0xffffff, PanelBg);
+        scr.Blank(col, row, width, Palette.White, PanelBg);
         scr.Put(col, row, '▌', speaking ? w.Accent : Blue, PanelBg);
-        string likes = w.Liked ? "\u2665 liked" : w.LikesTag;   // \u2665 heart suit
+        string likes = w.Liked ? "\u2665 liked" : w.LikesTag;
         scr.Text(col + 2, row, w.HandleTag.Length <= width - likes.Length - 4 ? w.HandleTag : w.ChipTag, Ice, PanelBg);
         scr.Text(col + width - likes.Length - 1, row, likes, w.Liked ? Pink : Dim, PanelBg);
     }
-
-    private static string Trim(string s, int w) => s.Length <= w ? s : s[..Math.Max(1, w - 1)] + "…";
-
-    private void FillAvatar(Wingman w) => FillAvatar(w, _avSurface);
 
     internal static void FillAvatar(Wingman w, Surface s)
     {
@@ -523,7 +591,7 @@ public sealed class RaiderView
         // no picture (the host could not fetch one): a tinted disc from the author's DID
         ulong h = Hashing.Fnv64(w.Post.AuthorDid);
         uint bg = Surface.Mix(PanelBg, Surface.Pack((int)(Hashing.Unit(h, 1) * 160), (int)(Hashing.Unit(h, 2) * 160), (int)(Hashing.Unit(h, 3) * 220)), 0.45);
-        uint fg = Surface.Mix(bg, 0xffffff, 0.45);
+        uint fg = Surface.Mix(bg, Palette.White, 0.45);
         s.Fill(bg);
         s.Disc(4, 4, 3, fg);
     }

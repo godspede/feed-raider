@@ -31,6 +31,10 @@ public static class Layout
         return homes;
     }
 
+    private const int SlackX = 3, TallSlackY = 2, ShortSlackY = 1;
+    /// <summary>A canvas taller than this many pixels gets the larger vertical wander.</summary>
+    private const int TallRoomPx = 40;
+
     /// <summary>Wander amplitude in pixels, kept inside the guy's own cell so neighbours do not collide.</summary>
-    public static (double X, double Y) Slack(int count, int cols, int pixelHeight) => (3, pixelHeight > 40 ? 2 : 1);
+    public static (double X, double Y) Slack(int pixelHeight) => (SlackX, pixelHeight > TallRoomPx ? TallSlackY : ShortSlackY);
 }

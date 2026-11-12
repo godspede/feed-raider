@@ -5,10 +5,11 @@ import { Agent } from '@atproto/api';
 import scopes from '../scope.json';
 import { metadataUrl, signIn as signInWith, signInFailed, popupKey, completeCallback, noteSignIn, clearSignIn, restoreSaved, signInLost, callbackNote, PUBLIC_API, ENTRYWAY } from '../../src/FeedRaider.Web/wwwroot/page.js';
 
-const APPVIEW = 'did:web:api.bsky.app#bsky_appview';
+const APPVIEW_DID = 'did:web:api.bsky.app', APPVIEW_SERVICE = 'bsky_appview';
 const isLoopback = ['127.0.0.1', '[::1]', 'localhost'].includes(location.hostname);
 
 let client, agent, reader, did = null, handle = null, returnSearch = null, failure = null, note = null;
+// Reading localStorage throws when the browser blocks storage (private mode, cookies off). The page then runs without it: callers take null as "no storage" and skip saving the sign-in report.
 const storage = () => { try { return globalThis.localStorage ?? null; } catch { return null; } };
 
 // ?scope=transition requests atproto transition:generic instead of the granular scopes (loopback only; Pages is fixed by client-metadata.json).
@@ -51,18 +52,19 @@ async function adopt(session) {
   // Writes go straight to the user's PDS. Only reads carry the appview proxy header: with it on a write, the PDS would forward
   // createRecord to the appview instead of saving the like.
   agent = new Agent(session);
-  reader = agent.withProxy('bsky_appview', APPVIEW.split('#')[0]);
+  reader = agent.withProxy(APPVIEW_SERVICE, APPVIEW_DID);
   try {
     const r = await fetch(`${PUBLIC_API}/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`);
     handle = r.ok ? (await r.json()).handle : did;
   } catch (e) {
     if (!(e instanceof TypeError)) throw e;
+    console.warn('profile lookup failed, showing the DID as the handle: ' + e.message);
     handle = did;
   }
 }
 
 // The saved session, with the sign-in report and why its account's restore failed (see restoreSaved).
-async function savedSession() {
+async function restoreOutcome() {
   const out = await restoreSaved({ initRestore: () => client.initRestore(false), restore: (sub) => client.restore(sub, false), storage: storage() });
   if (out.session && out.report) console.info(`restored ${out.report.sub} from the sign-in report: the library had no current account`);
   return out;
@@ -78,7 +80,7 @@ export async function init() {
     const redirectUri = params && client.findRedirectUrl();
     if (redirectUri) await finishCallback(params, redirectUri);
     else {
-      const out = await savedSession();
+      const out = await restoreOutcome();
       if (out.session) await adopt(out.session);
       else if (out.report) {
         // said once: the next load starts clean
@@ -147,7 +149,7 @@ export async function login(input) {
 // returns. `onWaiting` runs once the popup shows the authorization page; `signal` gives up on it.
 export async function signIn(input, { onWaiting, signal } = {}) {
   noteSignIn(storage(), 'started');
-  const restore = async () => (await savedSession()).session;
+  const restore = async () => (await restoreOutcome()).session;
   const out = await signInWith(client, input, { scope: client.clientMetadata.scope, state: location.search, standalone: navigator.standalone === true, restore, onWaiting, signal });
   if (out.via === 'popup') await adopt(out.session);
   failure = null;
@@ -157,7 +159,7 @@ export async function signIn(input, { onWaiting, signal } = {}) {
 // A session another page of the site saved since this one loaded (a popup whose sign-in this page stopped waiting for), adopted:
 // the session JSON, or null when there is none.
 export async function adoptSaved() {
-  const { session: saved } = await savedSession();
+  const { session: saved } = await restoreOutcome();
   if (!saved) return null;
   await adopt(saved);
   failure = null;

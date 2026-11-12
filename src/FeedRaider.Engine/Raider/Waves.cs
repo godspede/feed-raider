@@ -16,12 +16,15 @@ public sealed record WaveSpec(bool Live, DarknessKind? Kind, WavePattern Pattern
 /// The text a wave carries went through <see cref="DarknessText"/> already; nothing here knows an author.</summary>
 public static class WaveSpawner
 {
+    /// <summary>How near the field's edges (as 0..1 fractions of its width) a wave's formation or mine pair may enter.</summary>
+    private const double SpawnXMin = 0.08, SpawnXMax = 0.92;
+
     /// <summary>A darkness event's wave. From <see cref="Tuning.LiveSpecialsFromStage"/> a spam wave swaps a few plain grunts for
     /// newer kinds that can be shot down (never a mine, so the wave can always be cleared); the carrier and its text stay as they are.</summary>
     public static WaveSpec FromPost(DarkPost post, int stage = 1)
     {
         ulong s = post.Seed;
-        string text = DarknessText.Clean(post.Text, 44);
+        string text = DarknessText.Clean(post.Text, DarknessText.MaxPostChars);
         if (post.Kind == DarknessKind.Rude)
         {
             var gunship = new EnemySpawn(EnemyKind.Gunship, 0.3 + Hashing.Unit(s, 1) * 0.4, 0, 0.22, Hashing.Unit(s, 2) * Math.Tau, text);
@@ -30,8 +33,7 @@ public static class WaveSpawner
         int n = Tuning.SpamMin + (int)(Hashing.Mix(s) % (ulong)(Tuning.SpamMax - Tuning.SpamMin + 1));
         var pattern = (WavePattern)(int)(Hashing.Unit(s, 3) * 4);   // line, vee, arc, column (sine is filler-only)
         int carrier = (int)(Hashing.Unit(s, 4) * n);
-        var frag = DarknessText.Fragments(text, 16);
-        string? carried = frag.Count > 0 ? frag[(int)(Hashing.Unit(s, 5) * frag.Count)] : null;
+        string? carried = text.Length > 0 ? text : null;   // the carrier's comm shows the whole post
         var list = Formation(pattern, n, s, carrier, carried);
         if (stage >= Tuning.LiveSpecialsFromStage)
             for (int i = 0, swaps = Math.Min(Ramp.Specials(stage), n - 1); i < swaps; i++)
@@ -47,7 +49,7 @@ public static class WaveSpawner
     /// grunts and groups of the newer kinds (<see cref="Ramp.Specials"/>).</summary>
     public static WaveSpec Filler(ulong seed, int stage = 1)
     {
-        int n = 4 + Ramp.FillerExtra(stage) + (int)(Hashing.Mix(seed) % 5);
+        int n = Tuning.FillerGruntsMin + Ramp.FillerExtra(stage) + (int)(Hashing.Mix(seed) % (ulong)Tuning.FillerGruntsSpread);
         var pattern = (WavePattern)(int)(Hashing.Unit(seed, 3) * 5);
         var list = Formation(pattern, n, seed, -1, null);
         for (int i = 0, groups = Ramp.Specials(stage); i < groups; i++)
@@ -78,7 +80,7 @@ public static class WaveSpawner
             for (int k = 0; k < Tuning.MinesPerSpecial; k++)
             {
                 double mx = x + (k - (Tuning.MinesPerSpecial - 1) / 2.0) * 0.32;
-                list.Add(new EnemySpawn(kind, Math.Clamp(mx, 0.08, 0.92), delay + k * 12, 0, phase + k, null));
+                list.Add(new EnemySpawn(kind, Math.Clamp(mx, SpawnXMin, SpawnXMax), delay + k * 12, 0, phase + k, null));
             }
             return;
         }
@@ -92,7 +94,7 @@ public static class WaveSpawner
         double phase = Hashing.Unit(s, 8) * Math.Tau;
         for (int i = 0; i < n; i++)
         {
-            double t = n == 1 ? 0.5 : i / (double)(n - 1);
+            double t = i / (double)(n - 1);   // n is at least 2: both callers pass a wave of four or more
             double x; int delay; double amp = 0;
             switch (p)
             {
@@ -103,7 +105,7 @@ public static class WaveSpawner
                 default: x = 0.5; delay = i * 8; amp = 0.3; break;
             }
             bool isCarrier = i == carrier;
-            list.Add(new EnemySpawn(isCarrier ? EnemyKind.Carrier : EnemyKind.Grunt, Math.Clamp(x, 0.08, 0.92), delay, amp, phase, isCarrier ? text : null));
+            list.Add(new EnemySpawn(isCarrier ? EnemyKind.Carrier : EnemyKind.Grunt, Math.Clamp(x, SpawnXMin, SpawnXMax), delay, amp, phase, isCarrier ? text : null));
         }
         return list;
     }

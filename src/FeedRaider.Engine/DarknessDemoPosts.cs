@@ -16,6 +16,6 @@ public static class DarknessDemoPosts
     public static DarkPost Next(int i)
     {
         var (kind, text) = Samples[i % Samples.Length];
-        return new DarkPost(kind, Hashing.Fnv64("demo" + i), DarknessText.Clean(text), DarkSource.Demo);
+        return new DarkPost(kind, Hashing.Fnv64("demo" + i), DarknessText.Clean(text, DarknessText.MaxPostChars), DarkSource.Demo);
     }
 }

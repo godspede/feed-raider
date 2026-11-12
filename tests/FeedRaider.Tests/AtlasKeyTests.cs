@@ -6,7 +6,7 @@ namespace FeedRaider.Tests;
 
 // xterm's WebGL renderer rasterises every (glyph, foreground, background) it meets once, into an atlas that only grows. On a
 // phone at DPR 3 each new key is a slow draw and measure, and a full atlas means a renewal and the whole screen drawn again.
-// Truecolour quadrant cells used to mint keys without end (about 670 a second in play), which is what made the phone build lag.
+// Truecolour quadrant cells mint keys without end (about 670 a second in play) unless they are snapped to a small palette.
 public class AtlasKeyTests
 {
     private const uint Charcoal = 0x101316, Khaki = 0xd8cba3, Olive = 0xa3b35f, Navy = 0x4f5f8c, Wine = 0xa8324d;
@@ -66,13 +66,13 @@ public class AtlasKeyTests
         Play(cols, rows, frames, DiffEncoder.Snapped(), snapped, f => { if (f == frames * 2 / 3) atTwoThirds = snapped.Count; });
         Play(cols, rows, frames, new DiffEncoder(), plain, _ => { });
         int lastThird = snapped.Count - atTwoThirds;
-        // The bounds sit just above a measured 11.3k keys snapped (3.2k in the last 30 s) against 71k unsnapped. Snapped, a phone
-        // at DPR 3 renews its atlas about every 40 s of full-speed play; unsnapped it was every 10 s, and the frames went
+        // The bounds sit just above a measured 11.3k keys snapped (4.6k in the last 30 s, with the denser enemy fire) against 71k unsnapped. Snapped, a phone
+        // at DPR 3 renews its atlas about every 40 s of full-speed play; unsnapped it would renew every 10 s, and the frames would go
         // to rasterising. Past these bounds the phone build is heading back there.
         var seen = $"snapped {snapped.Count} ({lastThird} in the last 30 s), unsnapped {plain.Count}";
         Assert.True(plain.Count > 5 * snapped.Count, seen);
         Assert.True(snapped.Count < 14_000, seen);
-        Assert.True(lastThird < 4_000, seen);
+        Assert.True(lastThird < 5_000, seen);
     }
 
     private static FeedPost Post(int n) =>

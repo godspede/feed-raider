@@ -28,9 +28,11 @@ Losing your last heart keeps the stage you reached and only sets back half your 
 | Bomb | B; right click; two-finger tap |
 | Like a wingman's post | E; or hold the left button or a finger on (or near) the wingman for about half a second until its ring fills. A click or tap never likes; letting go early cancels |
 | Pause | Esc, or the gear beside the stage: the pause menu holds the sound controls, sign-in and the way back to the main menu |
-| Sound | M mutes all sound; the volume slider is in the pause menu |
+| Sound | M mutes all sound, in the terminal version too; the volume slider is in the pause menu |
 
 Address options: `?sfx=off` turns the sound effects off, `?music=off` the music. `?mode=spectator` shows a watch-only crowd view of a handle's feed. The spectator view has its own cast: the people the handle follows are guys, and the stranger posts drawn from the label stream are monsters, where the game has wingmen and enemies. `?debug=feed` lists the first posts of a feed with a like button each, for checking the sign-in. `?stage=6` starts at a later stage, for trying out the later enemies.
+
+The terminal version has the same sound as the web: the music tracks and the synthesised effects, and M mutes everything. `--sfx off` and `--music off` turn a part off, like the address options. The sound plays on the machine the game runs on, so over SSH you hear the remote machine, not your own. It plays on Windows only for now (NAudio, no install needed); on other systems, or with no audio device, the game runs silent.
 
 ## Signing in
 
@@ -49,9 +51,9 @@ Signing in uses Bluesky's OAuth, and the page talks to your account directly fro
 
 ## Privacy
 
-The game shows real Bluesky posts. Wingmen are posts from the feed you picked. Signed out (Play as someone, Random), posts by authors who carry Bluesky's `!no-unauthenticated` label, which asks not to be shown to logged-out viewers, are left out. Posts, or posts by authors, labelled `porn`, `sexual`, `nudity` or `graphic-media` are left out in every mode. The enemies include posts by strangers, drawn from Bluesky's public moderation label stream (`mod.bsky.app`) and from replies that thread owners hid, read from Bluesky's Jetstream. These are shown without the author: mentions (`@...`), links, hashtags, DIDs and anything that looks like a handle or domain name is removed, the text is cut to about 60 characters, and the game stores none of it.
+The game shows real Bluesky posts. Wingmen are plain single posts from the feed you picked: text of at least 20 characters with no attachment of any kind (picture, video, link card, quote), not just a link or a link to another post, not a reply and not a repost. The one reply that is shown is the author's own, opened under their post in the thread follow, and it must be plain by the same rule. Signed out (Play as someone, Random), posts by authors who carry Bluesky's `!no-unauthenticated` label, which asks not to be shown to logged-out viewers, are left out. Posts, or posts by authors, labelled `porn`, `sexual`, `nudity` or `graphic-media` are left out in every mode. The enemies include posts by strangers, drawn from Bluesky's public moderation label stream (`mod.bsky.app`) and from replies that thread owners hid, read from Bluesky's Jetstream. These are shown without the author: mentions (`@...`), links, hashtags, DIDs and anything that looks like a handle or domain name is removed, the rest of the text may be shown whole, and the game stores none of it.
 
-xterm.js (MIT) is served with the page from `xterm/`, so no third-party CDN is asked for anything. The page looks handles up through plc.directory and the public Bluesky API, and reads avatars from each author's own PDS. The browser keeps only your last handle, your best score and your sound settings in localStorage. Sign-in is OAuth, and the session is held by the ATProto library in your browser, not by this project.
+xterm.js (MIT) is served with the page from `xterm/`, so no third-party CDN is asked for anything. The page looks handles up through plc.directory and the public Bluesky API, and reads avatars from each author's own PDS. The browser keeps only your last handle, your best score and your sound settings in localStorage.
 
 Feed Raider is an independent project, not made or endorsed by Bluesky.
 
@@ -60,7 +62,7 @@ Feed Raider is an independent project, not made or endorsed by Bluesky.
 You need the .NET 10 SDK.
 
     dotnet test FeedRaider.slnx                          # tests
-    dotnet run --project src/FeedRaider.Console          # terminal version (truecolor terminal, about 80x24 or larger)
+    dotnet run --project src/FeedRaider.Console          # terminal version (truecolor terminal, about 80x24 or larger; add --sfx off / --music off to silence it)
     (cd web && npm ci && npm run build)                  # bundles the sign-in code; needs Node 22
     dotnet publish src/FeedRaider.Web -c Release -o out  # browser version
     cd out/wwwroot && python -m http.server 8000
@@ -69,13 +71,13 @@ The publish prints "Publishing without optimizations... wasm-tools"; that is exp
 
 Then open <http://localhost:8000/>. Signing in works on localhost and on HTTPS pages only.
 
-The sign-in code is bundled from `web/` into `src/FeedRaider.Web/wwwroot/atproto.js`, which is not committed and which `main.js` imports, so the npm step must come before `dotnet publish`. `npm test` in `web/` runs the page tests.
+The sign-in code is bundled from `web/` into `src/FeedRaider.Web/wwwroot/atproto.js`, which is not committed and which `main.js` imports, so the npm step must come before `dotnet publish`. `npm test` in `web/` runs the page tests, and `npm run bench` there measures frame time in a throttled, phone-sized headless browser (it needs playwright-core: installed, or named by `PLAYWRIGHT_CORE`).
 
 ## Credits
 
 The music was made with Google Gemini.
 
-Sound effects are synthesised in the browser, with no audio files, and follow the same mute and volume controls. The music is a menu theme, a boss theme and a shuffled rotation of gameplay tracks.
+Sound effects are synthesised by the game, with no audio files, and follow the same mute and volume controls. The music is a menu theme, a boss theme and a shuffled rotation of gameplay tracks.
 
 Contributions are not accepted yet.
 

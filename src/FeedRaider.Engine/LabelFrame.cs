@@ -60,7 +60,7 @@ public static class LabelFrame
         }
         catch (Exception e) when (e is CborContentException or InvalidOperationException or FormatException or OverflowException)
         {
-            result.Clear();
+            // malformed bytes: nothing was kept (result is only assigned once the whole body has been read)
         }
         return result;
     }

@@ -67,7 +67,6 @@ public sealed class ThreadgateSource : IHasState
 {
     public const string Endpoint = $"{JetstreamSource.DefaultEndpoint}?wantedCollections={ThreadgateDiffer.GateCollection}";
     public string State { get; private set; } = "connecting";
-    public int GatesSeen { get; private set; }
     /// <summary>While paused the connection is closed; on resume it opens afresh (the paused time is not replayed).</summary>
     public PauseGate? Pause { get; init; }
     private readonly ThreadgateDiffer _differ = new();
@@ -86,10 +85,10 @@ public sealed class ThreadgateSource : IHasState
             using var ws = new ClientWebSocket();
             try { await ws.ConnectAsync(new Uri(Endpoint), wsCt).ConfigureAwait(false); }
             catch (Exception) when (Pause?.IsPaused == true && !ct.IsCancellationRequested) { State = "paused"; continue; }
-            catch (Exception)
+            catch (Exception e)
             {
                 failures++;
-                State = $"reconnecting ({failures})";
+                State = $"reconnecting ({failures}: {e.Message})";
                 try { await Task.Delay(JetstreamSource.Backoff(failures), ct); } catch (OperationCanceledException) { yield break; }
                 continue;
             }
@@ -98,29 +97,16 @@ public sealed class ThreadgateSource : IHasState
             var buffer = new byte[JetstreamSource.ReceiveBufferBytes];
             while (ws.State == WebSocketState.Open && !wsCt.IsCancellationRequested)
             {
-                string? msg = await ReceiveAsync(ws, buffer, wsCt);
-                if (msg is null) { State = Pause?.IsPaused == true ? "paused" : "reconnecting"; break; }
+                var (bytes, failure) = await JetstreamSource.ReceiveMessageAsync(ws, buffer, wsCt);
+                if (bytes is null)
+                {
+                    State = Pause?.IsPaused == true ? "paused" : failure is null ? "reconnecting" : $"reconnecting ({failure})";
+                    break;
+                }
+                string msg = Encoding.UTF8.GetString(bytes);
                 if (!ThreadgateDiffer.TryParse(msg, out var did, out var rkey, out var op, out var hidden)) continue;
-                GatesSeen++;
                 foreach (var u in _differ.Apply(did, rkey, op, hidden)) yield return u;
             }
         }
-    }
-
-    private static async Task<string?> ReceiveAsync(ClientWebSocket ws, byte[] buffer, CancellationToken ct)
-    {
-        try
-        {
-            using var ms = new MemoryStream();
-            while (true)
-            {
-                var r = await ws.ReceiveAsync(buffer, ct).ConfigureAwait(false);
-                if (r.MessageType == WebSocketMessageType.Close) return null;
-                ms.Write(buffer, 0, r.Count);
-                if (r.EndOfMessage) break;
-            }
-            return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
-        }
-        catch (Exception) { return null; }
     }
 }

@@ -31,6 +31,17 @@ public sealed class Room
     public const long BubbleMs = 5000;
     private const int MaxPending = 3;
     private const int DefaultCols = 80, DefaultPixelHeight = 46;
+    private const double WalkPixelsPerSecond = 14.0;
+    private const long MinWalkMs = 1200, MaxWalkMs = 3500;
+    /// <summary>Each guy blinks once per period for BlinkMs, at an offset taken from the DID so the room does not blink in unison.</summary>
+    private const long BlinkPeriodMs = 4000, BlinkMs = 140;
+    private const long StepFrameMs = 160, TalkFlapMs = 250;
+    private const int MinCols = 20, MinRows = 8;
+    /// <summary>A guy in conversation sorts in front of every idle guy: this many pixels of depth.</summary>
+    private const double SpeakerDepthBonus = 1000;
+    /// <summary>How far ahead a walking guy looks to find which way he faces.</summary>
+    private const long FacingLookAheadMs = 100;
+    private const int RudeBubbleWidth = 18, RudeBubbleLines = 3;
 
     private sealed class Guy
     {
@@ -152,9 +163,10 @@ public sealed class Room
 
     private (double X, double Y) Home(Guy g, long ms)
     {
+        // an unseated guy has no home; callers that reach one (a Visit to an unseated target) get the top-left corner
         if (g.Slot < 0 || g.Slot >= _homes.Length) return (0, 0);
         var (hx, hy) = _homes[g.Slot];
-        var slack = Layout.Slack(_slots.Count, _cols, _pixelHeight);
+        var slack = Layout.Slack(_pixelHeight);
         var (wx, wy) = Wander.Offset(g.Follow.Did, ms);
         return (Math.Clamp(hx + wx * slack.X, 0, Math.Max(0, _cols - GuyBuilder.Width)),
                 Math.Clamp(hy + wy * slack.Y, 0, Math.Max(0, _pixelHeight - GuyBuilder.Height)));
@@ -173,7 +185,7 @@ public sealed class Room
         var (tx, ty) = Home(_guys[a.TargetDid!], a.StartMs);
         a.SideOffset = a.FromX <= tx ? -(GuyBuilder.Width - 1) : GuyBuilder.Width - 1;
         double dist = Math.Sqrt((tx - a.FromX) * (tx - a.FromX) + (ty - a.FromY) * (ty - a.FromY));
-        a.WalkMs = (long)Math.Clamp(dist / 14.0 * 1000, 1200, 3500);
+        a.WalkMs = (long)Math.Clamp(dist / WalkPixelsPerSecond * 1000, MinWalkMs, MaxWalkMs);
     }
 
     private void Advance(Guy g, long ms)
@@ -192,9 +204,7 @@ public sealed class Room
 
     private static double Ease(double p) => p * p * (3 - 2 * p);
 
-    private (double X, double Y) Position(Guy g, long ms) => Position(g, ms, 0);
-
-    private (double X, double Y) Position(Guy g, long ms, int depth)
+    private (double X, double Y) Position(Guy g, long ms, int depth = 0)
     {
         if (g.Current is not { Kind: ActionKind.Visit } a) return Home(g, ms);
         Resolve(g, a);
@@ -231,11 +241,12 @@ public sealed class Room
 
     // ---- rendering ---------------------------------------------------------------------------
 
-    /// <summary>One ANSI frame of <paramref name="cols"/> x <paramref name="rows"/> cells; the last row is a status line.</summary>
+    /// <summary>One ANSI frame of <paramref name="cols"/> x <paramref name="rows"/> cells; the last row is a status line.
+    /// It also moves the room on to <paramref name="ms"/>: it resizes the seats, finishes due actions and updates the monsters.</summary>
     public string Render(int cols, int rows, long ms)
     {
-        cols = Math.Max(cols, 20);
-        rows = Math.Max(rows, 8);
+        cols = Math.Max(cols, MinCols);
+        rows = Math.Max(rows, MinRows);
         int pixelHeight = (rows - 1) * 2;
         if (cols != _cols || pixelHeight != _pixelHeight) SetSize(cols, pixelHeight);
 
@@ -247,7 +258,7 @@ public sealed class Room
         // draw order is depth: lower on screen is nearer; a guy mid-conversation steps to the front
         drawn.Sort((a, b) =>
         {
-            double za = a.Pos.Y + (a.Guy.Current is null ? 0 : 1000), zb = b.Pos.Y + (b.Guy.Current is null ? 0 : 1000);
+            double za = a.Pos.Y + (a.Guy.Current is null ? 0 : SpeakerDepthBonus), zb = b.Pos.Y + (b.Guy.Current is null ? 0 : SpeakerDepthBonus);
             int c = za.CompareTo(zb);
             return c != 0 ? c : string.CompareOrdinal(a.Guy.Follow.Did, b.Guy.Follow.Did);
         });
@@ -262,12 +273,12 @@ public sealed class Room
             var phase = PhaseOf(g, ms);
             int facing = 0;
             if (phase is Phase.Out or Phase.Back)
-                facing = Math.Sign(Math.Round(Position(g, ms + 100).X - rawPos.X));
+                facing = Math.Sign(Math.Round(Position(g, ms + FacingLookAheadMs).X - rawPos.X));
             else if (phase == Phase.Talk && g.Current?.TargetDid is { } td)
                 facing = Math.Sign(Position(_guys[td], ms).X - rawPos.X);
             bool walking = phase is Phase.Out or Phase.Back;
-            bool blink = (ms + (long)(Hashing.Fnv64(g.Follow.Did) % 4000)) % 4000 < 140;
-            var pose = new Pose(walking ? 1 + (int)((ms / 160) & 1) : 0, facing, phase == Phase.Talk && ((ms / 250) & 1) == 0, blink);
+            bool blink = (ms + (long)(Hashing.Fnv64(g.Follow.Did) % BlinkPeriodMs)) % BlinkPeriodMs < BlinkMs;
+            var pose = new Pose(walking ? 1 + (int)((ms / StepFrameMs) & 1) : 0, facing, phase == Phase.Talk && ((ms / TalkFlapMs) & 1) == 0, blink);
             int px = (int)Math.Round(pos.X), py = (int)Math.Round(pos.Y);
             frame.Blit(GuyBuilder.Build(g.Look, pose), px, py);
             frame.Label(g.Follow.Handle, px + GuyBuilder.Width / 2, (py + GuyBuilder.Height) / 2);
@@ -287,7 +298,7 @@ public sealed class Room
         {
             if (m.Dissolving && ms - m.DissolveStartMs > Darkness.DissolveMs / 2) continue;
             int cx = (int)Math.Round(m.X) + m.Width / 2, top = (int)Math.Round(m.Y) / 2;
-            if (m.Kind == DarknessKind.Rude) frame.JaggedBubble(BubbleText.Format(m.Text, 18, 3), cx, top);
+            if (m.Kind == DarknessKind.Rude) frame.JaggedBubble(BubbleText.Format(m.Text, RudeBubbleWidth, RudeBubbleLines), cx, top);
             else frame.Whisper(m.Text, cx, top);
         }
 

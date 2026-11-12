@@ -7,6 +7,9 @@ import { readMusicManifest } from '../music-manifest.mjs';
 
 const wwwroot = fileURLToPath(new URL('../../src/FeedRaider.Web/wwwroot/', import.meta.url));
 const DURATION = 60; // seconds, every fake track
+const STEP_MS = 40; // how far `advance` moves the clock at a time
+const isBlob = (src) => src.startsWith('blob:');
+const lastSegment = (url) => url.slice(url.lastIndexOf('/') + 1);
 
 let n = 0;
 /** A fresh music.js on a fake page. Time only moves when `advance` is called. */
@@ -16,8 +19,8 @@ async function setup({ manifest, gameplay = 3, random, connection } = {}) {
   const els = [], starts = [];
   class FakeAudio {
     constructor() { this.src = ''; this.loop = false; this.paused = true; this.currentTime = 0; this.volume = 1; els.push(this); }
-    get duration() { return this.src.startsWith('blob:') ? DURATION : NaN; }
-    play() { if (this.src.startsWith('blob:')) starts.push(this.src.slice(this.src.lastIndexOf('/') + 1)); this.paused = false; return Promise.resolve(); }
+    get duration() { return isBlob(this.src) ? DURATION : NaN; }
+    play() { if (isBlob(this.src)) starts.push(lastSegment(this.src)); this.paused = false; return Promise.resolve(); }
     pause() { this.paused = true; }
   }
   class FakeBlob { constructor(parts) { this.parts = parts; } }
@@ -43,7 +46,7 @@ async function setup({ manifest, gameplay = 3, random, connection } = {}) {
   });
   const revoked = [];
   URL.createObjectURL = (b) => `blob:${b.parts[0]}`;
-  URL.revokeObjectURL = (u) => revoked.push(u.slice(u.lastIndexOf('/') + 1));
+  URL.revokeObjectURL = (u) => revoked.push(lastSegment(u));
   Object.defineProperty(globalThis, 'navigator', { value: { connection }, configurable: true });
   Object.defineProperty(globalThis, 'performance', { value: { now: () => now }, configurable: true });
 
@@ -51,16 +54,16 @@ async function setup({ manifest, gameplay = 3, random, connection } = {}) {
   let seed = 7;
   music.setRandom(random ?? (() => (seed = (seed * 16807) % 2147483647) / 2147483647));
   const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
-  /** Moves the clock by `sec` seconds in 40 ms steps, playing elements age and the page's intervals fire. */
+  /** Moves the clock by `sec` seconds in STEP_MS steps, playing elements age and the page's intervals fire. */
   const advance = async (sec) => {
-    for (let t = 0; t < sec * 1000; t += 40) {
-      now += 40;
-      for (const e of els) if (!e.paused && e.src.startsWith('blob:')) e.currentTime = e.loop && e.currentTime >= DURATION ? 0 : Math.min(DURATION, e.currentTime + 0.04);
-      for (const i of [...intervals]) if (i.ms <= 40 || Math.floor(now / i.ms) !== Math.floor((now - 40) / i.ms)) i.fn();
+    for (let t = 0; t < sec * 1000; t += STEP_MS) {
+      now += STEP_MS;
+      for (const e of els) if (!e.paused && isBlob(e.src)) e.currentTime = e.loop && e.currentTime >= DURATION ? 0 : Math.min(DURATION, e.currentTime + STEP_MS / 1000);
+      for (const i of [...intervals]) if (i.ms <= STEP_MS || Math.floor(now / i.ms) !== Math.floor((now - STEP_MS) / i.ms)) i.fn();
       await flush();
     }
   };
-  const names = () => els.filter((e) => !e.paused && e.src.startsWith('blob:')).map((e) => e.src.slice(e.src.lastIndexOf('/') + 1));
+  const names = () => els.filter((e) => !e.paused && isBlob(e.src)).map((e) => lastSegment(e.src));
   return { music, advance, flush, els, fetched, names, starts, revoked };
 }
 
@@ -211,13 +214,13 @@ test('with one gameplay track it loops', async () => {
   const c = await start({ gameplay: 1 });
   c.music.cue('gameplay');
   await c.advance(5);
-  const el = c.els.find((e) => !e.paused && e.src.startsWith('blob:'));
+  const el = c.els.find((e) => !e.paused && isBlob(e.src));
   assert.ok(el.loop);
   await c.advance(DURATION + 5);
   assert.equal(c.names().length, 1);
 });
 
-const mp3s = (c) => c.fetched.filter((u) => u.endsWith('.mp3')).map((u) => u.slice(u.lastIndexOf('/') + 1));
+const mp3s = (c) => c.fetched.filter((u) => u.endsWith('.mp3')).map((u) => lastSegment(u));
 
 test('the menu cue fetches the menu track and no gameplay track ahead of time', async () => {
   const c = await start({ gameplay: 3 });

@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.IO.Compression;
 using FeedRaider.Engine.Raider;
 using TUImation;
@@ -10,6 +11,7 @@ using TUImation;
 static class FrameImage
 {
     const int CW = 8, CH = 16;
+    const int GlyphCols = 5;   // columns in one font glyph
 
     // classic 5x7 column-major font, ASCII 32..126 (bit0 = top row)
     static readonly byte[] Font =
@@ -72,7 +74,7 @@ static class FrameImage
         WritePng(path, w, h, px);
     }
 
-    static void DrawCell(byte[] px, int w, int c, int r, char ch, uint fg, uint bg)
+    internal static void DrawCell(byte[] px, int w, int c, int r, char ch, uint fg, uint bg)
     {
         int quad = ch == ' ' ? 0 : Array.IndexOf(Quads, ch);
         for (int y = 0; y < CH; y++)
@@ -91,10 +93,10 @@ static class FrameImage
     static bool TextPixel(char ch, int x, int y)
     {
         int gx = x - 1, gy = y / 2;
-        if (gx < 0 || gx > 4) return false;
+        if (gx < 0 || gx >= GlyphCols) return false;
         if (Symbols.TryGetValue(ch, out var rows)) return rows[gy][gx] == '#';
         if (ch < 32 || ch > 126) ch = '?';
-        return (Font[(ch - 32) * 5 + gx] >> gy & 1) != 0;
+        return (Font[(ch - 32) * GlyphCols + gx] >> gy & 1) != 0;
     }
 
     static void WritePng(string path, int w, int h, byte[] rgb)
@@ -102,7 +104,7 @@ static class FrameImage
         using var fs = File.Create(path);
         fs.Write([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
         var ihdr = new byte[13];
-        Be(ihdr, 0, w); Be(ihdr, 4, h); ihdr[8] = 8; ihdr[9] = 2;
+        BinaryPrimitives.WriteInt32BigEndian(ihdr, w); BinaryPrimitives.WriteInt32BigEndian(ihdr.AsSpan(4), h); ihdr[8] = 8; ihdr[9] = 2;
         Chunk(fs, "IHDR", ihdr);
         using var raw = new MemoryStream();
         using (var z = new ZLibStream(raw, CompressionLevel.Fastest, true))
@@ -115,11 +117,9 @@ static class FrameImage
         Chunk(fs, "IEND", []);
     }
 
-    static void Be(byte[] b, int o, int v) { b[o] = (byte)(v >> 24); b[o + 1] = (byte)(v >> 16); b[o + 2] = (byte)(v >> 8); b[o + 3] = (byte)v; }
-
     static void Chunk(Stream fs, string type, byte[] data)
     {
-        var len = new byte[4]; Be(len, 0, data.Length);
+        var len = new byte[4]; BinaryPrimitives.WriteInt32BigEndian(len, data.Length);
         fs.Write(len);
         var body = new byte[4 + data.Length];
         for (int i = 0; i < 4; i++) body[i] = (byte)type[i];
@@ -131,7 +131,7 @@ static class FrameImage
             crc ^= b;
             for (int k = 0; k < 8; k++) crc = (crc & 1) != 0 ? crc >> 1 ^ 0xEDB88320 : crc >> 1;
         }
-        var c = new byte[4]; Be(c, 0, (int)~crc);
+        var c = new byte[4]; BinaryPrimitives.WriteInt32BigEndian(c, (int)~crc);
         fs.Write(c);
     }
 }

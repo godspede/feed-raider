@@ -6,6 +6,8 @@ namespace FeedRaider.Engine;
 public static partial class DarknessText
 {
     public const int MaxChars = 60;
+    /// <summary>Enemy comm boxes show the whole post; this is only the platform's own post limit, a guard against a runaway string.</summary>
+    public const int MaxPostChars = 3000;
 
     // @mentions, URLs, hashtags, DIDs, and bare handles / domains (anything dotted that looks like a hostname)
     [GeneratedRegex(@"(?:https?://|www\.)\S+|@\S+|#\S+|\bdid:[a-z0-9]+:\S+|\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:[a-z]{2,})(?:/\S*)?(?![\w-])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]

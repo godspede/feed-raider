@@ -5,7 +5,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.Formats.Cbor" Version="9.0.0" />
+    <PackageReference Include="System.Formats.Cbor" Version="9.0.24" />
     <ProjectReference Include="..\..\vendor\TUImation.Core\Core.csproj" />
   </ItemGroup>
 

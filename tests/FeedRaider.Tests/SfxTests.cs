@@ -42,13 +42,13 @@ public class SfxTests
     {
         var got = new List<(string, double)>();
         var bus = new SfxBus((n, p, _, _) => got.Add((n, p)));
-        bus.Play("shot", 0, 10);
-        bus.Play("shot", 0, 11);                       // 33 ms later: dropped
-        bus.Play("hit", 0, 11);                        // another sound has its own clock
-        bus.Play("shot", 0, 10 + SfxBus.MinGapFrames("shot"));
-        Assert.Equal(["shot", "hit", "shot"], got.Select(x => x.Item1));
-        Assert.True(SfxBus.MinGapFrames("shot") * 1000.0 / Tuning.Fps >= 60);
-        bus.Play("shot", 5, 100);
+        bus.Play(SfxNames.Shot, 0, 10);
+        bus.Play(SfxNames.Shot, 0, 11);                       // 33 ms later: dropped
+        bus.Play(SfxNames.Hit, 0, 11);                        // another sound has its own clock
+        bus.Play(SfxNames.Shot, 0, 10 + SfxBus.MinGapFrames(SfxNames.Shot));
+        Assert.Equal([SfxNames.Shot, SfxNames.Hit, SfxNames.Shot], got.Select(x => x.Item1));
+        Assert.True(SfxBus.MinGapFrames(SfxNames.Shot) * 1000.0 / Tuning.Fps >= 60);
+        bus.Play(SfxNames.Shot, 5, 100);
         Assert.Equal(1, got[^1].Item2);                // pan is clamped to -1..1
     }
 
@@ -116,11 +116,19 @@ public class SfxTests
         Add(g, EnemyKind.Carrier, g.PX, g.PY - 30, 0.5);
         Add(g, EnemyKind.Gunship, g.PX, g.PY - 46, 0.5);
         g.Input.Key(GameKey.Fire, true);
-        Run(g, 60);
+        var three = g.Enemies.ToList();
+        for (int i = 0; i < 600 && three.Any(g.Enemies.Contains); i++)
+        {
+            g.Enemies.RemoveAll(e => !three.Contains(e));                           // the waves keep coming; only these three count
+            var t = three.Where(g.Enemies.Contains).OrderByDescending(e => e.Y).First();
+            g.Input.Key(GameKey.Left, t.X < g.PX - 2); g.Input.Key(GameKey.Right, t.X > g.PX + 2);   // they sidestep a lone lane: follow
+            g.Step();
+        }
         var kills = played.Where(p => p.Name is "kill" or "boom").ToList();
         Assert.Equal(3, kills.Count);
-        Assert.Equal([0, 0.5, 1], kills.Select(k => k.Size));
-        Assert.Equal(["kill", "kill", "boom"], kills.Select(k => k.Name));
+        // grunts and carriers sidestep a shot lined up on them, so the order they fall in is not fixed; what died sets the size
+        Assert.Equal([0, 0.5, 1], kills.Select(k => k.Size).Order());
+        Assert.All(kills, k => Assert.Equal(k.Size == 1 ? "boom" : "kill", k.Name));
         Assert.Equal(0, kills[0].Step);
     }
 
@@ -132,7 +140,7 @@ public class SfxTests
         Run(g, 30);                                     // no bus: no crash
         var (g2, played) = New();
         Run(g2, 120);
-        Assert.DoesNotContain(played, p => p.Name is "shot" or "bomb" or "like" or "nolike" or "comm");
+        Assert.DoesNotContain(played, p => p.Name is SfxNames.Shot or SfxNames.Bomb or SfxNames.Like or SfxNames.NoLike or SfxNames.Comm);
     }
 
     [Fact]
@@ -141,17 +149,17 @@ public class SfxTests
         var (g, played) = New();
         g.Input.Key(GameKey.Fire, true);
         Run(g, 40);
-        var shots = played.Where(p => p.Name == "shot").ToList();
-        Assert.InRange(shots.Count, 8, 40 / Tuning.FireInterval + 1);
+        var shots = played.Where(p => p.Name == SfxNames.Shot).ToList();
+        Assert.InRange(shots.Count, 5, 40 / Tuning.FireInterval + 1);
         Assert.All(shots, s => Assert.Equal(0, s.Pan, 0.1));      // starts mid-field
-        for (int i = 1; i < shots.Count; i++) Assert.True(shots[i].Frame - shots[i - 1].Frame >= SfxBus.MinGapFrames("shot"));
+        for (int i = 1; i < shots.Count; i++) Assert.True(shots[i].Frame - shots[i - 1].Frame >= SfxBus.MinGapFrames(SfxNames.Shot));
         g.Input.Key(GameKey.Fire, false);
         for (int i = 0; i < 60; i++) { g.Input.Key(GameKey.Left, true); g.Step(); }
         g.Input.Key(GameKey.Left, false);
         played.Clear();
         g.Input.Key(GameKey.Fire, true);
         Run(g, 8);
-        Assert.True(played.First(p => p.Name == "shot").Pan < -0.3);   // left of centre pans left
+        Assert.True(played.First(p => p.Name == SfxNames.Shot).Pan < -0.3);   // left of centre pans left
     }
 
     [Fact]

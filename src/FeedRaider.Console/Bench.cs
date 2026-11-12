@@ -24,7 +24,7 @@ static class Bench
         double step = 0;
         for (int f = 0; f < Warmup + frames; f++)
         {
-            foreach (var (at, act) in script) if (at == f % 600) act();
+            foreach (var (at, act) in script) if (at == f % DemoRun.ScriptPeriod) act();
             DemoRun.Autopilot(game);
             long t0 = Stopwatch.GetTimestamp();
             game.Step();

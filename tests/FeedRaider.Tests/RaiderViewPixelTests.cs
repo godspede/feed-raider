@@ -175,6 +175,21 @@ public class RaiderViewPixelTests
     }
 
     [Fact]
+    public void A_dashing_diver_glints_toward_white_on_alternate_triples_of_frames()
+    {
+        foreach (var (frame, white) in new[] { (0, 0.4), (3, 0.0) })
+        {
+            var g = Scene(frame);
+            var e = Place(g, EnemyKind.Diver, 40, 20);
+            e.Dashing = true; e.Windup = 0;
+            var (x0, y0) = Top(e);
+            int i = Array.FindIndex(e.Sprite.Px, p => p != 0);
+            uint c = e.Sprite.Px[i] & 0xffffff;
+            Assert.Equal(white > 0 ? Surface.Mix(c, White, white) : c, Draw(g).Get(x0 + i % e.Sprite.W, y0 + i / e.Sprite.W));
+        }
+    }
+
+    [Fact]
     public void A_diver_marks_the_spot_it_locked_with_a_cross_two_pixels_out_that_blinks_between_lime_and_white()
     {
         foreach (var (frame, colour) in new[] { (0, Art.DiverLime), (3, White) })
@@ -336,10 +351,10 @@ public class RaiderViewPixelTests
         foreach (int y in new[] { 59, 60, 61 }) Assert.Equal(0xffe29au, f.Get(40, y));
         Assert.NotEqual(0xffe29au, f.Get(40, 58));
         Assert.NotEqual(0xffe29au, f.Get(40, 62));
-        foreach (int y in new[] { 58, 59, 60, 61 }) Assert.Equal(0xbfe9ffu, f.Get(80, y));
+        foreach (int y in new[] { 58, 59, 60, 61 }) Assert.Equal(Ice, f.Get(80, y));
         Assert.Equal(White, f.Get(80, 57));
         Assert.NotEqual(White, f.Get(80, 56));
-        Assert.NotEqual(0xbfe9ffu, f.Get(80, 62));
+        Assert.NotEqual(Ice, f.Get(80, 62));
     }
 
     // ---------------------------------------------------------------- rings, sparks and the flash
@@ -353,7 +368,7 @@ public class RaiderViewPixelTests
     }
 
     /// <summary>The picture a test expects: <paramref name="b"/> with <paramref name="paint"/> applied through Surface's own drawing calls.</summary>
-    private static void Painted(Surface b, Surface w, Action<Surface> paint)
+    private static void AssertPainted(Surface b, Surface w, Action<Surface> paint)
     {
         var e = new Surface(b.W, b.H);
         Array.Copy(b.P, e.P, b.P.Length);
@@ -376,14 +391,14 @@ public class RaiderViewPixelTests
     {
         var (b, w) = Pair(0, g => g.Rings.Add(new Ring { X = 60, Y = 60, R0 = 2, R1 = 12, Life = 3, Max = 6, Color = 0xff3d6e }));
         // halfway through its life it has eased out by 1 - 0.5^2 = 0.75, to 9.5, at 0.35 + 0.65 * 0.5; the trail is 8.5 at 0.25 * 0.5
-        Painted(b, w, s => { s.Ring(60, 60, 9.5, 0xff3d6e, 0.675); s.Ring(60, 60, 8.5, 0xff3d6e, 0.125); });
+        AssertPainted(b, w, s => { s.Ring(60, 60, 9.5, 0xff3d6e, 0.675); s.Ring(60, 60, 8.5, 0xff3d6e, 0.125); });
     }
 
     [Fact]
     public void A_small_ring_has_no_trail_inside_it()
     {
         var (b, w) = Pair(0, g => g.Rings.Add(new Ring { X = 60, Y = 60, R0 = 3, R1 = 5, Life = 6, Max = 6, Color = 0xff3d6e }));
-        Painted(b, w, s => s.Ring(60, 60, 3, 0xff3d6e, 1.0));        // a radius of 3 is not over 3
+        AssertPainted(b, w, s => s.Ring(60, 60, 3, 0xff3d6e, 1.0));        // a radius of 3 is not over 3
     }
 
     [Fact]
@@ -394,7 +409,7 @@ public class RaiderViewPixelTests
             g.Particles.Add(new Particle { X = 40, Y = 40, Life = 5, MaxLife = 10, Color = 0xff00ff });
             g.Particles.Add(new Particle { X = 80, Y = 40, Life = 10, MaxLife = 10, Color = 0xff00ff });
         });
-        Painted(b, w, s => { s.Set(40, 40, Surface.Mix(0x0b1c44, 0xff00ff, 0.8)); s.Set(80, 40, 0xff00ff); });
+        AssertPainted(b, w, s => { s.Set(40, 40, Surface.Mix(0x0b1c44, 0xff00ff, 0.8)); s.Set(80, 40, 0xff00ff); });
     }
 
     [Fact]
@@ -405,7 +420,7 @@ public class RaiderViewPixelTests
             g.Particles.Add(new Particle { X = 40, Y = 40, Life = 10, MaxLife = 10, Color = 0xff00ff, Size = 2 });
             g.Particles.Add(new Particle { X = 80, Y = 40, Life = 10, MaxLife = 10, Color = 0xff00ff, Kind = ParticleKind.Heart });
         });
-        Painted(b, w, s =>
+        AssertPainted(b, w, s =>
         {
             s.Rect(40, 40, 2, 2, 0xff00ff);
             s.Set(79, 40, 0xff00ff); s.Set(81, 40, 0xff00ff); s.Rect(79, 41, 3, 1, 0xff00ff); s.Set(80, 42, 0xff00ff);
@@ -431,7 +446,7 @@ public class RaiderViewPixelTests
             var (b, w) = Pair(0, g => g.Pickups.Add(new Pickup { Kind = kind, X = 60, Y = 60, BaseX = 60 }));
             uint c = RaiderGame.PickupColor(kind), dark = Surface.Mix(c, 0x0b1c44, 0.55), light = Surface.Mix(c, 0xffffff, 0.6);
             double pulse = 0.5;                     // frame 0, age 0
-            Painted(b, w, s =>
+            AssertPainted(b, w, s =>
             {
                 s.Ring(60, 60, 5 + pulse * 2, c, 0.3 + 0.35 * pulse);
                 int x = 57, y = 57;
@@ -490,7 +505,7 @@ public class RaiderViewPixelTests
         Force(m, "MuzzleFrames", 2);
         var (b0, w0) = (Draw(Scene()), Draw(m));
         int nx = (int)Math.Round(m.PX), ny = (int)Math.Round(m.PY) - m.Plane.H / 2 - 1;
-        Painted(b0, w0, s => { s.Rect(nx - 2, ny - 1, 5, 3, 0xffe29a); s.Rect(nx - 1, ny - 2, 3, 5, 0xffffff); });
+        AssertPainted(b0, w0, s => { s.Rect(nx - 2, ny - 1, 5, 3, 0xffe29a); s.Rect(nx - 1, ny - 2, 3, 5, 0xffffff); });
     }
 
     [Fact]
@@ -500,7 +515,7 @@ public class RaiderViewPixelTests
         var g0 = Scene();
         uint shield = RaiderGame.PickupColor(PickupKind.Shield);
         double a = 0.25 + 0.12 * 3 + 0.1 * 0.5;        // frame 0: the pulse is half
-        Painted(b, w, s => { s.Ring(g0.PX, g0.PY, 8.5, shield, a); s.Ring(g0.PX, g0.PY, 7.5, shield, a * 0.4); });
+        AssertPainted(b, w, s => { s.Ring(g0.PX, g0.PY, 8.5, shield, a); s.Ring(g0.PX, g0.PY, 7.5, shield, a * 0.4); });
     }
 
     [Fact]
@@ -510,7 +525,7 @@ public class RaiderViewPixelTests
         {
             var (b, w) = Pair(10, g => Force(g, "ShieldHitFrame", 10L - since), g => Force(g, "Shield", 1));
             var g0 = Scene(10);
-            Painted(b, w, s => s.Ring(g0.PX, g0.PY, 8.5 + since, White, 0.9 - since * 0.13));
+            AssertPainted(b, w, s => s.Ring(g0.PX, g0.PY, 8.5 + since, White, 0.9 - since * 0.13));
         }
         // six frames on there is no white ring any more
         var (b6, w6) = Pair(10, g => Force(g, "ShieldHitFrame", 10L - 6), g => Force(g, "Shield", 1));
@@ -523,13 +538,13 @@ public class RaiderViewPixelTests
         var g0 = Scene(2);
         double pulse = 0.5 + 0.5 * Math.Sin(2 * 0.6);
         var (b, w) = Pair(2, g => Force(g, "_powerUntil", g.Tick + 100L));
-        Painted(b, w, s => s.Ring(g0.PX, g0.PY, 9 + pulse * 2, 0xff5a8a, 0.5));
+        AssertPainted(b, w, s => s.Ring(g0.PX, g0.PY, 9 + pulse * 2, Pink, 0.5));
         var (b2, w2) = Pair(2, g => Force(g, "_powerUntil", g.Tick + 20L));
-        Painted(b2, w2, s => { s.Ring(g0.PX, g0.PY, 9 + pulse * 2, 0xff5a8a, 0.5); s.Ring(g0.PX, g0.PY, 12, White, 0.4); });
+        AssertPainted(b2, w2, s => { s.Ring(g0.PX, g0.PY, 9 + pulse * 2, Pink, 0.5); s.Ring(g0.PX, g0.PY, 12, White, 0.4); });
         var (b3, w3) = Pair(3, g => Force(g, "_powerUntil", g.Tick + 20L));
         var g3 = Scene(3);
         double p3 = 0.5 + 0.5 * Math.Sin(3 * 0.6);
-        Painted(b3, w3, s => { s.Ring(g3.PX, g3.PY, 9 + p3 * 2, 0xff5a8a, 0.5); });
+        AssertPainted(b3, w3, s => { s.Ring(g3.PX, g3.PY, 9 + p3 * 2, Pink, 0.5); });
     }
 
     private static Wingman Wing(RaiderGame g, double x, double y)
@@ -557,7 +572,7 @@ public class RaiderViewPixelTests
         var b = Scene(3); var wb = Wing(b, 60.3, 60);
         Force(b, "Prompt", wb);
         double pulse = 0.5 + 0.5 * Math.Sin(3 * 0.5);
-        Painted(Draw(a), Draw(b), s => s.Ring(60.3, 60, Tuning.LikeRadius * 0.45, 0xff5a8a, 0.35 + 0.4 * pulse));
+        AssertPainted(Draw(a), Draw(b), s => s.Ring(60.3, 60, Tuning.LikeRadius * 0.45, Pink, 0.35 + 0.4 * pulse));
     }
 
     [Fact]
@@ -569,13 +584,13 @@ public class RaiderViewPixelTests
             var b = Scene(); var wb = Wing(b, 60.3, 60);
             Force(b, "HoldTarget", wb); Force(b, "_holdFrames", (int)(Tuning.LikeHoldFrames * frac));
             int n = (int)Math.Round(b.HoldProgress * 48);
-            Painted(Draw(a), Draw(b), s =>
+            AssertPainted(Draw(a), Draw(b), s =>
             {
                 s.Ring(60.3, 60, 9, 0x4a2038, 0.5);
                 for (int i = 0; i < n; i++)
                 {
                     double ang = -Math.PI / 2 + i / 48.0 * Math.PI * 2;
-                    s.Set((int)Math.Round(60.3 + Math.Cos(ang) * 9), (int)Math.Round(60 + Math.Sin(ang) * 9), 0xff5a8a);
+                    s.Set((int)Math.Round(60.3 + Math.Cos(ang) * 9), (int)Math.Round(60 + Math.Sin(ang) * 9), Pink);
                 }
             });
         }
@@ -587,7 +602,7 @@ public class RaiderViewPixelTests
         var a = Scene(); Wing(a, 60.3, 60);
         var b = Scene(); var wb = Wing(b, 60.3, 60); wb.MuzzleFrames = 2;
         int ny = 60 - a.Plane.H / 2 - 1;
-        Painted(Draw(a), Draw(b), s => { s.Rect(60 - 2, ny - 1, 5, 3, 0xffe29a); s.Rect(60 - 1, ny - 2, 3, 5, White); });
+        AssertPainted(Draw(a), Draw(b), s => { s.Rect(60 - 2, ny - 1, 5, 3, 0xffe29a); s.Rect(60 - 1, ny - 2, 3, 5, White); });
     }
 
     // ---------------------------------------------------------------- the HUD and the rails
@@ -602,7 +617,7 @@ public class RaiderViewPixelTests
         return scr;
     }
 
-    /// <summary>The text on a screen row from a column, and the colours of its first and last cell.</summary>
+    /// <summary>The text on a screen row from a column, <paramref name="len"/> cells long.</summary>
     private static string Read(Screen s, int row, int col, int len) => new(s.Ch.AsSpan(row * s.Cols + col, len));
 
     private static void Colours(Screen s, int row, int col, int len, uint fg, uint bg)
@@ -623,10 +638,10 @@ public class RaiderViewPixelTests
         int c0 = lay.Col0;
         Assert.Equal("SCORE 001234", Read(scr, 0, c0 + 1, 12));
         Colours(scr, 0, c0 + 1, 12, White, HudBg);
-        Assert.Equal(new string('\u2665', 3), Read(scr, 0, c0 + 15, 3));
-        Colours(scr, 0, c0 + 15, 3, Pink, HudBg);
-        Assert.Equal("B•••", Read(scr, 0, c0 + 20, 4));
-        Colours(scr, 0, c0 + 20, 4, Ice, HudBg);
+        Assert.Equal(new string('\u2665', Tuning.PlayerHp).PadRight(3), Read(scr, 0, c0 + 15, 3));
+        Colours(scr, 0, c0 + 15, Tuning.PlayerHp, Pink, HudBg);
+        Assert.Equal("B" + new string('•', Tuning.PlayerBombs).PadRight(3), Read(scr, 0, c0 + 20, 4));
+        Colours(scr, 0, c0 + 20, 1 + Tuning.PlayerBombs, Ice, HudBg);
         Colours(scr, 0, c0, 1, White, HudBg);                        // both HUD rows are a band of their own
         Colours(scr, 1, c0 + lay.PCols - 1, 1, White, HudBg);
     }

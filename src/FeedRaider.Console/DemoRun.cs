@@ -7,7 +7,16 @@ using FeedRaider.Engine.Raider;
 static class DemoRun
 {
     public const ulong Seed = 42;
-    const string Handle = "demo.bsky.social";
+
+    /// <summary>The frame count after which a run that outlasts the script (the bench) plays it again from the start.</summary>
+    public const int ScriptPeriod = 600;
+
+    // Autopilot tuning: how close counts as aligned, the idle sweep, how far below a wingman to fly, how often to like.
+    const double DeadZone = 1.5;
+    const double SweepFrames = 40.0;
+    const double SweepWidth = 0.3;
+    const double BelowWingman = 8;
+    const int LikeEveryFrames = 20;
 
     static FeedPost Post(int n, string text, int likes) =>
         new($"at://did:plc:demo{n}/app.bsky.feed.post/{n}", $"cid{n}", $"did:plc:demo{n}", $"user{n}.bsky.social", text, likes, 3, 1, null, null);
@@ -55,11 +64,11 @@ static class DemoRun
     {
         var inp = g.Input;
         inp.Key(GameKey.Fire, true);
-        double tx = g.PW / 2.0 + Math.Sin(g.Frame / 40.0) * g.PW * 0.3, ty = g.PH - 14;
+        double tx = g.PW / 2.0 + Math.Sin(g.Frame / SweepFrames) * g.PW * SweepWidth, ty = g.PH - Tuning.PlayerStartAbove;
         var w = g.Wings.FirstOrDefault(x => !x.Liked && x.Phase == WingPhase.Fight);
-        if (w is not null) { tx = w.X; ty = w.Y + 8; }
-        inp.Key(GameKey.Left, g.PX > tx + 1.5); inp.Key(GameKey.Right, g.PX < tx - 1.5);
-        inp.Key(GameKey.Up, g.PY > ty + 1.5); inp.Key(GameKey.Down, g.PY < ty - 1.5);
-        if (g.Prompt is not null && g.Frame % 20 == 0) inp.Like();
+        if (w is not null) { tx = w.X; ty = w.Y + BelowWingman; }
+        inp.Key(GameKey.Left, g.PX > tx + DeadZone); inp.Key(GameKey.Right, g.PX < tx - DeadZone);
+        inp.Key(GameKey.Up, g.PY > ty + DeadZone); inp.Key(GameKey.Down, g.PY < ty - DeadZone);
+        if (g.Prompt is not null && g.Frame % LikeEveryFrames == 0) inp.Like();
     }
 }

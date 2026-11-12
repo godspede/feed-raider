@@ -17,16 +17,18 @@ public sealed class ColourSnap
     public const int DefaultCapacity = 384;
 
     // A direct-mapped memo of colour -> palette colour: one hash and one compare per lookup on the hot path.
-    private const int Slots = 1 << 13;
+    private const int SlotBits = 13, Slots = 1 << SlotBits;
     private readonly uint[] _key = new uint[Slots];
     private readonly uint[] _val = new uint[Slots];
     private readonly List<uint> _pal = [];
-    // the palette bucketed by 32-level cube cell, so a search looks at the cells within reach, not the whole palette
-    private readonly List<uint>[] _cell = new List<uint>[512];
+    // The palette bucketed by 32-level cube cell (8 cells per colour axis), so a search looks at the cells within reach,
+    // not the whole palette. A cell is 1 << CellShift levels wide, and a tolerance under that keeps every match in reach.
+    private const int CellShift = 5, CellAxisBits = 3, CellsPerAxis = 1 << CellAxisBits;
+    private readonly List<uint>[] _cell = new List<uint>[CellsPerAxis * CellsPerAxis * CellsPerAxis];
 
     public ColourSnap(int tolerance = DefaultTolerance, int capacity = DefaultCapacity)
     {
-        Tolerance = Math.Clamp(tolerance, 0, 31);
+        Tolerance = Math.Clamp(tolerance, 0, (1 << CellShift) - 1);
         Capacity = Math.Max(1, capacity);
         Array.Fill(_key, uint.MaxValue);
     }
@@ -40,28 +42,29 @@ public sealed class ColourSnap
         get
         {
             c &= 0xFFFFFF;
-            int slot = (int)((c * 2654435761u) >> 19);
+            int slot = (int)((c * 2654435761u) >> (32 - SlotBits));
             if (_key[slot] == c) return _val[slot];
-            uint v = Find(c);
+            uint v = FindOrAdd(c);
             _key[slot] = c;
             _val[slot] = v;
             return v;
         }
     }
 
-    private uint Find(uint c)
+    /// <summary>The palette colour for <paramref name="c"/>; a colour no entry is near joins the palette while there is room.</summary>
+    private uint FindOrAdd(uint c)
     {
         int r = (int)(c >> 16 & 255), g = (int)(c >> 8 & 255), b = (int)(c & 255);
         int best = int.MaxValue;
         uint pick = c;
-        // with the tolerance under a cell's width (32), any match lies in this cell or a neighbour
+        // with the tolerance under a cell's width, any match lies in this cell or a neighbour
         for (int dr = -1; dr <= 1; dr++)
             for (int dg = -1; dg <= 1; dg++)
                 for (int db = -1; db <= 1; db++)
                 {
-                    int cr = (r >> 5) + dr, cg = (g >> 5) + dg, cb = (b >> 5) + db;
-                    if ((uint)cr > 7 || (uint)cg > 7 || (uint)cb > 7) continue;
-                    if (_cell[cr << 6 | cg << 3 | cb] is not { } list) continue;
+                    int cr = (r >> CellShift) + dr, cg = (g >> CellShift) + dg, cb = (b >> CellShift) + db;
+                    if ((uint)cr >= CellsPerAxis || (uint)cg >= CellsPerAxis || (uint)cb >= CellsPerAxis) continue;
+                    if (_cell[CellIndex(cr, cg, cb)] is not { } list) continue;
                     foreach (var p in list)
                     {
                         int d = Distance(p, r, g, b);
@@ -72,7 +75,7 @@ public sealed class ColourSnap
         if (_pal.Count < Capacity)
         {
             _pal.Add(c);
-            (_cell[(r >> 5) << 6 | (g >> 5) << 3 | (b >> 5)] ??= []).Add(c);
+            (_cell[CellIndex(r >> CellShift, g >> CellShift, b >> CellShift)] ??= []).Add(c);
             return c;
         }
         // full: the nearest anywhere, even past the tolerance
@@ -84,6 +87,8 @@ public sealed class ColourSnap
             }
         return pick;
     }
+
+    private static int CellIndex(int cr, int cg, int cb) => cr << (2 * CellAxisBits) | cg << CellAxisBits | cb;
 
     private static int Distance(uint p, int r, int g, int b) =>
         Math.Max(Math.Abs((int)(p >> 16 & 255) - r), Math.Max(Math.Abs((int)(p >> 8 & 255) - g), Math.Abs((int)(p & 255) - b)));

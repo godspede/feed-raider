@@ -101,7 +101,7 @@ await import(urls['main.js']);
 `;
 
 let html = readFileSync(join(root, 'index.html'), 'utf8');
-// xterm's stylesheet and scripts go inline, in place of their tags
+// The one file has nothing beside it to load from, so xterm's files are pasted into the page where their tags were.
 const inline = (re, wrap) => {
   const m = html.match(re);
   if (!m) throw new Error(`index.html has no ${re}`);
@@ -114,7 +114,8 @@ inline(/<script src="\.\/(xterm\/xterm\.min\.js)"><\/script>/, (t) => `<script>$
 inline(/<script src="\.\/(xterm\/addon-fit\.min\.js)"><\/script>/, (t) => `<script>${t}</script>`);
 const tag = /<script type="module" src="\.\/main\.js"><\/script>/;
 if (!tag.test(html)) throw new Error('index.html has no <script type="module" src="./main.js">');
-const json = JSON.stringify(files).replace(/</g, '\u003c');
+// '<' is escaped so no key or value can close the script element early
+const json = JSON.stringify(files).replace(/</g, '\\u003c');
 html = html.replace(tag, () => `<script type="application/json" id="fr-files">${json}</script>\n  <script type="module">${boot}</script>`);
 writeFileSync(out, html);
 process.stdout.write(`wrote ${out}: ${(html.length / 1048576).toFixed(2)} MB, ${Object.keys(files).length} embedded files, ${checked} hashes verified\n`);
