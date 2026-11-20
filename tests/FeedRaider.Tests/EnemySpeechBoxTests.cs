@@ -184,13 +184,13 @@ public class EnemySpeechBoxTests
         var game = OpenBoxGame(DarknessKind.Rude, RudeLabel);
         var enemy = game.Enemies.First(EnemySpeechBox.IsOpen);
         enemy.X = game.PX; enemy.Y = game.PY + CardField.PixelsPerCell;   // a cell below the ship: the box above it would sit on the ship
-        Assert.DoesNotContain(enemy, EnemySpeechBox.Visible(game, game.Layout, Tuning.MaxSpeechBoxes));
+        Assert.DoesNotContain(enemy, EnemySpeechBox.Placed(game, game.Layout, Tuning.MaxSpeechBoxes).Select(shown => shown.Enemy).ToList());
         enemy.SpeechBoxAge = EnemySpeechBox.Frames(enemy);
         Assert.False(EnemySpeechBox.IsOpen(enemy));
     }
 
     [Fact]
-    public void Two_enemies_boxes_never_cover_each_other_and_the_newer_one_shows()
+    public void Two_enemies_boxes_whose_homes_overlap_both_show_the_older_at_home_and_neither_covering_the_other()
     {
         var game = OpenBoxGame(DarknessKind.Spam, SpamLabel);
         var enemy = game.Enemies.First(EnemySpeechBox.IsOpen);
@@ -201,13 +201,109 @@ public class EnemySpeechBoxTests
         var newer = new Enemy { Kind = enemy.Kind, Sprite = enemy.Sprite, X = LeftX + overlapPx, Y = SpotY, Text = enemy.Text, Header = SpamHeader, Live = true };
         EnemySpeechBox.Update(newer, BoxCols, TerminalRows); newer.SpeechBoxAge = JustOpenedAge; game.Enemies.Add(newer);
         Assert.True(EnemySpeechBox.Box(enemy, game.Layout).Overlaps(EnemySpeechBox.Box(newer, game.Layout)));
-        Assert.Equal([newer], EnemySpeechBox.Visible(game, game.Layout, Tuning.MaxSpeechBoxes));
+        var placed = EnemySpeechBox.Placed(game, game.Layout, Tuning.MaxSpeechBoxes);
+        Assert.Equal(2, placed.Count);
+        Assert.Equal(EnemySpeechBox.Box(enemy, game.Layout), placed.Single(shown => shown.Enemy == enemy).Box);
+        Assert.False(placed[0].Box.Overlaps(placed[1].Box));
         const double farBelowY = 70;
         newer.Y = farBelowY;   // far enough down the field: both show
         Assert.False(EnemySpeechBox.Box(enemy, game.Layout).Overlaps(EnemySpeechBox.Box(newer, game.Layout)));
-        var visible = EnemySpeechBox.Visible(game, game.Layout, Tuning.MaxSpeechBoxes);
+        var visible = EnemySpeechBox.Placed(game, game.Layout, Tuning.MaxSpeechBoxes).Select(shown => shown.Enemy).ToList();
         Assert.Contains(enemy, visible);
         Assert.Contains(newer, visible);
+    }
+
+    [Theory]
+    [InlineData(PhoneCols, PhoneRows)]
+    [InlineData(WideCols, WideRows)]
+    public void A_live_box_and_an_echo_box_never_overlap_on_the_screen_while_both_are_read(int cols, int rows)
+    {
+        var game = Offered(DarknessKind.Rude, LongPost, cols, rows);
+        var speaker = game.Enemies.First(EnemySpeechBox.IsOpen);
+        game.Enemies.RemoveAll(other => other != speaker);
+        game.Bullets.Clear();
+        const int echoAge = 20;
+        const double besidePx = 4;   // the echo stands this close to the speaker: their homes overlap
+        speaker.X = game.PW / 2.0; speaker.Y = MidFieldY;
+        var echo = speaker.Snapshot();
+        echo.Voice = null; echo.X = speaker.X + besidePx; echo.SpeechBoxAge = echoAge;
+        game.Echoes.Add(echo);
+        Assert.True(EnemySpeechBox.Box(speaker, game.Layout).Overlaps(EnemySpeechBox.Box(echo, game.Layout)));
+        var view = new RaiderView();
+        var scr = new Screen(cols, rows);
+        const int watchedFrames = 90;
+        for (int frame = 0; frame < watchedFrames && game.Echoes.Contains(echo); frame++)
+        {
+            game.Step();
+            view.FitAndRender(game, scr);
+            var boxes = view.SpeechBoxes;
+            for (int i = 0; i < boxes.Count; i++)
+                for (int j = i + 1; j < boxes.Count; j++)
+                    Assert.False(boxes[i].Overlaps(boxes[j]), $"frame {frame}: {boxes[i]} covers {boxes[j]}");
+            if (EnemySpeechBox.IsOpen(speaker) && game.Echoes.Contains(echo)) Assert.Equal(2, boxes.Count);
+        }
+    }
+
+    [Theory]
+    [InlineData(PhoneCols, PhoneRows)]
+    [InlineData(WideCols, WideRows)]
+    public void No_banner_or_tag_rect_intersects_a_speech_box_rect_wherever_the_box_stands(int cols, int rows)
+    {
+        var game = Offered(DarknessKind.Rude, LongPost, cols, rows);
+        var speaker = game.Enemies.First(EnemySpeechBox.IsOpen);
+        game.Enemies.RemoveAll(other => other != speaker);
+        HoldRig.Force(game, nameof(RaiderGame.RespawnIn), Tuning.RespawnFrames);
+        game.StartAtStage(BannerStage);
+        game.Say("a toast for the test");
+        var view = new RaiderView();
+        var scr = new Screen(cols, rows);
+        int tagsSeen = 0;
+        for (double y = EnemySpeechBox.OpenY; y < game.PH; y += SweepStepPx)
+        {
+            speaker.X = game.PW / 2.0; speaker.Y = y;
+            view.FitAndRender(game, scr);
+            if (view.SpeechBoxes.Count == 0) continue;
+            tagsSeen += view.Tags.Count;
+            foreach (var tag in view.Tags)
+                foreach (var box in view.SpeechBoxes)
+                    Assert.False(tag.Overlaps(box), $"speaker at {y}: tag {tag} covers box {box}");
+        }
+        Assert.True(tagsSeen > 0, "the stage banner, SHIP DOWN and the toast were drawn beside a box");
+    }
+
+    /// <summary>The stage a run is started at to show the stage banner, and the pixels a swept speaker moves between frames.</summary>
+    private const int BannerStage = 2, SweepStepPx = 3;
+
+    [Theory]
+    [InlineData(PhoneCols, PhoneRows)]
+    [InlineData(WideCols, WideRows)]
+    public void The_stage_banner_is_drawn_on_the_nearest_row_clear_of_a_speech_box_standing_where_it_goes(int cols, int rows)
+    {
+        var game = Offered(DarknessKind.Rude, LongPost, cols, rows);
+        var speaker = game.Enemies.First(EnemySpeechBox.IsOpen);
+        game.Enemies.RemoveAll(other => other != speaker);
+        game.StartAtStage(BannerStage);
+        var view = new RaiderView();
+        var scr = new Screen(cols, rows);
+        int bannerRow = RaiderView.BannerRow(game.Layout);
+        string title = RaiderView.StageTitle(BannerStage);
+        int moved = 0;
+        for (double y = EnemySpeechBox.OpenY; y < game.PH; y += SweepStepPx)
+        {
+            speaker.X = game.PW / 2.0; speaker.Y = y;
+            view.FitAndRender(game, scr);
+            if (view.SpeechBoxes.Count == 0) continue;
+            // the HUD's stage readout says the same words on the top row: the banner is the first field row below the HUD that says them
+            int titleRow = Array.FindIndex(Rows(scr), RaiderView.HudRows, row => row.Contains(title, StringComparison.Ordinal));
+            Assert.True(titleRow >= 0, $"speaker at {y}: no row shows {title}");
+            var banner = Assert.Single(view.Tags, tag => tag.R == titleRow);
+            foreach (var box in view.SpeechBoxes)
+                Assert.False(banner.Overlaps(box), $"speaker at {y}: the banner at {banner} covers the box at {box}");
+            bool homeCovered = view.SpeechBoxes.Any(box => box.Overlaps(banner with { R = bannerRow }));
+            Assert.True(homeCovered == (titleRow != bannerRow), $"speaker at {y}: the banner is on row {titleRow}, its own row is {bannerRow}");
+            if (titleRow != bannerRow) moved++;
+        }
+        Assert.True(moved > 0, "a box stood where the banner goes on some frame, and the banner moved off it");
     }
 
     [Fact]
@@ -223,7 +319,7 @@ public class EnemySpeechBoxTests
             EnemySpeechBox.Update(other, BoxCols, TerminalRows); other.SpeechBoxAge = JustOpenedAge; game.Enemies.Add(other);
         }
         const int cap = 2;
-        Assert.True(EnemySpeechBox.Visible(game, game.Layout, cap).Count <= cap);
+        Assert.True(EnemySpeechBox.Placed(game, game.Layout, cap).Count <= cap);
     }
 
     private const string LongPost = "honestly i cannot believe how little you people understand about anything at all, every single take you post is worse than the last and the worst part is you think everyone is impressed by how loud you are";
@@ -323,7 +419,7 @@ public class EnemySpeechBoxTests
     }
 
     [Fact]
-    public void A_boss_killed_mid_post_keeps_its_box_until_every_page_is_read()
+    public void A_lesser_gunship_killed_mid_post_keeps_its_box_until_every_page_is_read()
     {
         var game = Offered(DarknessKind.Rude, Post300, PhoneCols, PhoneRows);
         var enemy = game.Enemies.First(EnemySpeechBox.IsOpen);

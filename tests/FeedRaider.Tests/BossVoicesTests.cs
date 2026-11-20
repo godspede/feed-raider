@@ -92,6 +92,40 @@ public class BossVoicesTests
         Assert.InRange(posts, FewestPosts, int.MaxValue);
     }
 
+    /// <summary>A phone held upright, as the 412 pixel page lays the field out.</summary>
+    private const int PhoneCols = 40, PhoneRows = 70;
+    /// <summary>The replies a run has heard in the cycle test: more than three, so a round is longer than the posts on show and in mind.</summary>
+    private const int CycledReplies = 5;
+
+    [Theory]
+    [InlineData(1, PhoneCols, PhoneRows)]
+    [InlineData(1, EnemyKit.BigCols, EnemyKit.BigRows)]
+    [InlineData(3, PhoneCols, PhoneRows)]
+    public void The_boss_reply_cycle_shows_each_reply_once_before_any_repeats(int stage, int cols, int rows)
+    {
+        var g = new RaiderGame(EnemyKit.PlainSeed) { SignedIn = true, BossGates = true };
+        g.SetLayout(FieldLayout.Compute(cols, rows));
+        for (int i = 0; i < CycledReplies; i++)
+            g.OfferDark(new DarkPost(DarknessKind.Rude, (ulong)(i + 1), $"reply number {i} says its few words", DarkSource.Label, Rude));
+        while (g.Rude.Waiting.Count > 0) g.Rude.Take(0);
+        g.StartAtBoss(stage);
+        var said = new List<string>();
+        bool open = false;
+        string? last = null;
+        for (int frame = 0, fought = 0; frame < Tuning.BossStayFrames + ArriveLimit && fought < Tuning.BossStayFrames; frame++)
+        {
+            StepUnharmed(g);
+            if (g.Gate != GateState.Fighting || g.Boss is not { } boss) continue;
+            fought++;
+            bool speaking = EnemySpeechBox.IsOpen(boss);
+            if (speaking && (!open || boss.Text != last)) said.Add(last = boss.Text!);
+            open = speaking;
+        }
+        Assert.True(said.Count >= 2 * CycledReplies, $"the fight came round to the replies again: {said.Count} said");
+        for (int round = 0; (round + 1) * CycledReplies <= said.Count; round++)
+            Assert.Equal(CycledReplies, said.Skip(round * CycledReplies).Take(CycledReplies).Distinct().Count());
+    }
+
     [Fact]
     public void The_default_pace_is_six_seconds_and_no_boss_is_slower_than_ten()
     {

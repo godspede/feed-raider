@@ -518,6 +518,19 @@ export function thinConnection() {
   return !!c && (c.saveData === true || ['slow-2g', '2g', '3g'].includes(c.effectiveType) || c.type === 'cellular');
 }
 
+// Runs a call the game must not stop for, such as an audio cue: a throw is warned of once, naming `what`, and later throws pass quietly,
+// so a broken player does not fill the console at every frame.
+export function bestEffort(what, warn = console.warn) {
+  let warned = false;
+  return (call) => {
+    try { call(); } catch (e) {
+      if (warned) return;
+      warned = true;
+      warn(`${what} failed, later failures are not reported: ${e?.message || e}`);
+    }
+  };
+}
+
 const AUTHORS_KEPT = 300;   // authors whose PDS or avatar is remembered at once
 const PDS_SERVICE_ID = '#atproto_pds';   // a DID document's PDS entry, written bare or after the DID
 
@@ -1154,12 +1167,17 @@ function logButton(doc, e, action, press) {
 
 // The pause menu's Feed log: read() is the game's FeedLog() (JSON text), toggle(uri, action) its Toggle. refresh() rebuilds the
 // list (the pause menu opening); said(message) is what the game just announced: the status line speaks it and the list is rebuilt,
-// since a write's answer changes a button. A game that is not there (or a bad answer) leaves the list as it was.
-export function createLogList({ els, doc = globalThis.document, read, toggle }) {
+// since a write's answer changes a button. A game that is not there (or a bad answer) leaves the list as it was, and the first such
+// failure is warned of by `warn`.
+export function createLogList({ els, doc = globalThis.document, read, toggle, warn = console.warn }) {
+  let warned = false;
   const refresh = () => {
     let entries;
     // a game that is not up, or an answer that is not JSON, leaves the list as it was: the next refresh tries again
-    try { entries = JSON.parse(read()); } catch { return; }
+    try { entries = JSON.parse(read()); } catch (e) {
+      if (!warned) { warned = true; warn(`the feed log could not be read, later failures are not reported: ${e?.message || e}`); }
+      return;
+    }
     if (Array.isArray(entries)) renderLog(els, entries, { doc, press });
   };
   const press = (uri, action) => { toggle(uri, action); refresh(); };

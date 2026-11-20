@@ -72,8 +72,26 @@ public sealed class PostQueue
         if (_q.First is not { } n) { post = null!; thread = false; return false; }
         (post, thread) = n.Value;
         _q.RemoveFirst();
+        if (_q.Count < Tuning.PostQueueLow)
+            lock (_belowLowGate)
+            {
+                _belowLow.TrySetResult();
+                _belowLow = NewSignal();
+            }
         return true;
     }
+
+    /// <summary>Completes once the queue holds fewer than <see cref="Tuning.PostQueueLow"/> posts: at once when it already does,
+    /// else at the take that brings it below. Safe to call from a thread that does not hold the lock the queue is read under.</summary>
+    public Task WaitBelowLowAsync(CancellationToken ct)
+    {
+        lock (_belowLowGate) return _q.Count < Tuning.PostQueueLow ? Task.CompletedTask : _belowLow.Task.WaitAsync(ct);
+    }
+
+    private readonly Lock _belowLowGate = new();
+    private TaskCompletionSource _belowLow = NewSignal();
+
+    private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private bool Remember(FeedPost p)
     {

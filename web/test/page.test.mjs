@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { avatarCid, cellAt, createGestures, didDocUrl, FIELD_MAX_COLS, grants, leftPanel, metadataUrl, renderLog, SIDE_GAP_COLS, SIDE_MIN_COLS } from '../../src/FeedRaider.Web/wwwroot/page.js';
+import { avatarCid, bestEffort, cellAt, createGestures, didDocUrl, FIELD_MAX_COLS, grants, leftPanel, metadataUrl, renderLog, SIDE_GAP_COLS, SIDE_MIN_COLS } from '../../src/FeedRaider.Web/wwwroot/page.js';
 
 const wwwroot = new URL('../../src/FeedRaider.Web/wwwroot/', import.meta.url);
 const metadataScript = fileURLToPath(new URL('../make-client-metadata.mjs', import.meta.url));
@@ -309,4 +309,17 @@ test('renderLog: pressing a button names the post and the action', () => {
   like.click();
   repost.click();
   assert.deepEqual(pressed, [['at://x/post/1', 'like'], ['at://x/post/1', 'repost']]);
+});
+
+test('bestEffort: a call that throws is warned of once, by name, and never stops its caller', () => {
+  const warned = [];
+  const guard = bestEffort('a music cue', (message) => warned.push(message));
+  let ran = 0;
+  guard(() => { ran++; });
+  guard(() => { throw new Error('no audio context'); });
+  guard(() => { throw new Error('still none'); });
+  guard(() => { ran++; });
+  assert.equal(ran, 2);
+  assert.equal(warned.length, 1);
+  assert.match(warned[0], /^a music cue failed.*no audio context$/);
 });

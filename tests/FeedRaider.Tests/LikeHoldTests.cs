@@ -68,6 +68,17 @@ public class LikeHoldTests
         return (width, rows);
     }
 
+    /// <summary>How wide the pixels in <paramref name="colours"/> are across every row of the box together: a small loop's two
+    /// sides fall on different rows, so no one row spans it.</summary>
+    internal static int SpanWidth(Surface f, PixelRect box, params uint[] colours)
+    {
+        int lo = int.MaxValue, hi = int.MinValue;
+        for (int y = box.Y; y < box.Y + box.H; y++)
+            for (int x = box.X; x < box.X + box.W; x++)
+                if (colours.Contains(f.Get(x, y))) { lo = Math.Min(lo, x); hi = Math.Max(hi, x); }
+        return hi >= lo ? hi - lo + 1 : 0;
+    }
+
     /// <summary>How wide the lit ground under an icon and its count is, in pixels: their cells and one cell past each end.</summary>
     internal static int LitGroundPixels(Card c, PostAction a) =>
         (CardPainter.ActionSpan(c, a).Cols + 2 * CardPainter.LitPadCols) * CardField.PixelsPerCell;
@@ -85,6 +96,10 @@ public class LikeHoldTests
 
     internal const int GrowthPixels = 14;
 
+    /// <summary>How far from the ship's centre a dot of the hold's ring can land: its radius, and half a pixel for the rounding of
+    /// each dot to a pixel.</summary>
+    private const double RingReach = RaiderView.HoldRingRadius + 0.5;
+
     /// <summary>The button's box grown by <see cref="GrowthPixels"/> pixels each way: where a grown icon can be.</summary>
     internal static PixelRect GrownButtonBox(RaiderGame g, Card c, PostAction a)
     {
@@ -96,15 +111,16 @@ public class LikeHoldTests
     public void The_beat_table_holds_its_widths_colours_and_halo()
     {
         Assert.Equal([0, 15, 30, 45, 58, 69, 78, 85], HoldBeats.Ticks);
-        Assert.Equal([7, 9, 11, 13, 15, 17, 19, 21], HoldBeats.Widths);
-        Assert.Equal(25, HoldBeats.FinishedWidth);
+        Assert.Equal([5, 5, 5, 6, 6, 6, 7, 7], HoldBeats.Widths);
+        Assert.Equal(7, HoldBeats.FinishedWidth);
+        Assert.Equal((7, 6), (HoldBeats.MaxIconWidth, HoldBeats.MaxIconHeight));
         Assert.Equal(Reds, HoldBeats.Colours(Like));
-        Assert.Equal(0xffd9e0u, HoldBeats.Finished(Like));
-        for (int i = 0; i < HoldBeats.Widths.Length; i++) Assert.Equal(0.10 + 0.04 * i, HoldBeats.Halo(i), 6);
+        Assert.Equal(0xffd9e0u, HoldBeats.FinishedColour(Like));
+        for (int i = 0; i < HoldBeats.Widths.Length; i++) Assert.Equal(0.10 + 0.04 * i, HoldBeats.HaloStrength(i), 6);
     }
 
     [Fact]
-    public void The_heart_is_a_character_at_rest_and_9_to_21_pixels_wide_through_the_beats_in_the_tables_colours_with_as_many_rows_filled_as_progress_says()
+    public void The_heart_is_a_character_at_rest_and_5_to_7_pixels_wide_through_the_beats_in_the_tables_colours_with_as_many_rows_filled_as_progress_says()
     {
         var (g, c, _) = HoldRig.Scene();
         var box = GrownButtonBox(g, c, Like);
@@ -127,30 +143,108 @@ public class LikeHoldTests
             Assert.Equal(h, rows);
             int filled = Extent(f, box, lit).Rows;
             Assert.Equal((int)Math.Round(h * at / (double)Tuning.HoldFrames), filled);
-            // the share rounds up to every row only on the last tick before done
-            Assert.True(filled > 0 && (filled < h || at == LastTickBeforeDone), $"part filled at tick {at}");
+            // every row is filled only once the share rounds up to the heart's full height
+            Assert.True(filled > 0 && (filled < h || at >= Tuning.HoldFrames * (h - 0.5) / h), $"part filled at tick {at}");
             for (int k = 0; k < Reds.Length; k++)
                 if (k != i + 1) Assert.Equal(0, Extent(f, box, Reds[k]).Width);
         }
     }
 
     [Fact]
-    public void On_a_beat_the_heart_is_drawn_two_pixels_wider_for_three_frames()
+    public void On_a_beat_the_heart_is_drawn_two_pixels_wider_for_three_frames_up_to_the_widest_the_footer_holds()
     {
         var (g, c, _) = HoldRig.Scene();
         var box = GrownButtonBox(g, c, Like);
         Assert.Equal((2, 3), (HoldBeats.ThumpPixels, HoldBeats.ThumpFrames));
+        Assert.Equal(HoldBeats.MaxIconWidth, HoldBeats.Thumped(HoldBeats.Widths[^1]));
         const int step = 2;
+        Assert.Equal(HoldBeats.Widths[step] + HoldBeats.ThumpPixels, HoldBeats.Thumped(HoldBeats.Widths[step]));
         HoldRig.Hold(g, c, Like, HoldBeats.Ticks[step]);
         for (int i = 0; i < HoldBeats.ThumpFrames; i++)
         {
             HoldRig.Away(g);
             g.Rings.Clear();   // the beat's own ring starts on the heart's edge
-            Assert.Equal(HoldBeats.Widths[step] + HoldBeats.ThumpPixels, Extent(HoldRig.Draw(g), box, Reds[step], CardColours.LikeIdle).Width);
+            Assert.Equal(HoldBeats.Thumped(HoldBeats.Widths[step]), Extent(HoldRig.Draw(g), box, Reds[step], CardColours.LikeIdle).Width);
             HoldRig.Hold(g, c, Like, HoldRig.OneTick);
         }
         HoldRig.Away(g);
         Assert.Equal(HoldBeats.Widths[step], Extent(HoldRig.Draw(g), box, Reds[step], CardColours.LikeIdle).Width);
+    }
+
+    [Theory]
+    [InlineData(PostAction.Like)]
+    [InlineData(PostAction.Repost)]
+    public void The_held_icons_drawn_height_stays_within_the_footer_on_every_frame_of_the_hold_its_finish_and_its_settle(PostAction a)
+    {
+        var (g, c, _) = HoldRig.Scene();
+        var grown = GrownButtonBox(g, c, a);
+        uint[] icon = [.. HoldBeats.Colours(a), HoldBeats.FinishedColour(a), a == Like ? CardColours.LikeIdle : CardColours.RepostIdle];
+        int measured = 0;
+        void Measure(string when)
+        {
+            HoldRig.Away(g);
+            g.Particles.Clear(); g.Rings.Clear();
+            var f = HoldRig.Draw(g);
+            // a beat shakes the screen, and the glow is drawn offset so that it shakes with the card's cells
+            var (_, shakeY) = g.ShakeOffset();
+            var drawn = g.Cards.ButtonBox(c, a);
+            var button = drawn with { Y = drawn.Y + CardPainter.EvenShake(shakeY) - shakeY };
+            int top = int.MaxValue, bottom = int.MinValue;
+            for (int y = grown.Y; y < grown.Y + grown.H; y++)
+                for (int x = grown.X; x < grown.X + grown.W; x++)
+                    if (icon.Contains(f.Get(x, y))) { top = Math.Min(top, y); bottom = Math.Max(bottom, y); }
+            if (top > bottom) return;
+            measured++;
+            Assert.True(bottom - top + 1 <= HoldBeats.MaxIconHeight, $"{when}: the icon is {bottom - top + 1} pixels tall");
+            Assert.InRange(top, button.Y, button.Y + button.H - 1);
+            Assert.InRange(bottom, button.Y, button.Y + button.H - 1);
+        }
+        for (int tick = 0; tick < LastTickBeforeDone; tick++)
+        {
+            HoldRig.Hold(g, c, a, HoldRig.OneTick);
+            Measure($"tick {c.Marks.Progress(a)}");
+        }
+        Assert.True(measured > 0, "the held icon was drawn on some frame of the hold");
+        int measuredInHold = measured;
+        HoldRig.Hold(g, c, a, FinishingTicks);
+        for (int frame = 0; frame < SettledTicks; frame++)
+        {
+            Measure($"frame {frame} of the finish");
+            int top = c.Top;
+            HoldRig.Step(g);
+            c.Top = top;
+        }
+        Assert.True(measured > measuredInHold, "the finished icon was drawn on some frame of the finish");
+    }
+
+    [Theory]
+    [InlineData(PostAction.Like)]
+    [InlineData(PostAction.Repost)]
+    public void The_hold_progress_line_is_lit_outside_the_ships_rect_while_the_ship_rests_on_the_button(PostAction a)
+    {
+        var (g, c, _) = HoldRig.Scene();
+        var (lit, track) = HoldBeats.LineColours(a);
+        int at = 0;
+        foreach (int progress in (ReadOnlySpan<int>)[HoldBeats.Ticks[1], Tuning.HoldFrames / 2, LateHoldTicks])
+        {
+            HoldRig.Hold(g, c, a, progress - at);
+            at = c.Marks.Progress(a);
+            g.Particles.Clear(); g.Rings.Clear();
+            var f = HoldRig.Draw(g);
+            var ship = HoldTracker.ShipBox(g);
+            var button = g.Cards.ButtonBox(c, a);
+            var (left, right) = CardPainter.ProgressLineSpan(g, c);
+            int y = button.Y + button.H - 1, litPixels = (int)Math.Ceiling((right - left) * at / (double)Tuning.HoldFrames);
+            Assert.InRange(y, ship.Y, ship.Y + ship.H - 1);   // the line runs under the ship, which covers the icon
+            int shown = 0;
+            for (int x = left; x < right; x++)
+            {
+                if (Math.Abs(x - g.PX) <= RingReach) continue;   // the ship, and the ring of dots round it
+                Assert.Equal(x - left < litPixels ? lit : track, f.Get(x, y));
+                if (x - left < litPixels) shown++;
+            }
+            Assert.True(shown > 0, $"at progress {at} the lit part of the line shows beside the ship");
+        }
     }
 
     [Fact]
@@ -233,7 +327,7 @@ public class LikeHoldTests
         Assert.Equal(SfxNames.Like, played[^1].Name);
 
         var f = HoldRig.Draw(g);
-        Assert.Equal(HoldBeats.FinishedWidth, Extent(f, GrownButtonBox(g, c, Like), HoldBeats.Finished(Like)).Width);
+        Assert.Equal(HoldBeats.FinishedWidth, Extent(f, GrownButtonBox(g, c, Like), HoldBeats.FinishedColour(Like)).Width);
         int particles = g.Particles.Count;
         played.Clear();
         HoldRig.Hold(g, c, Like, Tuning.Fps);

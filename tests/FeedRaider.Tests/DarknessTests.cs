@@ -191,7 +191,29 @@ public class DarknessTests
     {
         Assert.StartsWith(CleanedText, PostTextFetcher.ParseGetPosts(GetPostsJson, signedOut: false));
         Assert.Null(PostTextFetcher.ParseGetPosts("""{"posts":[]}""", signedOut: false));
-        Assert.Null(PostTextFetcher.ParseGetPosts("not json", signedOut: false));
+    }
+
+    [Fact]
+    public void A_body_that_is_not_json_throws_from_either_parser()
+    {
+        Assert.ThrowsAny<System.Text.Json.JsonException>(() => PostTextFetcher.ParseGetPosts(NotJson, signedOut: false));
+        Assert.ThrowsAny<System.Text.Json.JsonException>(() => PostTextFetcher.ParseAuthorFeed(NotJson, signedOut: false));
+    }
+
+    private const string NotJson = "<html>bad gateway</html>";
+
+    [Fact]
+    public async Task A_fetch_whose_body_is_not_json_counts_as_a_failure_and_the_stream_goes_on()
+    {
+        var stats = new DarknessStats();
+        var posts = new List<DarkPost>();
+        string first = PostUri("first"), second = PostUri("second");
+        await DarknessFeed.RunAsync(
+            Labels(new LabelEvent(first, Rude, false, 1), new LabelEvent(second, Rude, false, 2)),
+            (uri, _) => Task.FromResult(PostTextFetcher.ParseGetPosts(uri == first ? NotJson : GetPostsJson, signedOut: false)),
+            posts.Add, stats, CancellationToken.None, paceMs: 1);
+        Assert.Equal((1, 1), (stats.FetchFailures, stats.PostsFetched));
+        Assert.Equal(CleanedText, Assert.Single(posts).Text);
     }
 
     private static async IAsyncEnumerable<LabelEvent> Labels(params LabelEvent[] labels)

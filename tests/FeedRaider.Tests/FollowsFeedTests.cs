@@ -155,6 +155,38 @@ public class FollowsFeedTests
     }
 
     [Fact]
+    public async Task A_follows_body_that_is_not_json_is_tried_three_times_then_reported_as_unreadable()
+    {
+        var h = new Handler(_ => (HttpStatusCode.OK, "<html>bad gateway</html>"));
+        var src = new FollowsFeedSource(new HttpClient(h), "bsky.app", NoDelay);
+        var ex = await Assert.ThrowsAsync<FollowsUnavailableException>(() => src.GetPageAsync(AnyFeedUri, null, PageLimit, default));
+        Assert.Equal("Bluesky's list of who @bsky.app follows could not be read.", ex.Message);
+        Assert.Equal(LoadAttempts, h.Urls.Count);
+    }
+
+    private sealed class BrokenHandler : HttpMessageHandler
+    {
+        public int Calls;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
+        {
+            Calls++;
+            throw new InvalidOperationException(BrokenCode);
+        }
+    }
+
+    private const string BrokenCode = "a bug in the game, not a failure of Bluesky";
+
+    [Fact]
+    public async Task A_bug_while_loading_the_follows_escapes_as_itself_and_is_not_retried()
+    {
+        var h = new BrokenHandler();
+        var src = new FollowsFeedSource(new HttpClient(h), "bsky.app", NoDelay);
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => src.GetPageAsync(AnyFeedUri, null, PageLimit, default));
+        Assert.Equal(BrokenCode, ex.Message);
+        Assert.Equal(1, h.Calls);
+    }
+
+    [Fact]
     public async Task Zero_follows_is_reported()
     {
         var src = new FollowsFeedSource(new HttpClient(Net()), "lonely.test", NoDelay);

@@ -21,7 +21,7 @@ public sealed class SpeechBoxPainter
         _scr = scr;
         Boxes.Clear();
         _clip = new CellRect(lay.Col0, EnemySpeechBox.HudRows, lay.PCols, Math.Min(lay.Rows, scr.Rows) - EnemySpeechBox.HudRows);
-        foreach (var enemy in EnemySpeechBox.Visible(game, lay, Tuning.MaxSpeechBoxes)) DrawEnemySpeechBox(enemy, EnemySpeechBox.Box(enemy, lay));
+        foreach (var (enemy, box) in EnemySpeechBox.Placed(game, lay, Tuning.MaxSpeechBoxes)) DrawEnemySpeechBox(enemy, box);
     }
 
     /// <summary>One char of a speech box on the box's ground: dropped outside the field (the crop). A wide char needs both its

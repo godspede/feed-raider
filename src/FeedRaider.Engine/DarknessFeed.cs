@@ -41,35 +41,29 @@ public static partial class DarknessFilter
 public static class PostTextFetcher
 {
     /// <summary>Text of the post in a getPosts response. Empty when the post is adult (<see cref="FeedMapper.IsAdult"/>), or when
-    /// <paramref name="signedOut"/> and the author carries <see cref="FeedMapper.OptOutLabel"/> or names no author: the post is found,
-    /// and nothing of it is shown.</summary>
-    public static string? ParseGetPosts(string json, bool signedOut)
+    /// <paramref name="signedOut"/> and the author carries <see cref="FeedMapper.OptOutLabel"/> or names no author, or when
+    /// <paramref name="languages"/> is given and the post is not in one of them: the post is found, and nothing of it is shown.
+    /// A body that is not JSON throws <see cref="JsonException"/>, so the fetch counts as failed.</summary>
+    public static string? ParseGetPosts(string json, bool signedOut, PlayerLanguages? languages = null)
     {
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("posts", out var posts) && posts.ValueKind == JsonValueKind.Array)
-                foreach (var post in posts.EnumerateArray())
-                    if (TextOf(post, signedOut) is { } text) return text;
-        }
-        catch (JsonException) { }   // not JSON: no text
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.TryGetProperty("posts", out var posts) && posts.ValueKind == JsonValueKind.Array)
+            foreach (var post in posts.EnumerateArray())
+                if (TextOf(post, signedOut, languages) is { } text) return text;
         return null;
     }
 
     /// <summary>Text of the newest original post in a getAuthorFeed response. Reposts (they carry a <c>reason</c>) are
     /// skipped: that text belongs to someone else. Empty, as in <see cref="ParseGetPosts"/>, when that post is adult or when
-    /// <paramref name="signedOut"/> and the author opts out; an older post is not read in its place.</summary>
-    public static string? ParseAuthorFeed(string json, bool signedOut)
+    /// <paramref name="signedOut"/> and the author opts out, or when it is not in one of <paramref name="languages"/> (if given); an older post is not read in its place.
+    /// A body that is not JSON throws <see cref="JsonException"/>, as in <see cref="ParseGetPosts"/>.</summary>
+    public static string? ParseAuthorFeed(string json, bool signedOut, PlayerLanguages? languages = null)
     {
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("feed", out var feed) && feed.ValueKind == JsonValueKind.Array)
-                foreach (var item in feed.EnumerateArray())
-                    if (!item.TryGetProperty("reason", out _) && item.TryGetProperty("post", out var post) && TextOf(post, signedOut) is { } text)
-                        return text;
-        }
-        catch (JsonException) { }   // not JSON: no text
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.TryGetProperty("feed", out var feed) && feed.ValueKind == JsonValueKind.Array)
+            foreach (var item in feed.EnumerateArray())
+                if (!item.TryGetProperty("reason", out _) && item.TryGetProperty("post", out var post) && TextOf(post, signedOut, languages) is { } text)
+                    return text;
         return null;
     }
 
@@ -78,28 +72,35 @@ public static class PostTextFetcher
         !post.TryGetProperty("author", out var author) || author.ValueKind != JsonValueKind.Object || FeedMapper.HasLabel(author, FeedMapper.OptOutLabel);
 
     // a post view's record text, or null when it carries none; empty when the post is not to be shown
-    private static string? TextOf(JsonElement post, bool signedOut) =>
+    private static string? TextOf(JsonElement post, bool signedOut, PlayerLanguages? languages) =>
         post.TryGetProperty("record", out var record) && record.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String
-            ? (FeedMapper.IsAdult(post) || (signedOut && AuthorOptsOut(post)) ? "" : text.GetString())
+            ? (FeedMapper.IsAdult(post) || (signedOut && AuthorOptsOut(post)) || (languages is not null && !languages.Reads(LangsOf(record), text.GetString() ?? "")) ? "" : text.GetString())
+            : null;
+
+    // the record's optional BCP-47 tags; null when it has none
+    private static List<string>? LangsOf(JsonElement record) =>
+        record.TryGetProperty("langs", out var langs) && langs.ValueKind == JsonValueKind.Array
+            ? langs.EnumerateArray().Where(l => l.ValueKind == JsonValueKind.String).Select(l => l.GetString()!).ToList()
             : null;
 
     /// <summary>Raw text of the post at an at:// URI, or of the newest original post when given a bare DID (an account-level
     /// label), asking the AppView alone. Null when the AppView's answer is not a success or holds no such post, so an account
     /// that is deactivated, suspended or taken down gives nothing. A network failure throws. With <paramref name="signedOut"/>,
-    /// an author who carries <see cref="FeedMapper.OptOutLabel"/>, or whose label cannot be checked, gives nothing to show.</summary>
-    public static Task<string?> FetchAsync(HttpClient http, string subject, bool signedOut, CancellationToken ct) =>
-        subject.StartsWith("did:", StringComparison.Ordinal) ? FetchLatestAsync(http, subject, signedOut, ct) : FetchPostAsync(http, subject, signedOut, ct);
+    /// an author who carries <see cref="FeedMapper.OptOutLabel"/>, or whose label cannot be checked, gives nothing to show; nor does
+    /// a post that is not in one of the <paramref name="languages"/> (every language when null).</summary>
+    public static Task<string?> FetchAsync(HttpClient http, string subject, bool signedOut, CancellationToken ct, PlayerLanguages? languages = null) =>
+        subject.StartsWith("did:", StringComparison.Ordinal) ? FetchLatestAsync(http, subject, signedOut, languages, ct) : FetchPostAsync(http, subject, signedOut, languages, ct);
 
-    private static async Task<string?> FetchLatestAsync(HttpClient http, string did, bool signedOut, CancellationToken ct)
+    private static async Task<string?> FetchLatestAsync(HttpClient http, string did, bool signedOut, PlayerLanguages? languages, CancellationToken ct)
     {
         using var response = await http.GetAsync($"{BskyClient.AppView}/xrpc/app.bsky.feed.getAuthorFeed?actor={Uri.EscapeDataString(did)}&limit=1&filter=posts_no_replies", ct).ConfigureAwait(false);
-        return response.IsSuccessStatusCode ? ParseAuthorFeed(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false), signedOut) : null;
+        return response.IsSuccessStatusCode ? ParseAuthorFeed(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false), signedOut, languages) : null;
     }
 
-    private static async Task<string?> FetchPostAsync(HttpClient http, string atUri, bool signedOut, CancellationToken ct)
+    private static async Task<string?> FetchPostAsync(HttpClient http, string atUri, bool signedOut, PlayerLanguages? languages, CancellationToken ct)
     {
         using var response = await http.GetAsync($"{BskyClient.AppView}/xrpc/app.bsky.feed.getPosts?uris={Uri.EscapeDataString(atUri)}", ct).ConfigureAwait(false);
-        return response.IsSuccessStatusCode ? ParseGetPosts(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false), signedOut) : null;
+        return response.IsSuccessStatusCode ? ParseGetPosts(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false), signedOut, languages) : null;
     }
 }
 
@@ -263,9 +264,9 @@ public static class DarknessFeed
                 if (pause is not null) await pause.WaitWhilePausedAsync(ct).ConfigureAwait(false);
                 string? text;
                 try { text = await fetchText(subject, ct).ConfigureAwait(false); }
-                catch (Exception error) when (!ct.IsCancellationRequested && error is HttpRequestException or TaskCanceledException or InvalidOperationException)
+                catch (Exception error) when (!ct.IsCancellationRequested && error is HttpRequestException or TaskCanceledException or InvalidOperationException or JsonException)
                 {
-                    // a network failure, a timeout or a response of the wrong shape loses only this subject: it is counted and the stream goes on
+                    // a network failure, a timeout, a body that is not JSON or a response of the wrong shape loses only this subject: it is counted and the stream goes on
                     fetchFailed();
                     continue;
                 }

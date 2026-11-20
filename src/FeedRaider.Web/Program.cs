@@ -53,6 +53,9 @@ public static partial class Host
     [JSImport("saveBestScore", "main.js")]
     private static partial void SaveBestScore(int score);
 
+    [JSImport("playerLanguages", "main.js")]
+    private static partial string PlayerLanguageList();
+
     [JSImport("fetchAvatar", "main.js")]
     private static partial Task<string?> FetchAvatar(string did, string? url);
 
@@ -96,11 +99,6 @@ public static partial class Host
         _tourPause.Hold(TabHold, _hidden);
         try { await TourRun.RunAsync(() => (_cols, _rows), new JsSink(), (ulong)(uint)seed, cts.Token, TermBusy, _tourPause, slow ? TourSlowScale : 1); }
         catch (OperationCanceledException) { }   // cancelling is how this ends
-        catch (Exception ex)
-        {
-            // The backdrop is decoration: the start page works without it, so a failure is reported to the console and the page carries on.
-            Console.Error.WriteLine($"the start page tour stopped: {ex.Message}");
-        }
     }
 
     /// <summary>Ends the start page's tour; nothing of it is left running or drawing.</summary>
@@ -159,7 +157,7 @@ public static partial class Host
         game.PlainOnly = plan.FeedUri == Feeds.Random;
         var runner = _runner = new RaiderRunner(game, () => (_cols, _rows), new JsSink()) { ShowFps = showFps, Adaptive = adaptive, Pause = pause };
         var tasks = new List<Task> { runner.RunAsync(cts.Token, TermBusy), RaiderFeeds.PostsAsync(game, plan.Primary, plan.Fallback, plan.FeedUri, cts.Token, onFallback: ShowNotice, sourceName: plan.Name, onTrouble: ShowNotice, pause: pause, onStatus: message => { lock (game) game.Say(message); }) };
-        if (darkness != DarknessOff) tasks.Add(RaiderFeeds.DarknessAsync(game, http, cts.Token, pause: pause));
+        if (darkness != DarknessOff) tasks.Add(RaiderFeeds.DarknessAsync(game, http, ReadPlayerLanguages(), cts.Token, pause: pause));
         try { await Task.WhenAll(tasks); }
         catch (OperationCanceledException) { }   // cancelling is how this ends
         catch (Exception ex) { ShowError(Plain.FeedFailureText(ex, plan.Name)); }
@@ -175,6 +173,13 @@ public static partial class Host
         _jsFailureReported = true;
         Console.Error.WriteLine($"a call into the page failed: {e.Message}");
     }
+    // navigator.languages as the page's list of tags; a failed read is reported like any call into the page, and the player reads English
+    private static PlayerLanguages ReadPlayerLanguages()
+    {
+        try { return PlayerLanguages.FromList(PlayerLanguageList()); }
+        catch (JSException e) { ReportJsFailure(e); return PlayerLanguages.FromList(null); }
+    }
+
     private static void Safe(Action act) { try { act(); } catch (JSException e) { ReportJsFailure(e); } }
     private static int? Safe(Func<int> get) { try { return get(); } catch (JSException e) { ReportJsFailure(e); return null; } }
 

@@ -155,7 +155,7 @@ public class AutopilotTests
         int quiet = 0, longest = 0;
         tour.Fly(Autopilot.MaxRunTicks, _ =>
         {
-            bool busy = g.Enemies.Any(e => e.Y > 0 && e.Y < g.PH) || g.Gate != GateState.None || g.Banner is not null;
+            bool busy = g.Enemies.Any(e => e.Y > 0 && e.Y < g.PH) || g.Gate != GateState.None;
             quiet = busy ? 0 : quiet + 1;
             longest = Math.Max(longest, quiet);
         });

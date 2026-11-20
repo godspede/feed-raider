@@ -87,4 +87,72 @@ public class PostRulesTests
         Assert.EndsWith("/1", b.Uri);
         Assert.EndsWith("/2", c.Uri);
     }
+
+    /// <summary>A queue holding exactly <see cref="Tuning.PostQueueLow"/> posts: one take short of asking for more.</summary>
+    private static PostQueue AtLow(PostQueue q)
+    {
+        for (int n = 1; n <= Tuning.PostQueueLow; n++) q.Offer(P(n: n));
+        return q;
+    }
+
+    [Fact]
+    public void Waiting_for_the_queue_to_run_low_completes_at_once_when_it_already_is()
+    {
+        var q = new PostQueue();
+        Assert.True(q.WaitBelowLowAsync(CancellationToken.None).IsCompletedSuccessfully);
+    }
+
+    [Fact]
+    public async Task Waiting_for_the_queue_to_run_low_completes_at_the_take_that_brings_it_below_and_not_before()
+    {
+        var q = AtLow(new PostQueue());
+        var waiting = q.WaitBelowLowAsync(CancellationToken.None);
+        Assert.False(waiting.IsCompleted);
+        q.Offer(P(n: Tuning.PostQueueLow + 1));
+        Assert.True(q.TryDequeue(out _, out _));   // back to Low: still not below it
+        Assert.False(waiting.IsCompleted);
+        Assert.True(q.TryDequeue(out _, out _));
+        await waiting.WaitAsync(TimeSpan.FromSeconds(WakeSeconds));
+    }
+
+    [Fact]
+    public async Task Waiting_for_the_queue_to_run_low_ends_when_its_token_is_cancelled()
+    {
+        var q = AtLow(new PostQueue());
+        using var cts = new CancellationTokenSource();
+        var waiting = q.WaitBelowLowAsync(cts.Token);
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+    }
+
+    private const int WakeSeconds = 10, FullWatchMs = 300;
+
+    private sealed class CountingFeed : IFeedSource
+    {
+        public int Calls;
+        public Task<FeedPage> GetPageAsync(string feedUri, string? cursor, int limit, CancellationToken ct)
+        {
+            Interlocked.Increment(ref Calls);
+            return Task.FromResult(new FeedPage([], null));
+        }
+    }
+
+    [Fact]
+    public async Task The_feed_loop_waiting_on_a_full_queue_asks_for_a_page_once_the_game_takes_it_below_low()
+    {
+        var game = new RaiderGame(1);
+        lock (game) AtLow(game.Posts);
+        var feed = new CountingFeed();
+        using var cts = new CancellationTokenSource();
+        var run = RaiderFeeds.PostsAsync(game, feed, null, "", cts.Token);
+
+        await Task.Delay(FullWatchMs);
+        Assert.Equal(0, Volatile.Read(ref feed.Calls));
+
+        lock (game) Assert.True(game.Posts.TryDequeue(out _, out _));
+        await Wait.UntilAsync(() => Volatile.Read(ref feed.Calls) > 0, "the feed loop to wake and ask for a page");
+
+        cts.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(WakeSeconds));
+    }
 }

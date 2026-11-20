@@ -53,6 +53,8 @@ public static class EnemySpeechBox
         enemy.Text = text;
         enemy.SpeechBoxAge = 0;
         enemy.SpeechLines = null;
+        enemy.SpeechBoxShift = default;
+        enemy.SpeechBoxHeld = false;
     }
 
     /// <summary>What the box's title row reads: the speaker's own prefix (a counter), then the header.</summary>
@@ -129,24 +131,70 @@ public static class EnemySpeechBox
     /// <summary>True when <paramref name="box"/> sits below the enemy (pointer facing up), because there was no room above it.</summary>
     public static bool IsBelow(Enemy enemy, CellRect box) => box.R * CardField.PixelsPerCell >= Shown(enemy).Bottom;
 
-    /// <summary>The boxes on show: those open, none over the ship, and when more than <paramref name="max"/> are open the
-    /// newest <paramref name="max"/> (the lowest age) win. An enemy's box that would lie over a newer enemy's box is left out. They keep the order of the enemies, then the echoes.</summary>
-    public static List<Enemy> Visible(RaiderGame game, FieldLayout lay, int max)
-    {
-        var ship = new CellRect(lay.Col0 + (int)Math.Floor((game.PX - game.Ship.W / 2.0) / CardField.PixelsPerCell) - ShipMarginCells, (int)Math.Floor((game.PY - game.Ship.H / 2.0) / CardField.PixelsPerCell) - ShipMarginCells,
+    /// <summary>The cells round the ship that no box may cover.</summary>
+    public static CellRect ShipCells(RaiderGame game, FieldLayout lay) =>
+        new(lay.Col0 + (int)Math.Floor((game.PX - game.Ship.W / 2.0) / CardField.PixelsPerCell) - ShipMarginCells, (int)Math.Floor((game.PY - game.Ship.H / 2.0) / CardField.PixelsPerCell) - ShipMarginCells,
             game.Ship.W / CardField.PixelsPerCell + 2 * ShipMarginCells + FlooredCornerCells, game.Ship.H / CardField.PixelsPerCell + 2 * ShipMarginCells + FlooredCornerCells);
-        var list = new List<Enemy>();
-        foreach (var enemy in game.Enemies)
-            if (IsOpen(enemy) && !Box(enemy, lay).Overlaps(ship)) list.Add(enemy);
-        foreach (var enemy in game.Echoes)
-            if (IsOpen(enemy) && !Box(enemy, lay).Overlaps(ship)) list.Add(enemy);
-        // two enemies' boxes never cover each other's words: where they would, the newer one shows. (A speaker's own echoes are stacked by the voice, and are not judged here.)
-        var live = list.Where(game.Enemies.Contains).OrderBy(enemy => enemy.SpeechBoxAge).ToList();
-        for (int newer = 0; newer < live.Count; newer++)
-            for (int older = live.Count - 1; older > newer; older--)
-                if (Box(live[newer], lay).Overlaps(Box(live[older], lay))) { list.Remove(live[older]); live.RemoveAt(older); }
-        if (list.Count <= max) return list;
-        var newest = list.OrderBy(enemy => enemy.SpeechBoxAge).Take(max).ToHashSet();
-        return list.Where(newest.Contains).ToList();
+
+    /// <summary>The boxes on show and the cells each takes. Of the open boxes the newest <paramref name="max"/> (the lowest age) are
+    /// taken; a box whose home (<see cref="Box"/>) lies over the ship is left out. The oldest keeps its place, and each newer box goes
+    /// where it covers neither the ship nor a box already placed: its home, or the place it was moved to before, or else the nearest
+    /// place clear of them. So no box ever covers another's words, an echo's or a live enemy's. A box with no clear place anywhere is
+    /// left out, and <see cref="Settle"/> holds it unread until there is room.</summary>
+    public static List<(Enemy Enemy, CellRect Box)> Placed(RaiderGame game, FieldLayout lay, int max)
+    {
+        var ship = ShipCells(game, lay);
+        var placed = new List<(Enemy Enemy, CellRect Box)>();
+        foreach (var enemy in Enumerable.Reverse(Taken(game, lay, max, ship)))
+            if (FindClearPlace(Box(enemy, lay), enemy.SpeechBoxShift, lay, ship, placed) is { } box) placed.Add((enemy, box));
+        return placed;
+    }
+
+    /// <summary>The open boxes whose home is clear of the ship, the newest <paramref name="max"/> of them, the newest first.</summary>
+    private static List<Enemy> Taken(RaiderGame game, FieldLayout lay, int max, CellRect ship) =>
+        game.Enemies.Concat(game.Echoes).Where(enemy => IsOpen(enemy) && !Box(enemy, lay).Overlaps(ship)).OrderBy(enemy => enemy.SpeechBoxAge).Take(max).ToList();
+
+    /// <summary>Where a box whose home is <paramref name="home"/> goes, clear of the ship and of the boxes placed: its home moved by
+    /// <paramref name="shift"/>, its home, or the nearest of the places beside, above or below one of those boxes. Null when none is clear.</summary>
+    private static CellRect? FindClearPlace(CellRect home, (int Col, int Row) shift, FieldLayout lay, CellRect ship, List<(Enemy Enemy, CellRect Box)> placed)
+    {
+        int lastCol = Math.Max(lay.Col0, lay.Col0 + lay.PCols - home.W), lastRow = Math.Max(MinRow, lay.Rows - home.H);
+        bool Fits(CellRect box) => box.C >= lay.Col0 && box.C <= lastCol && box.R >= MinRow && box.R <= lastRow && !box.Overlaps(ship) && !placed.Exists(other => box.Overlaps(other.Box));
+        var moved = home with { C = home.C + shift.Col, R = home.R + shift.Row };
+        if (Fits(moved)) return moved;
+        if (Fits(home)) return home;
+        var cols = new List<int> { home.C };
+        var rows = new List<int> { home.R };
+        foreach (var other in placed.Select(shown => shown.Box).Append(ship))
+        {
+            cols.Add(Math.Clamp(other.C - home.W, lay.Col0, lastCol)); cols.Add(Math.Clamp(other.Right, lay.Col0, lastCol));
+            rows.Add(Math.Clamp(other.R - home.H, MinRow, lastRow)); rows.Add(Math.Clamp(other.Bottom, MinRow, lastRow));
+        }
+        CellRect? best = null;
+        int bestMove = int.MaxValue;
+        foreach (int row in rows)
+            foreach (int col in cols)
+            {
+                var box = home with { C = col, R = row };
+                int move = Math.Abs(col - home.C) + Math.Abs(row - home.R);
+                if (move < bestMove && Fits(box)) { best = box; bestMove = move; }
+            }
+        return best;
+    }
+
+    /// <summary>Once a frame: each box on show keeps the place it was given, so it stays there while it is read, and each open box
+    /// with no clear place is held (<see cref="Enemy.SpeechBoxHeld"/>): it is not aged until it shows, so none of its words are lost.</summary>
+    public static void Settle(RaiderGame game)
+    {
+        var lay = game.Layout;
+        foreach (var enemy in game.Enemies.Concat(game.Echoes)) enemy.SpeechBoxHeld = false;
+        // a box left out over the ship, or past the most boxes on show, ages normally: only a box with no room is held
+        foreach (var enemy in Taken(game, lay, Tuning.MaxSpeechBoxes, ShipCells(game, lay))) enemy.SpeechBoxHeld = true;
+        foreach (var (enemy, box) in Placed(game, lay, Tuning.MaxSpeechBoxes))
+        {
+            var home = Box(enemy, lay);
+            enemy.SpeechBoxShift = (box.C - home.C, box.R - home.R);
+            enemy.SpeechBoxHeld = false;
+        }
     }
 }

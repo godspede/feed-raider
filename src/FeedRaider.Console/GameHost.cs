@@ -38,7 +38,7 @@ static class GameHost
         AppDomain.CurrentDomain.ProcessExit += (_, _) => keyInput.Dispose();
         stdout.Write(EnterScreen); stdout.Flush();
         var tasks = new List<Task> { runner.RunAsync(cts.Token), RaiderFeeds.PostsAsync(game, primary, fallback, feed, cts.Token, onFallback: m => { lock (game) game.Say(m); }) };
-        if (darkness) tasks.Add(RaiderFeeds.DarknessAsync(game, http, cts.Token).ContinueWith(t =>
+        if (darkness) tasks.Add(RaiderFeeds.DarknessAsync(game, http, PlayerLanguages.FromSystem(), cts.Token).ContinueWith(t =>
         {
             // The game plays on without the darkness feed, so a fault is reported on screen instead of ending the run.
             if (t.IsFaulted) lock (game) game.Say($"darkness feed stopped: {t.Exception.GetBaseException().Message}");
@@ -53,6 +53,8 @@ static class GameHost
         }
         catch (Exception ex) when (ex is TimeoutException or OperationCanceledException) { }   // a task that outlives the grace period is abandoned: the process is ending
         finally { keyInput.Dispose(); stdout.Write(LeaveScreen); stdout.Flush(); }
+        // the key loop still parked on a read is left behind; one that ended on a fault rethrows it, now the screen is back
+        if (keys.IsFaulted) await keys;
         if (seconds is not null) Console.Error.WriteLine($"score {game.Score}, {game.LiveWavesSpawned} live waves of {game.WavesSpawned}, {runner.Fps:F0} fps, {runner.FrameMs:F2} ms/frame");
         return 0;
     }

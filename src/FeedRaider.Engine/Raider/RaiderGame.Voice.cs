@@ -89,6 +89,7 @@ public sealed partial class RaiderGame
     private void LeaveBehind(Enemy old, Enemy now)
     {
         old.Voice = null;
+        old.SpeechBoxShift = default;
         int width = EnemySpeechBox.Box(old, Layout).W;
         old.X = Math.Clamp(now.X + (now.X < PW / 2.0 ? 1 : -1) * (width * EchoWidths + EchoGap), 0, PW);
         old.Y = Math.Clamp(old.Y, EnemySpeechBox.OpenY, PH - EchoBottomMargin);

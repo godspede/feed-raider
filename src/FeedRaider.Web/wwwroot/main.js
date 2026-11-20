@@ -149,13 +149,8 @@ const setLoad = (status, percent = null) => {
 const runtimeReady = (async () => {
   if (oauthCallback) await authReady;
   const { dotnet } = await import(frBundle ? frBundle.dotnetUrl : './_framework/dotnet.js');
-  let builder = dotnet;
-  try {
-    builder = builder.withModuleConfig({ onDownloadResourceProgress: (loaded, total) => setLoad('loading', page.loadPercent(loaded, total)) }) || builder;
-  } catch (e) {
-    console.warn('no download progress, the bar stays indeterminate: ' + (e.message || e));
-  }
-  if (frBundle) builder = builder.withResourceLoader(frBundle.loadBootResource) || builder;
+  let builder = dotnet.withModuleConfig({ onDownloadResourceProgress: (loaded, total) => setLoad('loading', page.loadPercent(loaded, total)) });
+  if (frBundle) builder = builder.withResourceLoader(frBundle.loadBootResource);
   return builder.create();
 })();
 runtimeReady.catch((e) => {
@@ -186,8 +181,10 @@ const audioReady = (async () => {
     console.warn('audio unavailable: ' + (e.message || e));
   }
 })();
-const musicCue = (name) => { try { music?.cue(name); } catch { /* audio is best effort: a failed cue must not stop the game */ } };
-const sfxPlay = (name, pan, step, size) => { try { sfx?.play(name, pan, step, size); } catch { /* audio is best effort: a failed effect must not stop the game */ } };
+// audio must not stop the game: each kind of call warns of its first failure and plays on
+const cueGuard = page.bestEffort('a music cue'), effectGuard = page.bestEffort('a sound effect'), pauseGuard = page.bestEffort('pausing the music');
+const musicCue = (name) => cueGuard(() => music?.cue(name));
+const sfxPlay = (name, pan, step, size) => effectGuard(() => sfx?.play(name, pan, step, size));
 const bestKey = 'feed-raider.best';
 // localStorage throws a DOMException where the browser blocks it (or, on a save, where it is full)
 const bestScore = () => {
@@ -513,6 +510,7 @@ setModuleImports('main.js', {
   sfxPlay,
   bestScore,
   saveBestScore,
+  playerLanguages: () => Array.from(navigator.languages ?? []).join(','),
   authSession: () => auth?.session() ?? null,
   authGetFeed: async (feed, cursor, limit) => liveAuth().getFeed(feed, cursor, limit),
   authGetTimeline: async (cursor, limit) => liveAuth().getTimeline(cursor, limit),
@@ -641,7 +639,7 @@ const feedSpeed = page.createFeedSpeed({
 function followTabVisibility() {
   const hidden = document.hidden;
   exports.Host.SetHidden(hidden);
-  try { music?.setPaused(hidden); } catch { /* audio is best effort: a failed pause must not stop the game */ }
+  pauseGuard(() => music?.setPaused(hidden));
 }
 document.addEventListener('visibilitychange', followTabVisibility);
 // a tab opened in the background is hidden from the start, before the tour or a run sees a frame

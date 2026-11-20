@@ -108,8 +108,9 @@ public sealed class FollowsFeedSource(HttpClient http, string handle, Func<TimeS
             }
             catch (FollowsUnavailableException) { throw; }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is HttpRequestException or JsonException or BskyStatusException or TaskCanceledException)
             {
+                // the network, a body that is not JSON, a status Bluesky refused with, or the client's timeout (a cancel was rethrown above)
                 last = ex;
                 if (BlamesTheHandle(ex)) break;
             }
@@ -126,6 +127,7 @@ public sealed class FollowsFeedSource(HttpClient http, string handle, Func<TimeS
     {
         _ when BlamesTheHandle(failure) => $"Could not find {who} on Bluesky.",
         BskyStatusException => $"Bluesky could not load who {who} follows just now.",
+        JsonException => $"Bluesky's list of who {who} follows could not be read.",
         _ => $"Could not reach Bluesky to load who {who} follows.",
     };
 
@@ -172,14 +174,15 @@ public sealed class FollowsFeedSource(HttpClient http, string handle, Func<TimeS
 /// game under <c>lock (game)</c>; the runner steps the game under the same lock.</summary>
 public static class RaiderFeeds
 {
-    /// <summary>Label and hidden-reply streams in, one wave per real event. The same sources as the spectator.</summary>
-    public static Task DarknessAsync(RaiderGame game, HttpClient http, CancellationToken ct, PauseGate? pause = null)
+    /// <summary>Label and hidden-reply streams in, one wave per real event. The same sources as the spectator; only posts in the
+    /// player's <paramref name="languages"/> become enemies.</summary>
+    public static Task DarknessAsync(RaiderGame game, HttpClient http, PlayerLanguages languages, CancellationToken ct, PauseGate? pause = null)
     {
         var stats = new DarknessStats();
         var labels = new LabelSource { Pause = pause }.ReadAsync(ct);
         var hidden = new ThreadgateSource { Pause = pause }.ReadAsync(ct);
         bool signedOut = !game.SignedIn;
-        Func<string, CancellationToken, Task<string?>> fetch = (uri, c) => PostTextFetcher.FetchAsync(http, uri, signedOut, c);
+        Func<string, CancellationToken, Task<string?>> fetch = (uri, c) => PostTextFetcher.FetchAsync(http, uri, signedOut, c, languages);
         void Offer(DarkPost p) { lock (game) game.OfferDark(p); }
         return Task.WhenAll(
             Task.Run(() => DarknessFeed.RunAsync(labels, fetch, Offer, stats, ct, pause: pause), ct),
@@ -190,7 +193,7 @@ public static class RaiderFeeds
     private const string FallbackName = "Discover";   // what the notices call the fallback feed
     private const int DefaultBackoffMs = 2000, DefaultFailoverMs = 30_000;   // a failing feed is retried after the first, and gives way to its fallback after the second
     private const int MaxBackoffDoublings = 4;   // the retry delay doubles this many times at most, up to MaxBackoffMs
-    private const int MaxBackoffMs = 15_000, FallbackRetryMs = 8000, QueueFullWaitMs = 1000, EmptyPageWaitMs = 5000, NextPageWaitMs = 400;
+    private const int MaxBackoffMs = 15_000, FallbackRetryMs = 8000, EmptyPageWaitMs = 5000, NextPageWaitMs = 400;
 
     /// <summary>The one write of a finished hold: the host's session makes the like or repost record, then the game lights the
     /// button and keeps the record's address, or puts the button back and says why it failed.</summary>
@@ -266,8 +269,7 @@ public static class RaiderFeeds
                         else if (Environment.TickCount64 - stuckSince >= RepeatWaitMs && mix.TryTake(out var rep, allowRepeat: true)) { game.Posts.Offer(rep); stuckSince = 0; queued = game.Posts.Count; }
                     }
                 }
-                // the game drains the queue under its own lock and raises no signal, so the loop looks again after a wait
-                if (queued >= Tuning.PostQueueLow) { await Task.Delay(QueueFullWaitMs, ct).ConfigureAwait(false); continue; }
+                if (queued >= Tuning.PostQueueLow) { await game.Posts.WaitBelowLowAsync(ct).ConfigureAwait(false); continue; }
                 FeedPage page;
                 try { page = await (usingFallback ? fallback! : primary).GetPageAsync(feedUri, cursor, PageLimit, ct).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

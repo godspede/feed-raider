@@ -55,6 +55,10 @@ public sealed class Enemy
     public string? Header;
     public string[]? SpeechLines;
     public int SpeechBoxAge, PageLines = SpeechBoxText.MinPageLines;
+    /// <summary>Cells the speech box was moved from its home to stay clear of another box; it keeps them while it fits there.</summary>
+    public (int Col, int Row) SpeechBoxShift;
+    /// <summary>The speech box is open but has no clear place to show, so it is not aged until it has (<see cref="EnemySpeechBox.Settle"/>).</summary>
+    public bool SpeechBoxHeld;
     public bool Leaving;
     /// <summary>The fall in pixels a frame of an enemy whose maker sets none; an arriving enemy sets its own.</summary>
     public const double DefaultFall = 0.55;
@@ -188,8 +192,8 @@ public sealed partial class RaiderGame
 
     private readonly ulong _seed;
     private ulong _rs;
-    private void Sound(string name, double x = double.NaN, double size = 0) =>
-        Sfx?.Play(name, double.IsNaN(x) ? 0 : Pan(x), Frame, size);
+    private void Sound(string name, double? x = null, double size = 0) =>
+        Sfx?.Play(name, x is { } at ? Pan(at) : 0, Frame, size);
     /// <summary>A field x as a stereo pan, -1 at the left edge to 1 at the right; 0 while the field has no width.</summary>
     private double Pan(double x) => PW <= 0 ? 0 : x / PW * 2 - 1;
     private double R() => NextUnit(ref _rs);
@@ -412,8 +416,6 @@ public sealed partial class RaiderGame
     public int HitStop { get; private set; }
     public double Shake { get; private set; }
     public int ScreenFlash { get; private set; }
-    public string? Banner { get; private set; }
-    public int BannerLeft { get; private set; }
     public string? Toast { get; private set; }
     public int ToastLeft { get; private set; }
 
@@ -501,7 +503,6 @@ public sealed partial class RaiderGame
         ScrollFrames++;
         Cards.Step();
         UpdateLogKeys();
-        if (BannerLeft > 0 && --BannerLeft == 0) Banner = null;
 
         UpdateShip();
         UpdateHold();
@@ -509,6 +510,7 @@ public sealed partial class RaiderGame
         UpdateWaves();
         UpdateEnemies();
         UpdateVoice();
+        EnemySpeechBox.Settle(this);
         UpdateBullets();
         Collide();
         UpdatePickups();
@@ -762,7 +764,7 @@ public sealed partial class RaiderGame
         {
             enemy.Age++;
             enemy.ModeAge++;
-            EnemySpeechBox.Update(enemy, Layout.PCols, Layout.Rows, enemy.Voice is not null && BehaviourFor(enemy.Kind).HoldBox(this, enemy));
+            EnemySpeechBox.Update(enemy, Layout.PCols, Layout.Rows, enemy.SpeechBoxHeld || enemy.Voice is not null && BehaviourFor(enemy.Kind).HoldBox(this, enemy));
             if (enemy.Flash > 0) enemy.Flash--;
             if (enemy.Parts is not null) foreach (var part in enemy.Parts) if (part.Flash > 0) part.Flash--;
             enemy.BaseX += enemy.KX; enemy.Y += enemy.KY;
@@ -778,7 +780,7 @@ public sealed partial class RaiderGame
             if (enemy.Parts is not null ? OffField(enemy) : enemy.Y > PH + OffFieldMargin || enemy.Leaving && enemy.Y < -enemy.Sprite.H || enemy.X < -enemy.Sprite.W - OffSideMargin || enemy.X > PW + enemy.Sprite.W + OffSideMargin) { EnemySpeechBox.Bury(this, enemy); Enemies.RemoveAt(i); }
         }
         for (int i = Echoes.Count - 1; i >= 0; i--)
-            if (++Echoes[i].SpeechBoxAge >= EnemySpeechBox.Frames(Echoes[i])) Echoes.RemoveAt(i);
+            if (!Echoes[i].SpeechBoxHeld && ++Echoes[i].SpeechBoxAge >= EnemySpeechBox.Frames(Echoes[i])) Echoes.RemoveAt(i);
     }
 
     /// <summary>Sidestep a ship shot that is lined up on this enemy. The enemy must be on screen, off cooldown and not already moving;

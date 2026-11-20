@@ -34,7 +34,7 @@ public class RepostHoldTests
     public void A_repost_hold_runs_on_the_same_clock_and_beats_as_a_like_in_the_green_tables_colours()
     {
         Assert.Equal(Greens, HoldBeats.Colours(Repost));
-        Assert.Equal(Pale, HoldBeats.Finished(Repost));
+        Assert.Equal(Pale, HoldBeats.FinishedColour(Repost));
 
         var (g, c, played) = HoldRig.Scene();
         var box = LikeHoldTests.GrownButtonBox(g, c, Repost);
@@ -51,8 +51,8 @@ public class RepostHoldTests
             HoldRig.Away(g);
             var f = HoldRig.Draw(g);
             int beatWidth = HoldBeats.Widths[i + 1];
-            var (width, rows) = LikeHoldTests.Extent(f, box, Greens[i + 1], CardColours.RepostIdle);
-            Assert.Equal(beatWidth, width);
+            int rows = LikeHoldTests.Extent(f, box, Greens[i + 1], CardColours.RepostIdle).Rows;
+            Assert.Equal(beatWidth, LikeHoldTests.SpanWidth(f, box, Greens[i + 1], CardColours.RepostIdle));
             Assert.Equal(HoldBeats.IconHeight(beatWidth), rows);
             for (int k = 0; k < Greens.Length; k++)
                 if (k != i + 1) Assert.Equal(0, LikeHoldTests.Extent(f, box, Greens[k]).Width);
@@ -111,7 +111,8 @@ public class RepostHoldTests
                 Assert.True(isLit == (i < lit), $"progress {progress}: pixel {i} of {path.Length} is {(isLit ? "lit" : "idle")}, the lit part ends at {lit}");
             }
             Assert.True(drawn >= path.Length * (QuartersOfALoop - 1) / QuartersOfALoop, $"progress {progress}: {drawn} of {path.Length} drawn");
-            Assert.True(litSeen > 0 && litSeen < drawn, $"progress {progress}: {litSeen} lit of {drawn}");
+            // a footer-sized loop is short enough that its share rounds to the whole outline before the hold is done
+            Assert.True(litSeen > 0 && (litSeen < drawn || lit == path.Length), $"progress {progress}: {litSeen} lit of {drawn}");
         }
     }
 
@@ -192,7 +193,7 @@ public class RepostHoldTests
         Assert.Equal(1, writes);
 
         // the frozen frames show the loop near white at its finished width, and it turns as they pass
-        Assert.Equal(HoldBeats.FinishedWidth, LikeHoldTests.Extent(HoldRig.Draw(g), LikeHoldTests.GrownButtonBox(g, c, Repost), Pale).Width);
+        Assert.Equal(HoldBeats.FinishedWidth, LikeHoldTests.SpanWidth(HoldRig.Draw(g), LikeHoldTests.GrownButtonBox(g, c, Repost), Pale));
         int n = CardPainter.LoopPath(HoldBeats.FinishedWidth).Length;
         var turns = Enumerable.Range(0, CardPainter.SpinFrames + 1).Select(i => CardPainter.SpinPhase(HoldBeats.FinishedWidth, i)).ToList();
         Assert.Equal(0, turns[0]);

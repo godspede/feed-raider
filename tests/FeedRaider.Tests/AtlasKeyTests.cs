@@ -17,6 +17,9 @@ public class AtlasKeyTests
     // every 24-bit colour, the bound for a random channel triple
     private const int ColourSpace = 0x1000000;
 
+    // a cell of the hold's progress line is all track, half lit or all lit
+    private const int ProgressLineCellStates = 3;
+
     private const int GameSeed = 5;
     private const ulong BackgroundSeed = RaiderView.DefaultBackgroundSeed;
 
@@ -28,6 +31,9 @@ public class AtlasKeyTests
 
     // the cards that carry pictures: every third one
     private const int PicturedEvery = 3;
+
+    // the posts a run keeps waiting in the queue: every ceiling in this file was measured at this depth
+    private const int QueuedPosts = 4;
 
     [Fact]
     public void The_first_colours_stay_exact_and_near_ones_fold_onto_them()
@@ -170,7 +176,7 @@ public class AtlasKeyTests
     [Theory]
     [InlineData(PostAction.Like)]
     [InlineData(PostAction.Repost)]
-    public void A_scripted_hold_at_phone_size_mints_no_more_keys_than_the_run_without_it_plus_the_cells_the_grown_icon_covers_at_each_step(PostAction action)
+    public void A_scripted_hold_at_phone_size_mints_no_more_keys_than_the_run_without_it_plus_the_cells_of_the_ships_ring_at_each_step_and_of_the_progress_line(PostAction action)
     {
         // the ship rests on the button of one card for the whole build-up, or stays where it starts, clear of every button
         int Run(bool holds)
@@ -197,13 +203,15 @@ public class AtlasKeyTests
             return keys.Count;
         }
         int without = Run(false), with = Run(true);
-        // the icon at its widest, with its thump and its halo, in cells (and one more each way for a row step)
-        int iconWidth = HoldBeats.Widths[^1] + HoldBeats.ThumpPixels, iconHeight = HoldBeats.IconHeight(iconWidth);
-        static int CellsOver(int pixels) => (pixels + 2 * HoldBeats.HaloMargin + CardField.PixelsPerCell - 1) / CardField.PixelsPerCell + 1;
-        int cells = CellsOver(iconWidth) * CellsOver(iconHeight);
+        // each step recolours the ring of dots round the ship, and the icon and its halo lie inside the ring: the ring's square in
+        // cells (and one more for a row step); the progress line along the card's foot passes each of its cells through its states
+        static int CellsOver(int pixels) => (pixels + CardField.PixelsPerCell - 1) / CardField.PixelsPerCell + 1;
+        int ring = CellsOver(2 * RaiderView.HoldRingRadius + 1), cells = ring * ring;
+        Assert.True(HoldBeats.MaxIconWidth + 2 * HoldBeats.HaloMargin <= 2 * RaiderView.HoldRingRadius, "the icon and its halo lie inside the ring");
         Assert.True(with > without, "the build-up is on the screen");
-        int steps = HoldBeats.Widths.Length;
-        Assert.True(with <= without + steps * cells, $"minted {with} with the hold and {without} without; {steps} steps of {cells} cells allow {steps * cells} more");
+        int steps = HoldBeats.Widths.Length, line = PhoneCols * ProgressLineCellStates;
+        Assert.True(with <= without + steps * cells + line,
+            $"minted {with} with the hold and {without} without; {steps} steps of {cells} cells and {line} for the line allow {steps * cells + line} more");
     }
 
     private static FeedPost Post(int number) =>
@@ -278,7 +286,7 @@ public class AtlasKeyTests
         int posted = 0;
         for (int frame = 0; frame < frames; frame++)
         {
-            if (game.Posts.Count < 4) game.Posts.Offer(pictures == Pictures.None ? Post(++posted) : Pictured(++posted));
+            if (game.Posts.Count < QueuedPosts) game.Posts.Offer(pictures == Pictures.None ? Post(++posted) : Pictured(++posted));
             if (frame % framesPerTurn == 0) foreach (var direction in directions) game.Input.Key(direction, dice.NextDouble() < heldChance);
             game.Input.Key(GameKey.Fire, true);
             game.Step();

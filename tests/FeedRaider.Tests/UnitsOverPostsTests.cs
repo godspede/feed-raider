@@ -118,7 +118,7 @@ public class UnitsOverPostsTests
         var scr = Render(game);
         Assert.False(char.IsLetterOrDigit(scr.CharAt(col, row)), "the ship's cell is not a letter");
         Assert.NotEqual(control.Fg[row * Cols + col], scr.Fg[row * Cols + col]);
-        // an enemy's box gives way to the ship (EnemySpeechBox.Visible), so what shows there is the ship
+        // an enemy's box gives way to the ship (EnemySpeechBox.Placed), so what shows there is the ship
     }
 
     [Fact]

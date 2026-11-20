@@ -198,7 +198,7 @@ public class VoiceTests
         StepWithoutBoltsOrFillers(game, quietFrames);
         Assert.Null(lesser.Text);
         Assert.False(EnemySpeechBox.Speaks(lesser));
-        Assert.Empty(EnemySpeechBox.Visible(game, game.Layout, Tuning.MaxSpeechBoxes));
+        Assert.Empty(EnemySpeechBox.Placed(game, game.Layout, Tuning.MaxSpeechBoxes));
     }
 
     [Fact]
@@ -403,7 +403,7 @@ public class VoiceTests
         StepWithoutBoltsOrFillers(game, SettleFrames);
         Assert.Null(boss.Text);
         Assert.Null(boss.Header);
-        Assert.Empty(EnemySpeechBox.Visible(game, game.Layout, Tuning.MaxSpeechBoxes));
+        Assert.Empty(EnemySpeechBox.Placed(game, game.Layout, Tuning.MaxSpeechBoxes));
     }
 
     // ---------------------------------------------------------------- the four turns
@@ -468,7 +468,7 @@ public class VoiceTests
         StepWithoutBoltsOrFillers(game, BriefFrames);
         Assert.True(EnemySpeechBox.IsOpen(echo));
         Assert.True(EnemySpeechBox.IsOpen(boss));
-        var visible = EnemySpeechBox.Visible(game, game.Layout, Tuning.MaxSpeechBoxes);
+        var visible = EnemySpeechBox.Placed(game, game.Layout, Tuning.MaxSpeechBoxes).Select(shown => shown.Enemy).ToList();
         Assert.Contains(echo, visible); Assert.Contains(boss, visible);
         var newBox = EnemySpeechBox.Box(boss, game.Layout); var oldBox = EnemySpeechBox.Box(echo, game.Layout);
         Assert.False(newBox.Overlaps(oldBox), "the new box sits beside the old one");
@@ -625,7 +625,7 @@ public class VoiceTests
         StepWithoutBoltsOrFillers(game, BriefFrames);
         int open = game.Enemies.Concat(game.Echoes).Count(EnemySpeechBox.IsOpen);
         Assert.True(open >= stacks, $"{open} boxes are open");
-        var shown = EnemySpeechBox.Visible(game, game.Layout, Tuning.MaxSpeechBoxes);
+        var shown = EnemySpeechBox.Placed(game, game.Layout, Tuning.MaxSpeechBoxes).Select(placed => placed.Enemy).ToList();
         Assert.Equal(Tuning.MaxSpeechBoxes, shown.Count);
         Assert.Contains(boss, shown);
         int oldestShown = shown.Max(enemy => enemy.SpeechBoxAge);
@@ -642,10 +642,10 @@ public class VoiceTests
         var boss = SpawnBoss(game);
         StepWithoutBoltsOrFillersUntil(game, () => boss.Text is not null);
         StepWithoutBoltsOrFillers(game, SettleFrames);
-        Assert.Contains(boss, EnemySpeechBox.Visible(game, game.Layout, Tuning.MaxSpeechBoxes));
+        Assert.Contains(boss, EnemySpeechBox.Placed(game, game.Layout, Tuning.MaxSpeechBoxes).Select(shown => shown.Enemy).ToList());
         const double besideShipY = 2;   // a little below the ship's centre, still level with it: its box would sit on the ship
         boss.X = game.PX; boss.Y = game.PY + besideShipY;
-        Assert.DoesNotContain(boss, EnemySpeechBox.Visible(game, game.Layout, Tuning.MaxSpeechBoxes));
+        Assert.DoesNotContain(boss, EnemySpeechBox.Placed(game, game.Layout, Tuning.MaxSpeechBoxes).Select(shown => shown.Enemy).ToList());
     }
 
     [Theory]
@@ -672,7 +672,7 @@ public class VoiceTests
         Assert.True(box.R * CardField.PixelsPerCell >= boss.Y + boss.Sprite.H / 2.0, "below the sprite, not over it");
         Assert.True(box.C >= game.Layout.Col0 && box.Right <= game.Layout.Col0 + game.Layout.PCols);
         Assert.True(box.R >= EnemySpeechBox.MinRow && box.Bottom <= game.Layout.Rows, $"{box} in {game.Layout.Rows} rows");
-        Assert.Contains(boss, EnemySpeechBox.Visible(game, game.Layout, Tuning.MaxSpeechBoxes));
+        Assert.Contains(boss, EnemySpeechBox.Placed(game, game.Layout, Tuning.MaxSpeechBoxes).Select(shown => shown.Enemy).ToList());
         var scr = Render(game, cols, rows);
         Assert.Contains(RudeHeader, Row(scr, box.R + 1));
         Assert.Equal('▲', scr.CharAt(box.C + box.W / 2, box.R));

@@ -227,7 +227,8 @@ public static class CardPainter
     }
 
     /// <summary>The build-up of every held or draining button, drawn over the slabs and under every unit: the button's outline while
-    /// the ship is on it, a halo on the slab round the icon, and the icon grown to its step's width. The heart fills from the
+    /// the ship is on it, a halo on the slab round the icon, the icon grown to its step's width but never taller than the footer
+    /// (<see cref="HoldBeats.MaxIconHeight"/>), and the progress line along the card's foot, which the ship covers only a little of. The heart fills from the
     /// bottom as far as progress has come; the loop is drawn round, its arrows a quarter turn on with every beat. For the frames
     /// of a finish the icon is drawn at its widest and near white, then falls back; the loop turns once as it does.</summary>
     public static void DrawHoldGlow(Surface s, RaiderGame g, int dx, int dy, int clipTop)
@@ -250,11 +251,16 @@ public static class CardPainter
                 string[] art = a == PostAction.Like ? Heart : Loop;
                 uint idle = a == PostAction.Like ? CardColours.LikeIdle : CardColours.RepostIdle;
                 bool loop = a == PostAction.Repost;
+                var (lineLeft, lineRight) = ProgressLineSpan(g, c, dx);
+                int lineY = box.Y + box.H - 1;
+                var (lineLit, lineTrack) = HoldBeats.LineColours(a);
+                double lineFilled = flash || settling ? 1 : progress / (double)Tuning.HoldFrames;
+                if (lineFilled > 0) ProgressLine(s, lineLeft, lineRight, lineY, lineLit, lineTrack, lineFilled, clipTop);
                 if (flash)
                 {
                     Halo(s, box, HoldBeats.FinishedWidth, HoldBeats.HaloColour(a, HoldBeats.Ticks.Length - 1), clipTop);
-                    if (loop) LoopIcon(s, box, HoldBeats.FinishedWidth, HoldBeats.Finished(a), idle, 1, SpinPhase(HoldBeats.FinishedWidth, finished), clipTop);
-                    else Icon(s, box, art, HoldBeats.FinishedWidth, HoldBeats.Finished(a), idle, 1, clipTop);
+                    if (loop) LoopIcon(s, box, HoldBeats.FinishedWidth, HoldBeats.FinishedColour(a), idle, 1, SpinPhase(HoldBeats.FinishedWidth, finished), clipTop);
+                    else Icon(s, box, art, HoldBeats.FinishedWidth, HoldBeats.FinishedColour(a), idle, 1, clipTop);
                 }
                 else if (settling)
                 {
@@ -266,7 +272,7 @@ public static class CardPainter
                 {
                     int step = HoldBeats.StepAt(progress);
                     long beat = g.Hold.SinceBeat(m, a, g.Frame);
-                    int w = HoldBeats.Widths[step] + (beat < HoldBeats.ThumpFrames ? HoldBeats.ThumpPixels : 0);
+                    int w = beat < HoldBeats.ThumpFrames ? HoldBeats.Thumped(HoldBeats.Widths[step]) : HoldBeats.Widths[step];
                     double filled = progress / (double)Tuning.HoldFrames;
                     Halo(s, box, w, HoldBeats.HaloColour(a, step), clipTop);
                     if (loop) LoopIcon(s, box, w, steps[step], idle, filled, LoopPhase(w, step, beat), clipTop);
@@ -286,7 +292,7 @@ public static class CardPainter
     {
         int quarter = LoopPath(w).Length / 4;
         if (step > 0 && sinceBeat >= 0 && sinceBeat < HoldBeats.ThumpFrames)
-            return (step - 1) * quarter + quarter * ((int)sinceBeat + 1) / (HoldBeats.ThumpFrames + 1);
+            return (step - 1) * quarter + Math.Max(1, quarter * ((int)sinceBeat + 1) / (HoldBeats.ThumpFrames + 1));
         return step * quarter;
     }
 
@@ -297,12 +303,6 @@ public static class CardPainter
     /// <summary>The frames a finished loop takes to turn once.</summary>
     public const int SpinFrames = 6;
 
-    /// <summary>Loop icon widths, in pixels, from which the corners are cut deep and the arrow barbs grow, from which the barbs grow
-    /// longest, and from which the line is drawn thick. A narrower loop has corners cut one pixel deep, one-pixel barbs and a one-pixel line.</summary>
-    private const int LoopThickCornerWidth = 13, LoopLongBarbWidth = 19, LoopThickLineWidth = 15;
-    /// <summary>In pixels: the deep corner cut, the barb from <see cref="LoopThickCornerWidth"/>, the barb from
-    /// <see cref="LoopLongBarbWidth"/>, and the thick line.</summary>
-    private const int LoopDeepCorner = 2, LoopMidBarb = 2, LoopLongBarb = 3, LoopThickLine = 2;
     /// <summary>The gap left ahead of each arrow is this fraction of the outline: one part in this many.</summary>
     private const int LoopGapDivisor = 12;
     /// <summary>How much further toward the slab a picture is pulled on each pass while it is still too bright.</summary>
@@ -318,18 +318,15 @@ public static class CardPainter
 
     private static LoopShape BuildLoop(int w)
     {
-        int h = HoldBeats.IconHeight(w), r = w >= LoopThickCornerWidth ? LoopDeepCorner : 1;
+        int h = HoldBeats.IconHeight(w);
         var path = new List<(int, int)>();
         var inward = new List<(int, int)>();
         void Add(int x, int y, int ix, int iy) { path.Add((x, y)); inward.Add((ix, iy)); }
-        for (int x = r; x <= w - 1 - r; x++) Add(x, 0, 0, 1);
-        for (int i = 1; i < r; i++) Add(w - 1 - r + i, i, -1, 1);
-        for (int y = r; y <= h - 1 - r; y++) Add(w - 1, y, -1, 0);
-        for (int i = 1; i < r; i++) Add(w - 1 - i, h - 1 - r + i, -1, -1);
-        for (int x = w - 1 - r; x >= r; x--) Add(x, h - 1, 0, -1);
-        for (int i = 1; i < r; i++) Add(r - i, h - 1 - i, 1, -1);
-        for (int y = h - 1 - r; y >= r; y--) Add(0, y, 1, 0);
-        for (int i = 1; i < r; i++) Add(i, r - i, 1, 1);
+        // the corners are cut one pixel deep
+        for (int x = 1; x <= w - 2; x++) Add(x, 0, 0, 1);
+        for (int y = 1; y <= h - 2; y++) Add(w - 1, y, -1, 0);
+        for (int x = w - 2; x >= 1; x--) Add(x, h - 1, 0, -1);
+        for (int y = h - 2; y >= 1; y--) Add(0, y, 1, 0);
         return new LoopShape([.. path], [.. inward]);
     }
 
@@ -344,25 +341,20 @@ public static class CardPainter
         int n = path.Length, h = HoldBeats.IconHeight(w);
         int x0 = button.X + (int)Math.Floor((button.W - w) / 2.0), y0 = button.Y + (int)Math.Floor((button.H - h) / 2.0);
         int count = (int)Math.Round(n * Math.Clamp(filled, 0, 1));
-        int gap = Math.Max(1, n / LoopGapDivisor), barb = w >= LoopLongBarbWidth ? LoopLongBarb : w >= LoopThickCornerWidth ? LoopMidBarb : 1;
-        int thick = w >= LoopThickLineWidth ? LoopThickLine : 1;
+        int gap = Math.Max(1, n / LoopGapDivisor);
         int head0 = (phase % n + n) % n, head1 = (head0 + n / 2) % n;
         for (int i = 0; i < n; i++)
         {
             // the pixels just ahead of a head are left out: the space between one arrow's point and the other's tail
             if ((i - head0 - 1 + n) % n < gap || (i - head1 - 1 + n) % n < gap) continue;
             uint colour = i < count ? lit : idle;
-            for (int t = 0; t < thick; t++) Put(s, x0 + path[i].X + inward[i].X * t, y0 + path[i].Y + inward[i].Y * t, colour, clipTop);
+            Put(s, x0 + path[i].X, y0 + path[i].Y, colour, clipTop);
         }
-        // each head is a barb on the inside of the line, longer the further back from the point: the icon stays as wide as its step
+        // each head is a one-pixel barb on the inside of the line, a pixel back from the point: the icon stays as wide as its step
         foreach (int head in (ReadOnlySpan<int>)[head0, head1])
         {
-            uint colour = head < count ? lit : idle;
-            for (int k = 1; k <= barb; k++)
-            {
-                int j = (head - k + n) % n;
-                for (int d = thick; d < thick + k; d++) Put(s, x0 + path[j].X + inward[j].X * d, y0 + path[j].Y + inward[j].Y * d, colour, clipTop);
-            }
+            int j = (head - 1 + n) % n;
+            Put(s, x0 + path[j].X + inward[j].X, y0 + path[j].Y + inward[j].Y, head < count ? lit : idle, clipTop);
         }
     }
 
@@ -396,13 +388,32 @@ public static class CardPainter
         for (int y = b.Y; y < b.Y + b.H; y++) { Put(s, b.X, y, colour, clipTop); Put(s, b.X + b.W - 1, y, colour, clipTop); }
     }
 
+    /// <summary>Cells the progress line keeps clear of the card's left and right edges.</summary>
+    private const int ProgressLineInsetCols = 1;
+
+    /// <summary>Where a held button's progress line runs, in pixels from the left: the card's width inside its edges.</summary>
+    public static (int Left, int Right) ProgressLineSpan(RaiderGame g, Card c, int dx = 0)
+    {
+        int x0 = g.Cards.CardLeft * CardField.PixelsPerCell + dx;
+        return (x0 + ProgressLineInsetCols * CardField.PixelsPerCell, x0 + (c.Shape.Cols - ProgressLineInsetCols) * CardField.PixelsPerCell);
+    }
+
+    /// <summary>A hold's progress as a line along the card's last pixel row: lit from the left in <paramref name="lit"/> for the
+    /// <paramref name="filled"/> share of it, the rest in <paramref name="track"/>. The ship rests on the icon and hides it; it hides
+    /// only its own width of this line.</summary>
+    private static void ProgressLine(Surface s, int left, int right, int y, uint lit, uint track, double filled, int clipTop)
+    {
+        int litPixels = (int)Math.Ceiling((right - left) * Math.Clamp(filled, 0, 1));
+        for (int x = left; x < right; x++) Put(s, x, y, x - left < litPixels ? lit : track, clipTop);
+    }
+
     /// <summary>A soft disc round an icon <paramref name="w"/> wide, laid only where the slab shows: it never tints a picture, a
     /// button's ground or the sky, so it is one colour a step.</summary>
     private static void Halo(Surface s, PixelRect button, int w, uint colour, int clipTop)
     {
         int h = HoldBeats.IconHeight(w);
         double cx = button.X + button.W / 2.0 - 0.5, cy = button.Y + button.H / 2.0 - 0.5;
-        double rx = w / 2.0 + HoldBeats.HaloMargin, ry = h / 2.0 + HoldBeats.HaloMargin;
+        double rx = w / 2.0 + HoldBeats.HaloMargin, ry = Math.Min(h / 2.0 + HoldBeats.HaloMargin, button.H / 2.0);
         for (int y = (int)Math.Floor(cy - ry); y <= (int)Math.Ceiling(cy + ry); y++)
             for (int x = (int)Math.Floor(cx - rx); x <= (int)Math.Ceiling(cx + rx); x++)
             {

@@ -783,7 +783,7 @@ public sealed class PileOnTests(ITestOutputHelper output)
         Assert.Equal(posts[3], e.Text);
         StepKeepingOnlyWall(g);
         Assert.Equal(posts.Length - 1, g.Echoes.Count(x => x.Kind == EnemyKind.PileOn));
-        var visible = EnemySpeechBox.Visible(g, g.Layout, Tuning.MaxSpeechBoxes);
+        var visible = EnemySpeechBox.Placed(g, g.Layout, Tuning.MaxSpeechBoxes).Select(shown => shown.Enemy).ToList();
         Assert.Equal(Tuning.MaxSpeechBoxes, visible.Count);   // the live one and the two newest left behind
         Assert.Contains(e, visible);
         Assert.DoesNotContain(visible, v => v.Text == posts[0]);

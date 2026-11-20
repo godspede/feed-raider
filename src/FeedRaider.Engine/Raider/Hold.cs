@@ -6,16 +6,28 @@ public static class HoldBeats
 {
     /// <summary>The progress at which each step begins. A beat fires when progress rises to an entry.</summary>
     public static readonly int[] Ticks = [0, 15, 30, 45, 58, 69, 78, 85];
+    /// <summary>The tallest a held icon is drawn, in pixels: the card's footer, which is its button's box, so it never covers the
+    /// words above it or the next card below.</summary>
+    public const int MaxIconHeight = CardLayout.FooterRows * CardField.PixelsPerCell;
+    /// <summary>The widest a held icon is drawn, a beat's thump included: the art's shape at <see cref="MaxIconHeight"/>.</summary>
+    public const int MaxIconWidth = MaxIconHeight * CardLayout.IconWidthPx / CardLayout.IconHeightPx;
     /// <summary>The icon's width in pixels at each step; its height follows (<see cref="IconHeight"/>).</summary>
-    public static readonly int[] Widths = [7, 9, 11, 13, 15, 17, 19, 21];
+    public static readonly int[] Widths = [5, 5, 5, 6, 6, 6, 7, 7];
     /// <summary>The icon's width in the frozen frames of a finish.</summary>
-    public const int FinishedWidth = 25;
-    /// <summary>How far the halo reaches past the icon, in pixels.</summary>
+    public const int FinishedWidth = MaxIconWidth;
+    /// <summary>How far the halo reaches past the icon, in pixels; it reaches no higher or lower than the button's box.</summary>
     public const int HaloMargin = 3;
-    /// <summary>On a beat the icon is drawn this much wider for this many frames.</summary>
+    /// <summary>On a beat the icon is drawn this much wider for this many frames, up to <see cref="MaxIconWidth"/>.</summary>
     public const int ThumpPixels = 2, ThumpFrames = 3;
     /// <summary>The frames a finished icon takes to fall back into its button, after the frozen ones.</summary>
-    public static readonly int[] SettleWidths = [17, 11];
+    public static readonly int[] SettleWidths = [6, 5];
+
+    /// <summary>The icon's width on a beat's thump frames.</summary>
+    public static int Thumped(int width) => Math.Min(width + ThumpPixels, MaxIconWidth);
+    /// <summary>The progress line's colours, the lit part and the part the hold has not reached: the button's own lit colours, which
+    /// the card already has, so the line costs the terminal's glyph atlas little.</summary>
+    public static (uint Lit, uint Track) LineColours(PostAction a) =>
+        a == PostAction.Like ? (CardColours.LikeLit, CardColours.LikeButtonLit) : (CardColours.RepostLit, CardColours.RepostButtonLit);
 
     private static readonly uint[] LikeSteps = [0x86384f, 0xa03c55, 0xba3f59, 0xd2405b, 0xe63f5a, 0xf23c59, 0xfa3657, 0xff2d55];
     private static readonly uint[] RepostSteps = [0x2f6c4f, 0x2e7f58, 0x2b9261, 0x28a56a, 0x25b871, 0x22c876, 0x20d079, 0x1fd67a];
@@ -28,13 +40,13 @@ public static class HoldBeats
     public const int FinishedHitStop = 2;
 
     public static uint[] Colours(PostAction a) => a == PostAction.Like ? LikeSteps : RepostSteps;
-    public static uint Finished(PostAction a) => a == PostAction.Like ? LikeFinished : RepostFinished;
+    public static uint FinishedColour(PostAction a) => a == PostAction.Like ? LikeFinished : RepostFinished;
     /// <summary>The halo's strength at the first step, and how much each further step adds.</summary>
     private const double HaloBase = 0.10, HaloStep = 0.04;
-    public static double Halo(int step) => HaloBase + HaloStep * Math.Clamp(step, 0, Ticks.Length - 1);
+    public static double HaloStrength(int step) => HaloBase + HaloStep * Math.Clamp(step, 0, Ticks.Length - 1);
     public static double Shake(int step) => Shakes[Math.Clamp(step, 0, Shakes.Length - 1)];
     /// <summary>The colour the halo leaves on the slab at a step: one colour a step, so the terminal's glyph atlas gains little.</summary>
-    public static uint HaloColour(PostAction a, int step) => Surface.Mix(CardColours.Slab, Colours(a)[Math.Clamp(step, 0, Ticks.Length - 1)], Halo(step));
+    public static uint HaloColour(PostAction a, int step) => Surface.Mix(CardColours.Slab, Colours(a)[Math.Clamp(step, 0, Ticks.Length - 1)], HaloStrength(step));
 
     /// <summary>The height of an icon drawn <paramref name="width"/> pixels wide: the icon art, scaled.</summary>
     public static int IconHeight(int width) => (int)Math.Round(width * CardLayout.IconHeightPx / (double)CardLayout.IconWidthPx);
@@ -245,7 +257,7 @@ public sealed partial class RaiderGame
         SetState(m, action, real ? ButtonState.Pending : ButtonState.Marked);
 
         uint[] steps = HoldBeats.Colours(action);
-        uint lit = steps[^1], pale = HoldBeats.Finished(action);
+        uint lit = steps[^1], pale = HoldBeats.FinishedColour(action);
         AddShake(HoldBeats.FinishedShake, HoldBeats.FinishedHitStop);
         // the burst is placed by the post and the frame, not by the game's generator: a hold must not change what a seeded run does next
         ulong h = Hashing.Mix(Hashing.MixedFnv64(card.Post.Uri) ^ (ulong)Frame);

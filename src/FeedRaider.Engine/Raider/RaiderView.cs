@@ -24,7 +24,6 @@ public sealed class RaiderView
     internal const uint PostText = 0xe3c8ff, PostBg = 0x1a1030;
     private const uint EnemySpeechBoxText = 0xffd0e0;
     private const uint ShipDownBg = 0x5a1030, ToastBg = 0x3a1030, BombReady = 0x1a3a6a, BombSpent = 0x16202e;
-    private const uint BannerFlashA = 0x4a1040, BannerFlashB = 0x2a0a30;
     /// <summary>The ring round the ship while it holds a button: this many dots, this many pixels out.</summary>
     public const int HoldRingDots = 48, HoldRingRadius = 13;
     /// <summary>How far a flashing sprite is blended toward white.</summary>
@@ -49,7 +48,7 @@ public sealed class RaiderView
     internal const double PowerRingBase = 9, PowerRingSwing = 2, PowerRingAlpha = 0.5, PowerWarnRadius = 12, PowerWarnAlpha = 0.4;
     internal const int PowerWarnFrames = 6, PowerWarnOn = 3;
     private const int SpeechBoxMaxWidth = 20, WrapMargin = 6;
-    /// <summary>The most lines a boss's name or a box banner wraps to, and a hint, which on a narrow field wraps onto a second line, never a third.</summary>
+    /// <summary>The most lines a boss's name or a speech box's words wrap to, and a hint, which on a narrow field wraps onto a second line, never a third.</summary>
     internal const int WrapMaxLines = 3, HintWrapLines = 2;
     /// <summary>An enemy says nothing while its centre is above this pixel row, the bottom of the HUD.</summary>
     private const int WordsFromPixelRow = CardPainter.HudPixelRows;
@@ -62,10 +61,9 @@ public sealed class RaiderView
     internal const int HudShieldCol = 15, HudBombCol = 20;
     private const int ToastRowsFromBottom = 4, HintRowsFromBottom = 2;
     internal const int FastBlinkFrames = 2, MineGlintFrames = 8, StrobeFrames = 3;
-    private const int BannerFlashFrames = 4;
     private const int BannerBlinkFrames = 6, BannerBlinkCycle = 4;
     private const int BannerRowTopParts = 2, BannerRowWholeParts = 5;
-    private const int BoxBannerMinRow = 3, BoxBannerRowDivisor = 4, WideHintCols = 50;
+    private const int WideHintCols = 50;
     internal const double PickupPulseRate = 0.3, PickupAgePulseRate = 0.1, ShieldPulseRate = 0.2, PowerPulseRate = 0.6;
     /// <summary>A banner holds steady for the first half of its time, then blinks as it fades.</summary>
     private const int BannerSteadyFrames = Tuning.StageBannerFrames / 2;
@@ -78,7 +76,7 @@ public sealed class RaiderView
     internal const int MuzzleFlashLong = 5, MuzzleFlashShort = 3;   // the flash is a cross of a wide and a tall bar
     internal const double PickupGlowAlphaBase = 0.3, PickupGlowAlphaSwing = 0.35;
     internal const double ShieldHitFlashAlpha = 0.9, ShieldHitFlashFade = 0.13;
-    /// <summary>The blank cells a box's text keeps from its left edge: a box banner's lines and the bomb button's label and dots.</summary>
+    /// <summary>The blank cells the bomb button's label and dots keep from its left edge.</summary>
     private const string BoxIndent = "  ", BombLabel = BoxIndent + "BOMB" + BoxIndent;
     private const int LogTopRow = 2, LogRowsFromBottom = 2, NarrowLogMinRows = 3, NarrowTextCol = 4;
     internal const int NarrowRepostCol = 2, LikeIconCol = 2, RepostIconCol = 1;
@@ -590,15 +588,18 @@ public sealed class RaiderView
     /// <summary>The cells a banner block pads its longest line by: one on each side.</summary>
     internal const int BlockPad = 2;
 
-    /// <summary>Draws lines as one solid block on a backing of its own: every row as wide as the longest line plus a cell each side, each line centred, the block centred in the field.</summary>
-    private static void DrawBlock(Screen scr, int col0, int cols, int row, IReadOnlyList<(string Text, uint Fg)> lines, uint back)
+    /// <summary>Draws lines as one solid block on a backing of its own: every row as wide as the longest line plus a cell each side, each line centred, the block centred in the field,
+    /// on the row nearest <paramref name="row"/> where it covers no speech box.</summary>
+    private void DrawBlock(Screen scr, FieldLayout lay, int row, IReadOnlyList<(string Text, uint Fg)> lines, uint back)
     {
-        int width = Math.Min(cols, lines.Max(line => line.Text.Length) + BlockPad);
-        int left = col0 + (cols - width) / 2;
+        int width = Math.Min(lay.PCols, lines.Max(line => line.Text.Length) + BlockPad);
+        var block = new CellRect(lay.Col0 + (lay.PCols - width) / 2, row, width, lines.Count);
+        block = block with { R = RowClearOfSpeechBoxes(block, lay) };
+        _tags.Add(block);
         for (int line = 0; line < lines.Count; line++)
         {
-            scr.Blank(left, row + line, width, Palette.White, back);
-            scr.Text(left + (width - lines[line].Text.Length) / 2, row + line, lines[line].Text, lines[line].Fg, back);
+            scr.Blank(block.C, block.R + line, width, Palette.White, back);
+            scr.Text(block.C + (width - lines[line].Text.Length) / 2, block.R + line, lines[line].Text, lines[line].Fg, back);
         }
     }
 
@@ -649,8 +650,8 @@ public sealed class RaiderView
     private static bool BannerShows(long frame, int framesLeft) =>
         framesLeft > BannerSteadyFrames || (framesLeft > 0 && frame / BannerBlinkFrames % BannerBlinkCycle != 0);
 
-    /// <summary>Draws the cell text over the field: the HUD, what the enemies say, the pop-ups, the banners, the speech boxes, the
-    /// side panels and the hints. What the enemies say and the side panels are drawn by the methods that also record where they
+    /// <summary>Draws the cell text over the field: the HUD, what the enemies say, the pop-ups, the speech boxes, the banners, the
+    /// side panels and the hints; each banner and tag on the row nearest its own where it covers no speech box. What the enemies say and the side panels are drawn by the methods that also record where they
     /// landed (<see cref="DrawEnemyWordsAndRecordBoxes"/>, <see cref="DrawPanelsAndRegisterHits"/>).</summary>
     private void DrawText(RaiderGame game, Screen scr, FieldLayout lay, string? debug)
     {
@@ -664,45 +665,37 @@ public sealed class RaiderView
 
         DrawPopups(scr, game.Popups, col0, cols, ColOf, RowOf);
 
+        _speechBoxPainter.Draw(game, scr, lay);
+        _tags.Clear();
+
         if (game.Gate == GateState.Warning)
         {
             // steady, not blinking: the boss is coming and the banner is the whole of the warning
             var block = new List<(string Text, uint Fg)> { ("WARNING", Palette.White) };
             if (game.BossName.Length > 0) block.AddRange(ShortLines.Format(game.BossName, cols - BlockPad, WrapMaxLines).Select(line => (line, Palette.Gold)));
-            DrawBlock(scr, col0, cols, BannerRow(lay), block, Palette.WarningBack);
+            DrawBlock(scr, lay, BannerRow(lay), block, Palette.WarningBack);
         }
         else if (BannerShows(game.Frame, game.StageBannerLeft))
         {
             var block = new List<(string Text, uint Fg)> { (StageTitle(game.StageShown), Palette.White) };
             foreach (var kind in Ramp.Introduced(game.StageShown))
                 block.AddRange(ShortLines.Format(Ramp.HintFor(kind)!, cols - BlockPad, HintWrapLines).Select(line => (line, HintColour(kind))));
-            DrawBlock(scr, col0, cols, BannerRow(lay), block, Palette.BannerBack);
+            DrawBlock(scr, lay, BannerRow(lay), block, Palette.BannerBack);
         }
         else if (game.KindHint is { } midKind && BannerShows(game.Frame, game.KindHintLeft) && Ramp.HintFor(midKind) is { } mid)
         {
             // a kind that unlocks part way through a stage: its hint alone, with no stage number
             var lines = ShortLines.Format(mid, cols - BlockPad, HintWrapLines).Select(line => (line, HintColour(midKind))).ToList();
-            DrawBlock(scr, col0, cols, BannerRow(lay) + 1, lines, Palette.BannerBack);
+            DrawBlock(scr, lay, BannerRow(lay) + 1, lines, Palette.BannerBack);
         }
-
-        _speechBoxPainter.Draw(game, scr, lay);
 
         if (!Backdrop) DrawPanelsAndRegisterHits(game, scr, lay);
 
-        if (game.Banner is { } banner)
-        {
-            var lines = ShortLines.Format(banner, cols - WrapMargin, WrapMaxLines);
-            int width = lines.Max(line => line.Length) + BothSides * BoxIndent.Length;
-            int row = Math.Max(BoxBannerMinRow, lay.Rows / BoxBannerRowDivisor);
-            uint flashBg = BlinkOn(game.Frame, BannerFlashFrames) ? BannerFlashA : BannerFlashB;
-            for (int line = 0; line < lines.Length; line++)
-                scr.Text(col0 + (cols - width) / 2, row + line, (BoxIndent + lines[line]).PadRight(width), Palette.White, flashBg);
-        }
-        if (!game.Alive) CentreText(scr, col0, cols, lay.Rows / 2, " SHIP DOWN ", Palette.White, ShipDownBg);
-        else if (!Backdrop && game.Tick < DragHintSeconds * Tuning.Fps && game.Input.PointerLast) CentreText(scr, col0, cols, lay.Rows - HintRowsFromBottom, " drag to move ", Dim, HudBg);
-        else if (!Backdrop && game.Tick < KeysHintSeconds * Tuning.Fps && !game.Input.PointerLast) CentreText(scr, col0, cols, lay.Rows - HintRowsFromBottom, cols >= WideHintCols ? " WASD move  SPACE fire  B bomb  F auto " : " WASD SPACE B ", Dim, HudBg);
+        if (!game.Alive) CentreTag(scr, lay, lay.Rows / 2, ShipDown, Palette.White, ShipDownBg);
+        else if (!Backdrop && game.Tick < DragHintSeconds * Tuning.Fps && game.Input.PointerLast) CentreTag(scr, lay, lay.Rows - HintRowsFromBottom, " drag to move ", Dim, HudBg);
+        else if (!Backdrop && game.Tick < KeysHintSeconds * Tuning.Fps && !game.Input.PointerLast) CentreTag(scr, lay, lay.Rows - HintRowsFromBottom, cols >= WideHintCols ? " WASD move  SPACE fire  B bomb  F auto " : " WASD SPACE B ", Dim, HudBg);
         if (Backdrop) return;
-        if (game.Toast is { } toast) CentreText(scr, col0, cols, lay.Rows - ToastRowsFromBottom, $" {toast} ", Palette.White, ToastBg);
+        if (game.Toast is { } toast) CentreTag(scr, lay, lay.Rows - ToastRowsFromBottom, $" {toast} ", Palette.White, ToastBg);
         if (game.Input.PointerLast)
         {
             var (bombCol, bombRow, bombWidth, bombHeight) = game.BombButton;
@@ -771,8 +764,37 @@ public sealed class RaiderView
         if (debug is not null) scr.Text(stageCol - debug.Length - 1, top, debug, Dim, HudBg);
     }
 
-    private static void CentreText(Screen scr, int col0, int cols, int row, string text, uint fg, uint bg) =>
-        scr.Text(col0 + Math.Max(0, (cols - text.Length) / 2), row, text, fg, bg);
+    /// <summary>A one-row tag centred on the field, on the row nearest <paramref name="row"/> where it covers no speech box.</summary>
+    private void CentreTag(Screen scr, FieldLayout lay, int row, string text, uint fg, uint bg)
+    {
+        var tag = new CellRect(lay.Col0 + Math.Max(0, (lay.PCols - text.Length) / 2), row, text.Length, 1);
+        tag = tag with { R = RowClearOfSpeechBoxes(tag, lay) };
+        _tags.Add(tag);
+        scr.Text(tag.C, tag.R, text, fg, bg);
+    }
+
+    private readonly List<CellRect> _tags = [];
+
+    /// <summary>The cells of the banners (the stage banner, the warning, a kind's hint) and the tags (SHIP DOWN, the hints, the
+    /// toast) drawn by the last frame.</summary>
+    public IReadOnlyList<CellRect> Tags => _tags;
+
+    /// <summary>The row nearest <paramref name="tag"/>'s own, searched down and up in turn, at which it covers none of the speech
+    /// boxes drawn this frame; its own row when there is none. A banner or tag is drawn over the boxes, so this keeps their words whole.</summary>
+    private int RowClearOfSpeechBoxes(CellRect tag, FieldLayout lay)
+    {
+        int last = lay.Rows - tag.H;
+        for (int step = 0; step <= lay.Rows; step++)
+            foreach (int row in (ReadOnlySpan<int>)[tag.R + step, tag.R - step])
+                if (row >= HudRows && row <= last && !_speechBoxPainter.Boxes.Exists(box => box.Overlaps(tag with { R = row }))) return row;
+        return tag.R;
+    }
+
+    /// <summary>The tag drawn while the ship is down.</summary>
+    public const string ShipDown = " SHIP DOWN ";
+
+    /// <summary>The cells of the speech boxes drawn by the last frame.</summary>
+    public IReadOnlyList<CellRect> SpeechBoxes => _speechBoxPainter.Boxes;
 
     /// <summary>Draws the feed log in the side panel, or the phone's one-line feed strip, and replaces the click targets <see cref="LogHit"/> reads
     /// with the button rows this frame draws.</summary>
