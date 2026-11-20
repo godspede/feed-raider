@@ -2,11 +2,10 @@ using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Threading.Channels;
 
 namespace FeedRaider.Engine;
 
-/// <summary>Where a monster came from: a moderation label, a thread owner hiding a reply, or the made-up demo.</summary>
+/// <summary>Where an enemy came from: a moderation label, a thread owner hiding a reply, or the made-up demo.</summary>
 public enum DarkSource { Label, Hidden, Demo }
 
 /// <summary>What the room gets: a kind, a seed (a hash, not the URI) and anonymous clean text. Nothing about the author.</summary>
@@ -14,234 +13,178 @@ public sealed record DarkPost(DarknessKind Kind, ulong Seed, string Text, DarkSo
 
 public static partial class DarknessFilter
 {
-    [GeneratedRegex(@"^at://did:[a-z0-9]+:[A-Za-z0-9._:%-]+/app\.bsky\.feed\.post/[A-Za-z0-9._~:-]+$")]
+    [GeneratedRegex(@"^at://did:(?:plc:[a-z2-7]{24}|web:[A-Za-z0-9.-]+)/app\.bsky\.feed\.post/[A-Za-z0-9._~:-]+\z")]
     private static partial Regex PostUri();
 
-    [GeneratedRegex(@"^did:(?:plc:[a-z2-7]{24}|web:[A-Za-z0-9.-]+)$")]
+    [GeneratedRegex(@"^did:(?:plc:[a-z2-7]{24}|web:[A-Za-z0-9.-]+)\z")]
     private static partial Regex AccountDid();
 
-    /// <summary>The kind of monster this label summons, or null: only allowlisted values, never negations, only posts.</summary>
-    public static DarknessKind? Accept(LabelEvent l)
+    /// <summary>The kind of enemy this label summons, or null: only allowlisted values, never negations, only posts.</summary>
+    public static DarknessKind? Accept(LabelEvent label)
     {
-        if (l.Neg) return null;
-        if (!LabelFrame.Allowed.TryGetValue(l.Val, out var kind)) return null;
-        return PostUri().IsMatch(l.Uri) ? kind : null;
+        if (label.Neg) return null;
+        if (!LabelFrame.Allowed.TryGetValue(label.Val, out var kind)) return null;
+        return PostUri().IsMatch(label.Uri) ? kind : null;
     }
 
-    /// <summary>An account-level <c>spam</c> label (the subject is a bare DID) summons a spam monster; no other account label does.</summary>
-    public static DarknessKind? AcceptAccount(LabelEvent l) =>
-        !l.Neg && l.Val == "spam" && AccountDid().IsMatch(l.Uri) ? DarknessKind.Spam : null;
+    /// <summary>An account-level <c>spam</c> label (the subject is a bare DID) summons a spam enemy; no other account label does.</summary>
+    public static DarknessKind? AcceptAccount(LabelEvent label) =>
+        !label.Neg && label.Val == "spam" && AccountDid().IsMatch(label.Uri) ? DarknessKind.Spam : null;
 
     /// <summary>True for a post at:// URI (what a hidden reply must be before any fetch).</summary>
     public static bool IsPostUri(string uri) => PostUri().IsMatch(uri);
 }
 
-/// <summary>Reads post text from the public AppView, then from the author's PDS. Read-only GETs; the author's
-/// profile fields in the responses are never parsed.</summary>
+/// <summary>Reads post text from the public AppView alone, with read-only GETs: a post the AppView does not return has no text.
+/// Of the author, only the labels in the AppView's answer are read, so that a signed-out player is never shown an author who asks
+/// not to be shown to signed-out viewers.</summary>
 public static class PostTextFetcher
 {
-    public const string PlcDirectory = "https://plc.directory";
-
-    public static string? ParseGetPosts(string json)
+    /// <summary>Text of the post in a getPosts response. Empty when the post is adult (<see cref="FeedMapper.IsAdult"/>), or when
+    /// <paramref name="signedOut"/> and the author carries <see cref="FeedMapper.OptOutLabel"/> or names no author: the post is found,
+    /// and nothing of it is shown.</summary>
+    public static string? ParseGetPosts(string json, bool signedOut)
     {
         try
         {
             using var doc = JsonDocument.Parse(json);
             if (doc.RootElement.TryGetProperty("posts", out var posts) && posts.ValueKind == JsonValueKind.Array)
-                foreach (var p in posts.EnumerateArray())
-                    if (p.TryGetProperty("record", out var rec) && rec.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
-                        return t.GetString();
-        }
-        catch (JsonException) { }   // not JSON: no text
-        return null;
-    }
-
-    public static string? ParseGetRecord(string json)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("value", out var v) && v.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
-                return t.GetString();
+                foreach (var post in posts.EnumerateArray())
+                    if (TextOf(post, signedOut) is { } text) return text;
         }
         catch (JsonException) { }   // not JSON: no text
         return null;
     }
 
     /// <summary>Text of the newest original post in a getAuthorFeed response. Reposts (they carry a <c>reason</c>) are
-    /// skipped: that text belongs to someone else.</summary>
-    public static string? ParseAuthorFeed(string json)
+    /// skipped: that text belongs to someone else. Empty, as in <see cref="ParseGetPosts"/>, when that post is adult or when
+    /// <paramref name="signedOut"/> and the author opts out; an older post is not read in its place.</summary>
+    public static string? ParseAuthorFeed(string json, bool signedOut)
     {
         try
         {
             using var doc = JsonDocument.Parse(json);
             if (doc.RootElement.TryGetProperty("feed", out var feed) && feed.ValueKind == JsonValueKind.Array)
                 foreach (var item in feed.EnumerateArray())
-                    if (!item.TryGetProperty("reason", out _) && item.TryGetProperty("post", out var p)
-                        && p.TryGetProperty("record", out var rec) && rec.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
-                        return t.GetString();
+                    if (!item.TryGetProperty("reason", out _) && item.TryGetProperty("post", out var post) && TextOf(post, signedOut) is { } text)
+                        return text;
         }
         catch (JsonException) { }   // not JSON: no text
         return null;
     }
 
-    /// <summary>Text of the first record in a listRecords response (newest first).</summary>
-    public static string? ParseListRecords(string json)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("records", out var recs) && recs.ValueKind == JsonValueKind.Array)
-                foreach (var r in recs.EnumerateArray())
-                    if (r.TryGetProperty("value", out var v) && v.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
-                        return t.GetString();
-        }
-        catch (JsonException) { }   // not JSON: no text
-        return null;
-    }
+    // an author missing from the view cannot be checked, and a label that cannot be checked counts as present
+    private static bool AuthorOptsOut(JsonElement post) =>
+        !post.TryGetProperty("author", out var author) || author.ValueKind != JsonValueKind.Object || FeedMapper.HasLabel(author, FeedMapper.OptOutLabel);
 
-    public static string? ParsePds(string didDocJson)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(didDocJson);
-            if (doc.RootElement.TryGetProperty("service", out var svc) && svc.ValueKind == JsonValueKind.Array)
-                foreach (var s in svc.EnumerateArray())
-                    if (s.TryGetProperty("type", out var ty) && ty.GetString() == "AtprotoPersonalDataServer"
-                        && s.TryGetProperty("serviceEndpoint", out var ep) && ep.GetString() is { } e
-                        && Uri.TryCreate(e, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps)
-                        return u.GetLeftPart(UriPartial.Authority);
-        }
-        catch (JsonException) { }   // not JSON: no text
-        return null;
-    }
-
-    private static async Task<string?> ResolvePdsAsync(HttpClient http, string did, CancellationToken ct)
-    {
-        string docUrl = did.StartsWith("did:plc:", StringComparison.Ordinal) ? $"{PlcDirectory}/{did}"
-            : did.StartsWith("did:web:", StringComparison.Ordinal) ? $"https://{did["did:web:".Length..]}/.well-known/did.json" : "";
-        if (docUrl.Length == 0) return null;
-        using var r = await http.GetAsync(docUrl, ct).ConfigureAwait(false);
-        return r.IsSuccessStatusCode ? ParsePds(await r.Content.ReadAsStringAsync(ct).ConfigureAwait(false)) : null;
-    }
+    // a post view's record text, or null when it carries none; empty when the post is not to be shown
+    private static string? TextOf(JsonElement post, bool signedOut) =>
+        post.TryGetProperty("record", out var record) && record.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String
+            ? (FeedMapper.IsAdult(post) || (signedOut && AuthorOptsOut(post)) ? "" : text.GetString())
+            : null;
 
     /// <summary>Raw text of the post at an at:// URI, or of the newest original post when given a bare DID (an account-level
-    /// label). Null if neither the AppView nor the PDS will give it.</summary>
-    public static async Task<string?> FetchAsync(HttpClient http, string subject, CancellationToken ct)
+    /// label), asking the AppView alone. Null when the AppView's answer is not a success or holds no such post, so an account
+    /// that is deactivated, suspended or taken down gives nothing. A network failure throws. With <paramref name="signedOut"/>,
+    /// an author who carries <see cref="FeedMapper.OptOutLabel"/>, or whose label cannot be checked, gives nothing to show.</summary>
+    public static Task<string?> FetchAsync(HttpClient http, string subject, bool signedOut, CancellationToken ct) =>
+        subject.StartsWith("did:", StringComparison.Ordinal) ? FetchLatestAsync(http, subject, signedOut, ct) : FetchPostAsync(http, subject, signedOut, ct);
+
+    private static async Task<string?> FetchLatestAsync(HttpClient http, string did, bool signedOut, CancellationToken ct)
     {
-        try
-        {
-            return subject.StartsWith("did:", StringComparison.Ordinal)
-                ? await FetchLatestAsync(http, subject, ct).ConfigureAwait(false)
-                : await FetchPostAsync(http, subject, ct).ConfigureAwait(false);
-        }
-        catch (Exception e) when (!ct.IsCancellationRequested && e is HttpRequestException or TaskCanceledException or InvalidOperationException)
-        {
-            return null;
-        }
+        using var response = await http.GetAsync($"{BskyClient.AppView}/xrpc/app.bsky.feed.getAuthorFeed?actor={Uri.EscapeDataString(did)}&limit=1&filter=posts_no_replies", ct).ConfigureAwait(false);
+        return response.IsSuccessStatusCode ? ParseAuthorFeed(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false), signedOut) : null;
     }
 
-    private static async Task<string?> FetchLatestAsync(HttpClient http, string did, CancellationToken ct)
+    private static async Task<string?> FetchPostAsync(HttpClient http, string atUri, bool signedOut, CancellationToken ct)
     {
-        using (var r = await http.GetAsync($"{BskyClient.AppView}/xrpc/app.bsky.feed.getAuthorFeed?actor={Uri.EscapeDataString(did)}&limit=1&filter=posts_no_replies", ct).ConfigureAwait(false))
-            if (r.IsSuccessStatusCode && ParseAuthorFeed(await r.Content.ReadAsStringAsync(ct).ConfigureAwait(false)) is { } text) return text;
-
-        // suspended or taken-down accounts are gone from the AppView, but their repo may still answer
-        string? pds = await ResolvePdsAsync(http, did, ct).ConfigureAwait(false);
-        if (pds is null) return null;
-        using var l = await http.GetAsync($"{pds}/xrpc/com.atproto.repo.listRecords?repo={Uri.EscapeDataString(did)}&collection=app.bsky.feed.post&limit=1", ct).ConfigureAwait(false);
-        return l.IsSuccessStatusCode ? ParseListRecords(await l.Content.ReadAsStringAsync(ct).ConfigureAwait(false)) : null;
-    }
-
-    private static async Task<string?> FetchPostAsync(HttpClient http, string atUri, CancellationToken ct)
-    {
-        using (var r = await http.GetAsync($"{BskyClient.AppView}/xrpc/app.bsky.feed.getPosts?uris={Uri.EscapeDataString(atUri)}", ct).ConfigureAwait(false))
-            if (r.IsSuccessStatusCode && ParseGetPosts(await r.Content.ReadAsStringAsync(ct).ConfigureAwait(false)) is { } text) return text;
-
-        var parts = atUri["at://".Length..].Split('/');
-        if (parts.Length != 3) return null;
-        string? pds = await ResolvePdsAsync(http, parts[0], ct).ConfigureAwait(false);
-        if (pds is null) return null;
-        using var g = await http.GetAsync($"{pds}/xrpc/com.atproto.repo.getRecord?repo={Uri.EscapeDataString(parts[0])}&collection={Uri.EscapeDataString(parts[1])}&rkey={Uri.EscapeDataString(parts[2])}", ct).ConfigureAwait(false);
-        return g.IsSuccessStatusCode ? ParseGetRecord(await g.Content.ReadAsStringAsync(ct).ConfigureAwait(false)) : null;
+        using var response = await http.GetAsync($"{BskyClient.AppView}/xrpc/app.bsky.feed.getPosts?uris={Uri.EscapeDataString(atUri)}", ct).ConfigureAwait(false);
+        return response.IsSuccessStatusCode ? ParseGetPosts(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false), signedOut) : null;
     }
 }
 
 /// <summary>The moderation labeler's firehose over a WebSocket (binary DAG-CBOR frames).</summary>
-public sealed class LabelSource : IHasState
+public sealed class LabelSource
 {
     public const string Endpoint = "wss://mod.bsky.app/xrpc/com.atproto.label.subscribeLabels";
-    public string State { get; private set; } = "connecting";
-    /// <summary>How many sequence numbers to replay before the first live frame, so a monster shows up within a minute.</summary>
-    public long SeedBack { get; init; } = 2000;
-    public int FramesSeen { get; private set; }
+    /// <summary>How many sequence numbers to replay before the first live frame, so an enemy shows up within a minute.</summary>
+    private const long SeedBack = 2000;
+    /// <summary>The cursor that opens at the bare <see cref="Endpoint"/>, at "now".</summary>
+    internal const long AtNow = -1;
     /// <summary>While paused the connection is closed; on resume it opens afresh at "now" (the paused time is not replayed).</summary>
     public PauseGate? Pause { get; init; }
 
     public async IAsyncEnumerable<LabelEvent> ReadAsync([EnumeratorCancellation] CancellationToken ct)
     {
-        long cursor = -1, last = -1;
-        bool seeded = SeedBack <= 0;
+        long cursor = AtNow, last = AtNow;
+        bool seeded = false, paused = false;
         int failures = 0;
         while (!ct.IsCancellationRequested)
         {
             if (Pause is not null)
             {
+                var beforeWait = Pause.PauseToken;
                 try { await Pause.WaitWhilePausedAsync(ct).ConfigureAwait(false); } catch (OperationCanceledException) { yield break; }
+                paused |= beforeWait.IsCancellationRequested;   // a pause that began with no connection open, as in the wait after a failed connect
             }
-            using var link = CancellationTokenSource.CreateLinkedTokenSource(ct, Pause?.PauseToken ?? default);
+            cursor = NextConnection(cursor, last, paused);
+            last = cursor;   // so a socket that drops before its first frame opens where it did, not back in the paused time
+            paused = false;
+            var pauseToken = Pause?.PauseToken ?? default;
+            using var link = CancellationTokenSource.CreateLinkedTokenSource(ct, pauseToken);
             var wsCt = link.Token;
             using var ws = new ClientWebSocket();
             string url = cursor >= 0 ? $"{Endpoint}?cursor={cursor}" : Endpoint;
             try { await ws.ConnectAsync(new Uri(url), wsCt).ConfigureAwait(false); }
-            catch (Exception) when (Pause?.IsPaused == true && !ct.IsCancellationRequested) { State = "paused"; continue; }
-            catch (Exception e)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { yield break; }
+            // only a pause cancels the connect past here, and a socket failure while paused is moot: the loop waits for the resume
+            catch (Exception error) when (error is OperationCanceledException || error is WebSocketException && Pause?.IsPaused == true)
             {
+                paused = true;
+                continue;
+            }
+            catch (WebSocketException)
+            {
+                // the labeler is unreachable or refused the handshake: retry with backoff
                 failures++;
-                State = $"reconnecting ({failures}: {e.Message})";
                 try { await Task.Delay(JetstreamSource.Backoff(failures), ct); } catch (OperationCanceledException) { yield break; }
                 continue;
             }
             failures = 0;
-            State = "live";
             var buffer = new byte[JetstreamSource.ReceiveBufferBytes];
             while (ws.State == WebSocketState.Open && !wsCt.IsCancellationRequested)
             {
-                var (frame, failure) = await JetstreamSource.ReceiveMessageAsync(ws, buffer, wsCt);
-                if (frame is null)
-                {
-                    if (failure is not null) State = $"reconnecting ({failure})";
-                    break;
-                }
+                var (frame, _) = await JetstreamSource.ReceiveMessageAsync(ws, buffer, wsCt);
+                if (frame is null) break;
                 var labels = LabelFrame.Decode(frame, out long seq);
-                FramesSeen++;
                 if (seq >= 0) last = seq;
                 if (!seeded && seq >= 0)
                 {
                     // first live frame tells us where "now" is; reconnect a little behind it to replay recent labels
                     seeded = true;
                     last = cursor = Math.Max(0, seq - SeedBack);
-                    State = "seeding";
                     break;
                 }
-                foreach (var l in labels) yield return l;
+                foreach (var label in labels) yield return label;
             }
-            if (Pause?.IsPaused == true)
-            {
-                State = "paused";
-                cursor = last = -1;
-                seeded = SeedBack <= 0;
-                continue;
-            }
-            if (seeded && last >= 0 && cursor < last) cursor = last;
+            paused = pauseToken.IsCancellationRequested;
         }
     }
+
+    /// <summary>
+    /// Where the next connection opens: a sequence number, or <see cref="AtNow"/>. A dropped socket carries on from the last
+    /// sequence number seen, which is the seed cursor right after seeding. A pause opens at "now", so the paused time is not
+    /// replayed; the run stays seeded, so it replays at most once however often it pauses.
+    /// </summary>
+    internal static long NextConnection(long cursor, long last, bool paused) => paused ? AtNow : Math.Max(cursor, last);
 
 }
 
 public sealed class DarknessStats
 {
     public int LabelsSeen, LabelsPassed, PostsFetched, Haunted;
+    /// <summary>Text fetches that failed on the network; the subject is dropped.</summary>
+    public int FetchFailures;
     /// <summary>Account-level spam labels that passed (a subset of <see cref="LabelsPassed"/>).</summary>
     public int AccountLabels;
     /// <summary>Replies newly hidden by threadgates, and texts fetched for them.</summary>
@@ -252,36 +195,38 @@ public sealed class DarknessStats
 public static class DarknessFeed
 {
     private const int SeenCap = 5000;
-    private const int DefaultPaceMs = 600;      // the wait between two text fetches
-    private const int BacklogCapacity = 24;     // subjects held for fetching before the oldest is dropped
+    /// <summary>The wait between two text fetches, in milliseconds.</summary>
+    public const int DefaultPaceMs = 600;
 
     /// <summary>Labels in. Post-level spam/engagement-farming/rude and account-level spam pass; the subject is fetched, then forgotten.</summary>
     public static Task RunAsync(IAsyncEnumerable<LabelEvent> labels, Func<string, CancellationToken, Task<string?>> fetchText,
         Action<DarkPost> onPost, DarknessStats stats, CancellationToken ct, int paceMs = DefaultPaceMs, PauseGate? pause = null) =>
-        PumpAsync(Subjects(labels, stats, ct), fetchText, DarkSource.Label, onPost, () => stats.PostsFetched++, ct, paceMs, pause);
+        PumpAsync(Subjects(labels, stats, ct), fetchText, DarkSource.Label, onPost, () => stats.PostsFetched++, () => stats.FetchFailures++, ct, paceMs, pause);
 
-    /// <summary>Newly hidden reply URIs in; each becomes a rude monster.</summary>
+    /// <summary>Newly hidden reply URIs in; each becomes a rude enemy.</summary>
     public static Task RunHiddenAsync(IAsyncEnumerable<string> hidden, Func<string, CancellationToken, Task<string?>> fetchText,
         Action<DarkPost> onPost, DarknessStats stats, CancellationToken ct, int paceMs = DefaultPaceMs, PauseGate? pause = null) =>
-        PumpAsync(HiddenSubjects(hidden, stats, ct), fetchText, DarkSource.Hidden, onPost, () => stats.HiddenFetched++, ct, paceMs, pause);
+        PumpAsync(HiddenSubjects(hidden, stats, ct), fetchText, DarkSource.Hidden, onPost, () => stats.HiddenFetched++, () => stats.FetchFailures++, ct, paceMs, pause);
 
     private static async IAsyncEnumerable<(string Subject, DarknessKind Kind, string? Label)> Subjects(IAsyncEnumerable<LabelEvent> labels, DarknessStats stats,
-        [EnumeratorCancellation] CancellationToken ct = default)
+        [EnumeratorCancellation] CancellationToken ct)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        await foreach (var l in labels.WithCancellation(ct).ConfigureAwait(false))
+        await foreach (var label in labels.WithCancellation(ct).ConfigureAwait(false))
         {
             stats.LabelsSeen++;
-            if (DarknessFilter.Accept(l) is null && DarknessFilter.AcceptAccount(l) is null) continue;
-            if (!seen.Add(l.Uri)) continue;
+            var postKind = DarknessFilter.Accept(label);
+            var accountKind = postKind is null ? DarknessFilter.AcceptAccount(label) : null;
+            if ((postKind ?? accountKind) is not { } kind || !seen.Add(label.Uri)) continue;
             if (seen.Count > SeenCap) seen.Clear();
-            if (DarknessFilter.Accept(l) is { } kind) { stats.LabelsPassed++; yield return (l.Uri, kind, l.Val); }
-            else if (DarknessFilter.AcceptAccount(l) is { } k) { stats.LabelsPassed++; stats.AccountLabels++; yield return (l.Uri, k, l.Val); }
+            stats.LabelsPassed++;
+            if (accountKind is not null) stats.AccountLabels++;
+            yield return (label.Uri, kind, label.Val);
         }
     }
 
     private static async IAsyncEnumerable<(string Subject, DarknessKind Kind, string? Label)> HiddenSubjects(IAsyncEnumerable<string> hidden, DarknessStats stats,
-        [EnumeratorCancellation] CancellationToken ct = default)
+        [EnumeratorCancellation] CancellationToken ct)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         await foreach (var uri in hidden.WithCancellation(ct).ConfigureAwait(false))
@@ -294,9 +239,9 @@ public static class DarknessFeed
     }
 
     private static async Task PumpAsync(IAsyncEnumerable<(string Subject, DarknessKind Kind, string? Label)> items, Func<string, CancellationToken, Task<string?>> fetchText,
-        DarkSource source, Action<DarkPost> onPost, Action fetched, CancellationToken ct, int paceMs, PauseGate? pause = null)
+        DarkSource source, Action<DarkPost> onPost, Action fetched, Action fetchFailed, CancellationToken ct, int paceMs, PauseGate? pause)
     {
-        var queue = Channel.CreateBounded<(string Subject, DarknessKind Kind, string? Label)>(new BoundedChannelOptions(BacklogCapacity) { FullMode = BoundedChannelFullMode.DropOldest });
+        var backlog = new FetchBacklog();
 
         var reader = Task.Run(async () =>
         {
@@ -304,28 +249,88 @@ public static class DarknessFeed
             {
                 await foreach (var (subject, kind, label) in items.WithCancellation(ct).ConfigureAwait(false))
                 {
-                    queue.Writer.TryWrite((subject, kind, label));
+                    backlog.Add(subject, kind, label);
                 }
             }
-            catch (OperationCanceledException) { }
-            finally { queue.Writer.TryComplete(); }
+            catch (OperationCanceledException) { }   // cancelling is how this ends
+            finally { backlog.Complete(); }
         }, ct);
 
         try
         {
-            await foreach (var (subject, kind, label) in queue.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+            while (await backlog.TakeAsync(ct).ConfigureAwait(false) is var (subject, kind, label))
             {
                 if (pause is not null) await pause.WaitWhilePausedAsync(ct).ConfigureAwait(false);
-                string clean = DarknessText.Clean(await fetchText(subject, ct).ConfigureAwait(false), DarknessText.MaxPostChars);
+                string? text;
+                try { text = await fetchText(subject, ct).ConfigureAwait(false); }
+                catch (Exception error) when (!ct.IsCancellationRequested && error is HttpRequestException or TaskCanceledException or InvalidOperationException)
+                {
+                    // a network failure, a timeout or a response of the wrong shape loses only this subject: it is counted and the stream goes on
+                    fetchFailed();
+                    continue;
+                }
+                string clean = DarknessText.Clean(text, DarknessText.MaxPostChars);
                 if (clean.Length > 0)
                 {
                     fetched();
-                    onPost(new DarkPost(kind, Hashing.Fnv64(subject), clean, source, label));
+                    onPost(new DarkPost(kind, Hashing.MixedFnv64(subject), clean, source, label));
                 }
                 await Task.Delay(paceMs, ct).ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException) { }
-        try { await reader.ConfigureAwait(false); } catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { }   // cancelling is how this ends
+        try { await reader.ConfigureAwait(false); } catch (OperationCanceledException) { }   // cancelling is how this ends
+    }
+}
+
+/// <summary>
+/// The subjects waiting for their text to be fetched. A label stream replays its recent past in one burst, far faster than texts can be
+/// fetched, and most of it is spam; so rude subjects wait apart from the rest, each line holding its newest <see cref="Capacity"/>, and
+/// the two take turns. A rude post in the replay is therefore fetched among the first, and a boss met early has something to say.
+/// </summary>
+internal sealed class FetchBacklog
+{
+    /// <summary>Subjects each line holds before its oldest is dropped.</summary>
+    public const int Capacity = 24;
+
+    private readonly Queue<(string Subject, DarknessKind Kind, string? Label)> _rude = new(), _rest = new();
+    private readonly SemaphoreSlim _held = new(0);
+    private bool _rudeTurn = true;
+
+    public void Add(string subject, DarknessKind kind, string? label)
+    {
+        lock (_rude)
+        {
+            var line = kind == DarknessKind.Rude ? _rude : _rest;
+            line.Enqueue((subject, kind, label));
+            // a dropped subject hands its place in the count to the one that pushed it out
+            if (line.Count > Capacity) line.Dequeue();
+            else _held.Release();
+        }
+    }
+
+    /// <summary>No more will be added: once the lines are empty, <see cref="TakeAsync"/> gives null.</summary>
+    public void Complete()
+    {
+        _held.Release();
+    }
+
+    /// <summary>The next subject, waiting for one if none is held: a rude one and another by turns while both lines hold some. Null when
+    /// the backlog is complete and empty.</summary>
+    public async Task<(string Subject, DarknessKind Kind, string? Label)?> TakeAsync(CancellationToken ct)
+    {
+        await _held.WaitAsync(ct).ConfigureAwait(false);
+        lock (_rude)
+        {
+            if (_rude.Count + _rest.Count == 0)
+            {
+                // only the completion's own release can be taken with nothing held; it is put back for any later call
+                _held.Release();
+                return null;
+            }
+            var line = _rest.Count == 0 || (_rudeTurn && _rude.Count > 0) ? _rude : _rest;
+            _rudeTurn = line != _rude;
+            return line.Dequeue();
+        }
     }
 }

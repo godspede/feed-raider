@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace FeedRaider.Engine.Raider;
 
-/// <summary>The Random mode's wingmen: posts from public Bluesky comedy feeds. It reads its two primaries, <see cref="Feeds.RandomPrimary"/>
+/// <summary>The Random mode's posts: posts from public Bluesky comedy feeds. It reads its two primaries, <see cref="Feeds.RandomPrimary"/>
 /// and <see cref="Feeds.RandomSecond"/>, page by page and alternates their posts. <see cref="Feeds.RandomBackfill"/> serves only
 /// when the primaries bring nothing new. A feed that errors, or answers empty pages (<see cref="EmptyLimit"/> in a row, or one with
 /// no cursor to follow), is dropped for the run. With all three gone, <paramref name="last"/> (Discover) serves, and its own errors

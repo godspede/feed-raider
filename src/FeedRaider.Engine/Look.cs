@@ -4,7 +4,7 @@ namespace FeedRaider.Engine;
 
 public enum Accessory { Antenna, CatEars, BearEars, BunnyEars, Cap, TopHat, Beanie, Horns }
 
-/// <summary>What a guy looks like, hashed from DID and handle so it is the same on every client.</summary>
+/// <summary>What a figure looks like, hashed from DID and handle so it is the same on every client.</summary>
 public sealed record Look(Rgb Body, Rgb Trim, Accessory Accessory, bool Belly, int EyeStyle)
 {
     private static readonly Rgb[] Bodies =
@@ -22,7 +22,7 @@ public sealed record Look(Rgb Body, Rgb Trim, Accessory Accessory, bool Belly, i
 
     private static readonly int AccessoryCount = Enum.GetValues<Accessory>().Length;
 
-    /// <summary>How many eye drawings <see cref="GuyBuilder"/> has (its switch on <see cref="EyeStyle"/>).</summary>
+    /// <summary>How many eye drawings <see cref="FigureBuilder"/> has (its switch on <see cref="EyeStyle"/>).</summary>
     private const int EyeStyleCount = 3;
 
     // Each trait mixes the hash with its own salt, so the traits do not move together.
@@ -30,7 +30,7 @@ public sealed record Look(Rgb Body, Rgb Trim, Accessory Accessory, bool Belly, i
 
     public static Look From(string did, string? handle)
     {
-        ulong h = Hashing.Fnv64(did + "|" + (handle ?? ""));
+        ulong h = Hashing.MixedFnv64(did + "|" + (handle ?? ""));
         int bodyIx = (int)(Hashing.Mix(h) % (ulong)Bodies.Length);
         int trimIx = (int)(Hashing.Mix(h ^ TrimSalt) % (ulong)Trims.Length);
         var acc = (Accessory)(int)(Hashing.Mix(h ^ AccessorySalt) % (ulong)AccessoryCount);

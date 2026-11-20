@@ -1,3 +1,5 @@
+using FeedRaider.Engine.Raider;
+
 namespace FeedRaider.Console.Audio;
 
 /// <summary>
@@ -8,8 +10,6 @@ namespace FeedRaider.Console.Audio;
 public static class SfxSynth
 {
     public const int SampleRate = 44100;
-    /// <summary>The combo pitch rise tops out at this many semitones, as on the page.</summary>
-    public const int MaxStep = 7;
 
     private const double FloorGain = 0.0001;       // an exponential envelope cannot reach 0
     private const double TailSeconds = 0.02;       // how long a source runs past its envelope, as on the page
@@ -21,6 +21,13 @@ public static class SfxSynth
     private const double ShotDetuneSpread = 0.08;
     private const int InitialBufferSamples = SampleRate / 4;
     private const double MaxCutoffFraction = 0.45;   // of the sample rate: a filter corner is held below this, short of Nyquist (0.5)
+    private const double SemitonesPerOctave = 12, CentsPerOctave = 1200;
+    private const double BellPartialRatio = 2.76;    // the inharmonic overtone that makes a sine ring like a struck bell
+    private const double MinDecaySeconds = 1e-6;     // keeps the decay's divisor above zero when attack and hold fill the whole sound
+    private const double MinBandPassQ = 0.01;        // a band-pass Q of zero would divide by zero in the coefficients
+    private const double DecibelsPerAmplitudeDecade = 20;   // low and high pass take Q in dB: amplitude = 10^(dB / 20)
+    private const int BoomBlasts = 3, BossDownBlasts = 3;   // blasts in the rolling explosion of each sound
+    private const int WarnHonks = 2;
 
     /// <summary>Per-sound level trim, a multiplier on every tone and noise in the sound.</summary>
     private static readonly Dictionary<string, double> Trim = new()
@@ -39,8 +46,23 @@ public static class SfxSynth
         ["clear"] = 1.58,
         ["pickup_shield"] = 1.48,
         ["pickup_bomb"] = 1.4,
-        ["pickup_power"] = 1.85,
+        ["pickup_weapon"] = 1.85,
         ["shield_hit"] = 0.97,
+        ["warn"] = 0.5,
+        ["ping"] = 0.9,
+        ["open"] = 1.4,
+        ["shut"] = 1.4,
+        ["charge"] = 1,
+        ["beam"] = 0.6,
+        ["lob"] = 1,
+        ["blast"] = 1.2,
+        ["hatch"] = 1.3,
+        ["tick"] = 1,
+        ["part"] = 1.3,
+        ["boss_down"] = 1.3,
+        ["sting"] = 2.9,
+        ["hold"] = 0.9,
+        ["repost"] = 1.5,
     };
 
     public static IEnumerable<string> Names => Trim.Keys;
@@ -48,21 +70,21 @@ public static class SfxSynth
     /// <summary>The soft limiter on the sfx bus: stops a pile-up of voices from clipping.</summary>
     public static float Saturate(float x) => (float)(SaturateKnee * Math.Tanh(x / SaturateKnee));
 
-    /// <summary>The samples of one effect, or an empty array for an unknown name. <paramref name="step"/> is the combo rise in
-    /// semitones (kill and hit only); <paramref name="size"/> is the enemy's size, 0 to 1 (kill only).</summary>
+    /// <summary>The samples of one effect, or an <see cref="ArgumentException"/> for a name not in <see cref="SfxNames"/>. <paramref name="step"/> is the combo rise in
+    /// semitones (kill, hit, hold and tick only); <paramref name="size"/> is the enemy's size, 0 to 1 (kill and charge only).</summary>
     public static float[] Render(string name, int step, double size, Random rng)
     {
-        if (!Trim.TryGetValue(name, out double trim)) return [];
-        int rise = name is "kill" or "hit" ? Math.Clamp(step, 0, MaxStep) : 0;
-        var v = new Voice(Math.Pow(2, rise / 12.0), trim, rng);
+        if (!Trim.TryGetValue(name, out double trim)) throw new ArgumentException($"unknown sound effect \"{name}\"", nameof(name));
+        int rise = name is "kill" or "hit" or "hold" ? Math.Clamp(step, 0, SfxBus.MaxStep) : name == "tick" ? Math.Clamp(step, 0, SfxBus.MaxTickStep) : 0;
+        var v = new Voice(Math.Pow(2, rise / SemitonesPerOctave), trim, rng);
         size = Math.Clamp(size, 0, 1);
         switch (name)
         {
             case "shot":
                 {
-                    double k = 1 + (rng.NextDouble() - 0.5) * ShotDetuneSpread;
-                    v.Tone(Wave.Square, 1250 * k, 320 * k, dur: 0.07, vol: 0.5, lp: 4200);
-                    v.Tone(Wave.Triangle, 190 * k, 85, dur: 0.1, vol: 0.5);
+                    double detune = 1 + (rng.NextDouble() - 0.5) * ShotDetuneSpread;
+                    v.Tone(Wave.Square, 1250 * detune, 320 * detune, dur: 0.07, vol: 0.5, lp: 4200);
+                    v.Tone(Wave.Triangle, 190 * detune, 85, dur: 0.1, vol: 0.5);
                     v.Noise(Filter.HighPass, 5000, dur: 0.012, vol: 0.2);
                     break;
                 }
@@ -78,7 +100,7 @@ public static class SfxSynth
                 v.Tone(Wave.Square, 420, 55, at: 0.01, dur: 0.45, vol: 0.3, lp: 1800);
                 break;
             case "boom":
-                for (int i = 0; i < 3; i++)
+                for (int i = 0; i < BoomBlasts; i++)
                 {
                     v.Noise(Filter.LowPass, 3400 - i * 600, 200, q: 1, at: i * 0.2, dur: 0.5, vol: 0.9, shape: true);
                     v.Tone(Wave.Square, 360 - i * 60, 50, at: i * 0.2, dur: 0.4, vol: 0.25, lp: 1500);
@@ -127,10 +149,16 @@ public static class SfxSynth
                     {
                         double at = i * 0.055; bool last = i == fs.Length - 1;
                         v.Tone(Wave.Triangle, fs[i], at: at, dur: last ? 0.42 : 0.2, vol: last ? 0.55 : 0.45);
-                        v.Tone(Wave.Sine, fs[i] * 2.76, at: at, dur: last ? 0.28 : 0.1, vol: 0.14);
+                        v.Tone(Wave.Sine, fs[i] * BellPartialRatio, at: at, dur: last ? 0.28 : 0.1, vol: 0.14);
                     }
                     break;
                 }
+            case "repost":
+                v.Tone(Wave.Triangle, 392, 523, dur: 0.12, vol: 0.5, lp: 2400);
+                v.Tone(Wave.Sine, 784, 1046, dur: 0.1, vol: 0.1);
+                v.Tone(Wave.Triangle, 587, 880, at: 0.12, dur: 0.22, vol: 0.55, lp: 3200);
+                v.Tone(Wave.Sine, 1174, 1760, at: 0.12, dur: 0.16, vol: 0.12);
+                break;
             case "nolike":
                 v.Tone(Wave.Triangle, 247, 233, dur: 0.09, vol: 0.45, lp: 700);
                 v.Tone(Wave.Triangle, 185, 165, at: 0.09, dur: 0.12, vol: 0.45, lp: 600);
@@ -178,7 +206,7 @@ public static class SfxSynth
                     }
                     break;
                 }
-            case "pickup_power":
+            case "pickup_weapon":
                 {
                     double[] fs = [659, 880, 1109, 1319, 1760];
                     for (int i = 0; i < fs.Length; i++)
@@ -194,8 +222,97 @@ public static class SfxSynth
             case "shield_hit":
                 v.Noise(Filter.BandPass, 4200, q: 2, dur: 0.02, vol: 0.4);
                 v.Tone(Wave.Sine, 2200, 1900, dur: 0.22, vol: 0.5);
-                v.Tone(Wave.Sine, 2200 * 2.76, 5200, dur: 0.1, vol: 0.18);
+                v.Tone(Wave.Sine, 2200 * BellPartialRatio, 5200, dur: 0.1, vol: 0.18);
                 v.Tone(Wave.Sine, 170, 70, dur: 0.14, vol: 0.7);
+                break;
+            case "warn":
+                for (int i = 0; i < WarnHonks; i++)
+                {
+                    double at = i * 0.3;
+                    v.Tone(Wave.Saw, 196, 185, at: at, dur: 0.28, vol: 0.5, attack: 0.01, hold: 0.17, lp: 1100);
+                    v.Tone(Wave.Square, 208, 196, at: at, dur: 0.28, vol: 0.3, attack: 0.01, hold: 0.17, lp: 800);
+                    v.Tone(Wave.Sine, 98, 92, at: at, dur: 0.28, vol: 0.5, attack: 0.01, hold: 0.17);
+                }
+                break;
+            case "ping":
+                v.Noise(Filter.BandPass, 2600, q: 3, dur: 0.025, vol: 0.45);
+                v.Tone(Wave.Triangle, 1500, 1100, dur: 0.05, vol: 0.4, lp: 3000);
+                v.Tone(Wave.Sine, 420, 300, dur: 0.06, vol: 0.5);
+                break;
+            case "open":
+                v.Tone(Wave.Sine, 500, 1500, dur: 0.16, vol: 0.5);
+                v.Tone(Wave.Triangle, 1000, 3000, dur: 0.16, vol: 0.2);
+                v.Tone(Wave.Sine, 1500, at: 0.14, dur: 0.12, vol: 0.4);
+                break;
+            case "shut":
+                v.Tone(Wave.Sine, 1500, 500, dur: 0.16, vol: 0.5);
+                v.Tone(Wave.Triangle, 3000, 1000, dur: 0.16, vol: 0.2);
+                v.Tone(Wave.Sine, 240, 150, at: 0.14, dur: 0.12, vol: 0.4);
+                break;
+            case "charge":
+                {
+                    double dur = 0.4 + 1.2 * size, a = dur * 0.8;
+                    v.Tone(Wave.Saw, 90, 520, dur: dur, vol: 0.5, attack: a, lp: 1300);
+                    v.Tone(Wave.Sine, 180, 1040, dur: dur, vol: 0.4, attack: a);
+                    v.Noise(Filter.BandPass, 300, 3000, q: 2, dur: dur, vol: 0.3, attack: a);
+                    break;
+                }
+            case "beam":
+                v.Tone(Wave.Square, 120, 118, dur: 0.58, vol: 0.4, attack: 0.02, hold: 0.45, lp: 2600);
+                v.Tone(Wave.Saw, 126, 124, dur: 0.58, vol: 0.35, attack: 0.02, hold: 0.45, lp: 3000);
+                v.Tone(Wave.Square, 480, 470, dur: 0.58, vol: 0.12, attack: 0.02, hold: 0.45, lp: 2400);
+                v.Noise(Filter.HighPass, 2500, dur: 0.58, vol: 0.3, attack: 0.02, hold: 0.45, shape: true);
+                break;
+            case "lob":
+                v.Tone(Wave.Sine, 220, 70, dur: 0.22, vol: 0.8);
+                v.Tone(Wave.Triangle, 440, 140, dur: 0.12, vol: 0.3, lp: 600);
+                v.Noise(Filter.LowPass, 500, dur: 0.1, vol: 0.3, brown: true);
+                break;
+            case "blast":
+                v.Noise(Filter.LowPass, 2800, 200, q: 1, dur: 0.45, vol: 0.6, shape: true);
+                v.Tone(Wave.Sine, 120, 40, dur: 0.5, vol: 0.7);
+                v.Tone(Wave.Square, 300, 60, dur: 0.25, vol: 0.2, lp: 1200);
+                break;
+            case "hatch":
+                v.Tone(Wave.Sine, 300, 900, dur: 0.06, vol: 0.6);
+                v.Noise(Filter.BandPass, 1200, 2400, q: 4, dur: 0.04, vol: 0.35);
+                v.Tone(Wave.Sine, 700, 250, at: 0.05, dur: 0.08, vol: 0.3);
+                break;
+            case "tick":
+                v.Noise(Filter.BandPass, 4000, q: 3, dur: 0.015, vol: 0.4);
+                v.Tone(Wave.Triangle, 1200, 1000, dur: 0.04, vol: 0.5);
+                break;
+            case "hold":
+                {
+                    double holdFraction = rise / (double)SfxBus.MaxStep;
+                    v.Tone(Wave.Sine, 620, 700, dur: 0.07, vol: 0.3 + 0.3 * holdFraction);
+                    v.Tone(Wave.Triangle, 1240, 1400, dur: 0.04, vol: 0.08 + 0.2 * holdFraction);
+                    v.Noise(Filter.BandPass, 5000, q: 2, dur: 0.012, vol: 0.06 + 0.1 * holdFraction);
+                    break;
+                }
+            case "part":
+                v.Noise(Filter.LowPass, 2500, 200, q: 1, dur: 0.3, vol: 0.7, shape: true);
+                v.Tone(Wave.Sine, 140, 50, dur: 0.35, vol: 0.8);
+                v.Tone(Wave.Sine, 1250, 1230, at: 0.02, dur: 0.6, vol: 0.2);
+                v.Tone(Wave.Sine, 1250 * BellPartialRatio, 3400, at: 0.02, dur: 0.4, vol: 0.12);
+                v.Tone(Wave.Sine, 1250 * 5.4, at: 0.02, dur: 0.2, vol: 0.06);
+                break;
+            case "boss_down":
+                for (int i = 0; i < BossDownBlasts; i++)
+                {
+                    double at = i * 0.4, dur = i == BossDownBlasts - 1 ? 0.68 : 0.5;
+                    v.Noise(Filter.LowPass, 3200 - i * 900, 150, q: 1, at: at, dur: dur, vol: 0.9, shape: true);
+                    v.Tone(Wave.Sine, 120 - i * 25, 30, at: at, dur: dur, vol: 0.9);
+                    v.Tone(Wave.Saw, 160 - i * 40, 28, at: at, dur: dur - 0.1, vol: 0.35, lp: 500);
+                }
+                break;
+            case "sting":
+                // a visitor arrives: two low brass-like notes, the second a fourth down (A2, then E2), 0.5 s in all; no randomness
+                v.Tone(Wave.Saw, 110, 108, dur: 0.2, vol: 0.5, attack: 0.012, lp: 900);
+                v.Tone(Wave.Square, 110.5, 108.5, dur: 0.2, vol: 0.2, attack: 0.012, lp: 700);
+                v.Tone(Wave.Saw, 82.4, 80, at: 0.2, dur: 0.28, vol: 0.55, attack: 0.012, lp: 800);
+                v.Tone(Wave.Square, 82.9, 80.5, at: 0.2, dur: 0.28, vol: 0.2, attack: 0.012, lp: 600);
+                v.Tone(Wave.Sine, 41.2, 40, at: 0.2, dur: 0.28, vol: 0.4);
                 break;
         }
         return v.Samples();
@@ -205,7 +322,7 @@ public static class SfxSynth
     public enum Filter { LowPass, HighPass, BandPass }
 
     /// <summary>One sound being built: tones and noise summed into a growing mono buffer, like the page's voice node.</summary>
-    private sealed class Voice(double k, double trim, Random rng)
+    private sealed class Voice(double pitchRatio, double trim, Random rng)
     {
         private float[] _buf = new float[InitialBufferSamples];
         private int _len;
@@ -226,13 +343,14 @@ public static class SfxSynth
             return _buf.AsSpan(start, n);
         }
 
-        // linear attack to peak, then exponential decay to the floor at dur, as the page's gain ramps do
-        private static double Envelope(int i, double attack, double dur, double peak)
+        // linear attack to peak, an optional hold there, then exponential decay to the floor at dur, as the page's gain ramps do
+        private static double Envelope(int i, double attack, double dur, double peak, double hold)
         {
             double t = (double)i / SampleRate;
             if (t >= dur) return 0;
             if (t < attack) return FloorGain + (peak - FloorGain) * (t / attack);
-            return peak * Math.Pow(FloorGain / peak, (t - attack) / Math.Max(1e-6, dur - attack));
+            if (t < attack + hold) return peak;
+            return peak * Math.Pow(FloorGain / peak, (t - attack - hold) / Math.Max(MinDecaySeconds, dur - attack - hold));
         }
 
         // frequency sweeps are exponential from f0 to f1 over dur
@@ -243,16 +361,16 @@ public static class SfxSynth
         }
 
         public void Tone(Wave wave, double f0, double f1 = double.NaN, double at = 0, double dur = 0.1, double vol = 0.2,
-            double attack = 0.004, double lp = 0, double detune = 0)
+            double attack = 0.004, double lp = 0, double detune = 0, double hold = 0)
         {
             if (double.IsNaN(f1)) f1 = f0;
-            double cents = Math.Pow(2, detune / 1200), peak = vol * trim;
+            double detuneRatio = Math.Pow(2, detune / CentsPerOctave), peak = vol * trim;
             var region = ReserveRegion(at, dur);
             var filter = lp > 0 ? new Biquad(Filter.LowPass, lp, 0) : null;
             double phase = 0;
             for (int i = 0; i < region.Length; i++)
             {
-                double f = Math.Max(MinFreq, Sweep(f0, f1, i, dur) * k) * cents, dt = f / SampleRate;
+                double f = Math.Max(MinFreq, Sweep(f0, f1, i, dur) * pitchRatio) * detuneRatio, dt = f / SampleRate;
                 double s = wave switch
                 {
                     Wave.Sine => Math.Sin(2 * Math.PI * phase),
@@ -262,25 +380,25 @@ public static class SfxSynth
                 };
                 phase += dt; if (phase >= 1) phase -= 1;
                 if (filter is not null) s = filter.Process(s);
-                region[i] += (float)(s * Envelope(i, attack, dur, peak));
+                region[i] += (float)(s * Envelope(i, attack, dur, peak, hold));
             }
         }
 
         public void Noise(Filter type, double f0, double f1 = double.NaN, double q = 0.7, double at = 0, double dur = 0.1,
-            double vol = 0.2, double attack = 0.002, bool shape = false, bool brown = false)
+            double vol = 0.2, double attack = 0.002, bool shape = false, bool brown = false, double hold = 0)
         {
             if (double.IsNaN(f1)) f1 = f0;
             double peak = vol * trim, last = 0;
             var region = ReserveRegion(at, dur);
-            var filter = new Biquad(type, Math.Max(MinFreq, f0 * k), q);
+            var filter = new Biquad(type, Math.Max(MinFreq, f0 * pitchRatio), q);
             for (int i = 0; i < region.Length; i++)
             {
                 double x = rng.NextDouble() * 2 - 1;
                 if (brown) { last = (last + BrownLeak * x) / (1 + BrownLeak); x = last * BrownGain; }
-                if (i % FilterBlock == 0 && f0 != f1) filter.Retune(Math.Max(MinFreq, Sweep(f0, f1, i, dur) * k));
+                if (i % FilterBlock == 0 && f0 != f1) filter.Retune(Math.Max(MinFreq, Sweep(f0, f1, i, dur) * pitchRatio));
                 double s = filter.Process(x);
                 if (shape) s = Saturate((float)(s * NoiseDriveGain));
-                region[i] += (float)(s * Envelope(i, attack, dur, peak));
+                region[i] += (float)(s * Envelope(i, attack, dur, peak, hold));
             }
         }
 
@@ -314,7 +432,7 @@ public static class SfxSynth
         public Biquad(Filter type, double freq, double q)
         {
             _type = type;
-            _q = type == Filter.BandPass ? Math.Max(0.01, q) : Math.Pow(10, q / 20);
+            _q = type == Filter.BandPass ? Math.Max(MinBandPassQ, q) : Math.Pow(10, q / DecibelsPerAmplitudeDecade);
             Retune(freq);
         }
 

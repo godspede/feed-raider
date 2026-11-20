@@ -2,71 +2,66 @@ namespace FeedRaider.Engine;
 
 /// <summary>
 /// The whole show, host-agnostic: fetch the follows, open the event source, then draw frames until
-/// cancelled. Hosts supply a size, a frame sink and (optionally) their own event source.
+/// cancelled. Hosts supply a size and a frame sink.
 /// </summary>
 public sealed class Spectator
 {
     private readonly HttpClient _http;
     private readonly Func<(int Cols, int Rows)> _size;
     private readonly IFrameSink _sink;
-    private readonly Func<long> _clockMs;
 
     public string Hint { get; set; } = "";
     public int PostsSeen { get; private set; }
+    private const int FramesPerSecond = 12;
     private const int DemoFirstDelayMs = 3000, DemoDelayMs = 5000;
-    /// <summary>The demo offers a made-up post only while fewer monsters than this are on screen.</summary>
-    private const int DemoMaxMonsters = 3;
-    /// <summary>Forces of darkness: monsters from Bluesky's moderation labels (spam, rude). On unless a host turns it off.</summary>
+    /// <summary>The demo offers a made-up post only while fewer enemies than this are on screen.</summary>
+    private const int DemoMaxEnemies = 3;
+    /// <summary>Forces of darkness: enemies from Bluesky's moderation labels (spam, rude). On unless a host turns it off.</summary>
     public bool Darkness { get; set; } = true;
-    /// <summary>When the labeler has sent nothing usable for a while, summon made-up monsters (clearly marked in the status line).
+    /// <summary>When the labeler has sent nothing usable for a while, summon made-up enemies (clearly marked in the status line).
     /// Off by default: the real labeler almost never labels a post spam or rude.</summary>
     public bool DarknessDemo { get; set; }
-    /// <summary>Where labels come from; null means the live labeler. Tests and fixtures can supply their own.</summary>
-    public IAsyncEnumerable<LabelEvent>? LabelSource { get; set; }
-    /// <summary>Where newly hidden reply URIs come from; null means the live network-wide threadgate Jetstream.</summary>
-    public IAsyncEnumerable<string>? HiddenSource { get; set; }
     /// <summary>The live threadgate stream's connection state, once it is running.</summary>
     public string HiddenState => _threadgates?.State ?? "off";
     private ThreadgateSource? _threadgates;
     public DarknessStats DarkStats { get; } = new();
-    public int MonstersSpawned { get; private set; }
+    public int EnemiesSpawned { get; private set; }
     public int SpawnedFromLabels { get; private set; }
     public int SpawnedFromHidden { get; private set; }
 
-    public Spectator(HttpClient http, Func<(int Cols, int Rows)> size, IFrameSink sink, Func<long>? clockMs = null)
+    public Spectator(HttpClient http, Func<(int Cols, int Rows)> size, IFrameSink sink)
     {
         _http = http;
         _size = size;
         _sink = sink;
-        _clockMs = clockMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
     }
 
-    public async Task RunAsync(string handle, CancellationToken ct, IEventSource? source = null, int fps = 12)
+    public async Task RunAsync(string handle, CancellationToken ct)
     {
         handle = handle.Trim().TrimStart('@');
-        var loading = new Room([]) { Status = $"fetching who @{handle} follows..." };
-        DrawFrame(loading);
+        var loading = new Room([]) { Status = $"fetching who @{handle} follows…" };
+        AdvanceAndDraw(loading);
 
         List<Follow> follows;
         try { follows = await BskyClient.FetchFollowsAsync(_http, handle, ct: ct); }
         catch (Exception) when (!ct.IsCancellationRequested)
         {
             // the host shows the error bar; this replaces the stale "fetching" line and says what to do (nothing retries here)
-            loading.Status = $"could not load who @{handle} follows, reload to try again";
-            DrawFrame(loading);
+            loading.Status = $"could not load who @{handle} follows; reload to try again";
+            AdvanceAndDraw(loading);
             throw;
         }
         if (follows.Count == 0)
         {
-            loading.Status = $"@{handle} follows nobody (or the account is private)";
-            DrawFrame(loading);
+            loading.Status = $"@{handle} follows nobody the game can show";
+            AdvanceAndDraw(loading);
             await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
         }
 
         var room = new Room(follows);
-        source ??= new JetstreamSource(follows.Select(f => f.Did));
-        void UpdateStatus() { MonstersSpawned = room.Dark.Spawned; SpawnedFromLabels = room.Dark.SpawnedFromLabels; SpawnedFromHidden = room.Dark.SpawnedFromHidden; Status(); }
-        void Status() => room.Status = $"@{handle} | {room.GuyCount} guys | {(source is IHasState st ? st.State + " | " : "")}{PostsSeen} posts seen" + (Darkness ? $" | {room.Dark.Monsters.Count} monsters ({room.Dark.Monsters.Count(m => m.Source == DarkSource.Label)} labels, {room.Dark.Monsters.Count(m => m.Source == DarkSource.Hidden)} hidden)" + (DarknessDemo ? " (demo)" : "") : "") + (Hint.Length > 0 ? " | " + Hint : "");
+        var source = new JetstreamSource(follows.Select(f => f.Did));
+        void UpdateStatus() { EnemiesSpawned = room.Dark.Spawned; SpawnedFromLabels = room.Dark.SpawnedFromLabels; SpawnedFromHidden = room.Dark.SpawnedFromHidden; Status(); }
+        void Status() => room.Status = $"@{handle} | {room.FigureCount} figures | {source.State} | {PostsSeen} posts seen" + (Darkness ? $" | {room.Dark.Enemies.Count} enemies ({room.Dark.Enemies.Count(m => m.Source == DarkSource.Label)} labels, {room.Dark.Enemies.Count(m => m.Source == DarkSource.Hidden)} hidden)" + (DarknessDemo ? " (demo)" : "") : "") + (Hint.Length > 0 ? " | " + Hint : "");
         UpdateStatus();
 
         using var pumpCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -77,67 +72,86 @@ public sealed class Spectator
                 lock (room)
                 {
                     PostsSeen++;
-                    room.Handle(e, _clockMs());
+                    room.Handle(e, NowMs());
                 }
             }
         }, pumpCts.Token);
 
-        Task? dark = null;
+        var background = new List<Task> { pump };
+        // the spectator view has no session: its viewer is always signed out
+        Func<string, CancellationToken, Task<string?>> fetch = (uri, c) => PostTextFetcher.FetchAsync(_http, uri, signedOut: true, c);
         if (Darkness)
         {
-            var labels = LabelSource ?? new LabelSource().ReadAsync(pumpCts.Token);
-            dark = Task.Run(() => DarknessFeed.RunAsync(labels, (uri, c) => PostTextFetcher.FetchAsync(_http, uri, c),
-                post => { lock (room) { room.Dark.Offer(post); DarkStats.Haunted++; } }, DarkStats, pumpCts.Token), pumpCts.Token);
+            var labels = new LabelSource().ReadAsync(pumpCts.Token);
+            background.Add(Task.Run(() => DarknessFeed.RunAsync(labels, fetch,
+                post => { lock (room) { room.Dark.Offer(post); DarkStats.Haunted++; } }, DarkStats, pumpCts.Token), pumpCts.Token));
         }
 
-        Task? hidden = null;
         if (Darkness)
         {
-            var gates = HiddenSource;
-            if (gates is null) { _threadgates = new ThreadgateSource(); gates = _threadgates.ReadAsync(pumpCts.Token); }
-            hidden = Task.Run(() => DarknessFeed.RunHiddenAsync(gates, (uri, c) => PostTextFetcher.FetchAsync(_http, uri, c),
-                post => { lock (room) { room.Dark.Offer(post); DarkStats.Haunted++; } }, DarkStats, pumpCts.Token), pumpCts.Token);
+            _threadgates = new ThreadgateSource();
+            var gates = _threadgates.ReadAsync(pumpCts.Token);
+            background.Add(Task.Run(() => DarknessFeed.RunHiddenAsync(gates, fetch,
+                post => { lock (room) { room.Dark.Offer(post); DarkStats.Haunted++; } }, DarkStats, pumpCts.Token), pumpCts.Token));
         }
 
-        Task? demo = null;
         if (Darkness && DarknessDemo)
-            demo = Task.Run(async () =>
+            background.Add(Task.Run(async () =>
             {
                 for (int i = 0; !pumpCts.Token.IsCancellationRequested; i++)
                 {
                     await Task.Delay(i == 0 ? DemoFirstDelayMs : DemoDelayMs, pumpCts.Token).ConfigureAwait(false);
                     lock (room)
-                        if (DarkStats.Haunted == 0 || room.Dark.Pending == 0 && room.Dark.Monsters.Count < DemoMaxMonsters)
+                        if (DarkStats.Haunted == 0 || room.Dark.Pending == 0 && room.Dark.Enemies.Count < DemoMaxEnemies)
                             room.Dark.Offer(DarknessDemoPosts.Next(i));
                 }
-            }, pumpCts.Token);
+            }, pumpCts.Token));
 
-        try
+        async Task RenderLoopAsync()
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(1000.0 / fps));
-            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(1000.0 / FramesPerSecond));
+            while (await timer.WaitForNextTickAsync(pumpCts.Token).ConfigureAwait(false))
             {
                 lock (room)
                 {
                     UpdateStatus();
-                    DrawFrame(room);
+                    AdvanceAndDraw(room);
                 }
             }
         }
-        catch (OperationCanceledException) { }
+        var render = RenderLoopAsync();
+        try
+        {
+            // a fault in any background task must end the show instead of leaving frames drawing a frozen room
+            await await Task.WhenAny(render, ThrowFirstFaultAsync(background)).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { }   // cancelling is how this ends
         finally
         {
             pumpCts.Cancel();
-            try { await pump.ConfigureAwait(false); } catch (OperationCanceledException) { }
-            if (demo is not null) try { await demo.ConfigureAwait(false); } catch (OperationCanceledException) { }
-            if (hidden is not null) try { await hidden.ConfigureAwait(false); } catch (OperationCanceledException) { }
-            if (dark is not null) try { await dark.ConfigureAwait(false); } catch (OperationCanceledException) { }
+            foreach (var task in background.Append(render))
+                try { await task.ConfigureAwait(false); } catch (OperationCanceledException) { }   // cancelling is how this ends
         }
     }
 
-    private void DrawFrame(Room room)
+    private static async Task ThrowFirstFaultAsync(List<Task> tasks)
+    {
+        var pending = new List<Task>(tasks);
+        while (pending.Count > 0)
+        {
+            var done = await Task.WhenAny(pending).ConfigureAwait(false);
+            pending.Remove(done);
+            await done.ConfigureAwait(false);
+        }
+        // every background task ended cleanly; only the render loop may now end the show
+        await Task.Delay(Timeout.Infinite).ConfigureAwait(false);
+    }
+
+    private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+    private void AdvanceAndDraw(Room room)
     {
         var (cols, rows) = _size();
-        _sink.Write(room.Render(cols, rows, _clockMs()));
+        _sink.Write(room.AdvanceAndRender(cols, rows, NowMs()));
     }
 }

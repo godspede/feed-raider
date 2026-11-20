@@ -3,7 +3,7 @@ using System.Text;
 namespace FeedRaider.Engine.Raider;
 
 /// <summary>What a terminal key means to the game, whatever device reported it.</summary>
-public enum TermKey { Up, Down, Left, Right, Fire, AutoFire, Bomb, Like, Quit, Mute }
+public enum TermKey { Up, Down, Left, Right, Fire, AutoFire, Bomb, Like, Repost, MarkUp, MarkDown, Quit, Mute, SlowerFeed, FasterFeed }
 
 public enum KeyAction { Press, Repeat, Release }
 
@@ -22,6 +22,7 @@ public readonly record struct KeyRepeatTiming(int DelayMs, int IntervalMs)
     // SPI_GETKEYBOARDDELAY is 0..3 for 250..1000 ms; SPI_GETKEYBOARDSPEED is 0..31 for 2.5..30 repeats a second.
     private const int WinDelayStepMs = 250, WinDelayMax = 3, WinSpeedMax = 31;
     private const double WinMinRate = 2.5, WinMaxRate = 30;
+    private const int MsPerSecond = 1000;
 
     public static KeyRepeatTiming Default => new(DefaultDelayMs, DefaultIntervalMs);
 
@@ -34,7 +35,7 @@ public readonly record struct KeyRepeatTiming(int DelayMs, int IntervalMs)
     {
         int delay = (Math.Clamp(delayIndex, 0, WinDelayMax) + 1) * WinDelayStepMs;
         double rate = WinMinRate + Math.Clamp(speedIndex, 0, WinSpeedMax) * (WinMaxRate - WinMinRate) / WinSpeedMax;
-        return new KeyRepeatTiming(delay, (int)Math.Round(1000 / rate));
+        return new KeyRepeatTiming(delay, (int)Math.Round(MsPerSecond / rate));
     }
 }
 
@@ -42,6 +43,7 @@ public readonly record struct KeyRepeatTiming(int DelayMs, int IntervalMs)
 public static class Win32Keys
 {
     private const int VkEscape = 0x1B, VkSpace = 0x20, VkLeft = 0x25, VkUp = 0x26, VkRight = 0x27, VkDown = 0x28;
+    private const int VkSubtract = 0x6D, VkAdd = 0x6B, VkOemPlus = 0xBB, VkOemMinus = 0xBD, VkOemOpenBracket = 0xDB, VkOemCloseBracket = 0xDD;
 
     public static TermKeyEvent? Map(int virtualKey, bool keyDown)
     {
@@ -55,7 +57,12 @@ public static class Win32Keys
             'F' => TermKey.AutoFire,
             'B' => TermKey.Bomb,
             'E' => TermKey.Like,
+            'R' => TermKey.Repost,
+            VkOemOpenBracket => TermKey.MarkUp,
+            VkOemCloseBracket => TermKey.MarkDown,
             'M' => TermKey.Mute,
+            VkOemMinus or VkSubtract => TermKey.SlowerFeed,
+            VkOemPlus or VkAdd => TermKey.FasterFeed,
             'Q' or VkEscape => TermKey.Quit,
             _ => null,
         };
@@ -78,7 +85,9 @@ public sealed class TerminalKeyParser
 
     private const char Esc = '\x1b';
     private const int EtxCtrlC = 3, CodeEscape = 27, CodeSpace = 32, CtrlModBit = 4, MaxSequence = 64;
-    private const int EventRepeat = 2, EventRelease = 3;
+    private const int EventPress = 1, EventRepeat = 2, EventRelease = 3;
+    /// <summary>The range of the byte that ends a CSI sequence ('@' to '~'); the bytes before it are its parameters.</summary>
+    private const int CsiFinalMin = 0x40, CsiFinalMax = 0x7E;
 
     private enum State { Ground, Esc, Csi, Ss3 }
     private State _state;
@@ -96,7 +105,7 @@ public sealed class TerminalKeyParser
             case State.Ground:
                 if (b == Esc) _state = State.Esc;
                 else if (b == EtxCtrlC) output.Add(new(TermKey.Quit, KeyAction.Press));
-                else if (b < 0x80 && FromCode(b) is { } k) output.Add(new(k, KeyAction.Press));
+                else if (FromCode(b) is { } k) output.Add(new(k, KeyAction.Press));
                 break;
             case State.Esc:
                 if (b == '[') { _state = State.Csi; _seq.Clear(); }
@@ -114,7 +123,7 @@ public sealed class TerminalKeyParser
                 if (Arrow((char)b) is { } a) output.Add(new(a, KeyAction.Press));
                 break;
             case State.Csi:
-                if (b >= 0x40 && b <= 0x7E) { _state = State.Ground; EndCsi((char)b, output); }
+                if (b >= CsiFinalMin && b <= CsiFinalMax) { _state = State.Ground; EndCsi((char)b, output); }
                 else if (_seq.Length >= MaxSequence) _state = State.Ground;
                 else _seq.Append((char)b);
                 break;
@@ -138,7 +147,7 @@ public sealed class TerminalKeyParser
         if (s.Length > 0 && s[0] is '?' or '>' or '<' or '=') return; // a reply to a query, not a key
         string[] fields = s.Split(';');
         int[] keyField = ValueAndEventType(fields, 0), modField = ValueAndEventType(fields, 1);
-        int mods = modField[0] > 0 ? modField[0] - 1 : 0;
+        int mods = modField[0] > 0 ? modField[0] - 1 : 0;   // the protocol sends one more than the modifier bits, so no modifier is 1
         KeyAction action = modField[1] switch { EventRepeat => KeyAction.Repeat, EventRelease => KeyAction.Release, _ => KeyAction.Press };
         TermKey? key = final == 'u' ? FromCode(keyField[0]) : Arrow(final);
         if (final == 'u' && (mods & CtrlModBit) != 0)
@@ -153,7 +162,7 @@ public sealed class TerminalKeyParser
     /// <summary>Field <paramref name="i"/> split on ':' into [value, event type]; a missing value is 0 and a missing event type is a press (1).</summary>
     private static int[] ValueAndEventType(string[] fields, int i)
     {
-        var r = new[] { 0, 1 };
+        var r = new[] { 0, EventPress };
         if (i >= fields.Length) return r;
         string[] parts = fields[i].Split(':');
         if (int.TryParse(parts[0], out int a)) r[0] = a;
@@ -170,7 +179,7 @@ public sealed class TerminalKeyParser
         _ => null,
     };
 
-    private static TermKey? FromCode(int code) => code is < 0 or > 0xFFFF ? null : char.ToLowerInvariant((char)code) switch
+    private static TermKey? FromCode(int code) => code is < 0 or > char.MaxValue ? null : char.ToLowerInvariant((char)code) switch
     {
         'w' => TermKey.Up,
         's' => TermKey.Down,
@@ -180,7 +189,12 @@ public sealed class TerminalKeyParser
         'f' => TermKey.AutoFire,
         'b' => TermKey.Bomb,
         'e' => TermKey.Like,
+        'r' => TermKey.Repost,
+        '[' => TermKey.MarkUp,
+        ']' => TermKey.MarkDown,
         'm' => TermKey.Mute,
+        '-' => TermKey.SlowerFeed,
+        '+' or '=' => TermKey.FasterFeed,
         'q' or (char)CodeEscape => TermKey.Quit,
         _ => null,
     };
@@ -202,9 +216,9 @@ public sealed class TerminalKeyParser
 /// <summary>
 /// Applies key events to the game input. With release events a key is down exactly while the terminal says so; without
 /// them it is held by timer (see <see cref="KeyRepeatTiming"/>). One-shot keys (bomb, like, auto-fire) fire on a fresh
-/// press only, not on the repeats of a held key, when releases are known. Mute is one-shot too; it does nothing without an action.
+/// press only, not on the repeats of a held key, when releases are known. Mute and the feed speed keys are one-shot too; they do nothing without an action.
 /// </summary>
-public sealed class KeyRouter(InputState input, bool hasReleases, KeyRepeatTiming timing, Action? onMute = null)
+public sealed class KeyRouter(InputState input, bool hasReleases, KeyRepeatTiming timing, Action? onMute = null, Action<int>? onFeedSpeed = null)
 {
     private readonly bool[] _down = new bool[Enum.GetValues<TermKey>().Length];
 
@@ -225,7 +239,12 @@ public sealed class KeyRouter(InputState input, bool hasReleases, KeyRepeatTimin
             case TermKey.AutoFire: input.ToggleAutoFire(); break;
             case TermKey.Bomb: input.Bomb(); break;
             case TermKey.Like: input.Like(); break;
+            case TermKey.Repost: input.Repost(); break;
+            case TermKey.MarkUp: input.MarkUp(); break;
+            case TermKey.MarkDown: input.MarkDown(); break;
             case TermKey.Mute: onMute?.Invoke(); break;
+            case TermKey.SlowerFeed: onFeedSpeed?.Invoke(-1); break;
+            case TermKey.FasterFeed: onFeedSpeed?.Invoke(1); break;
             case TermKey.Quit: return true;
         }
         return false;

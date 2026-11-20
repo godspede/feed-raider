@@ -11,7 +11,7 @@ public class RoomTests
         new("did:plc:" + name, text, parent is null ? null : "did:plc:" + parent, 0);
 
     [Fact]
-    public void Plain_post_is_a_bubble_in_place()
+    public void Plain_post_is_a_speech_box_in_place()
     {
         var room = Make("alice111", "bob22222");
         var a = room.Handle(Post("alice111", "hi"), 1000);
@@ -49,15 +49,15 @@ public class RoomTests
     {
         var room = Make("alice111", "bob22222", "carol333");
         room.Handle(Post("alice111", "hey bob", "bob22222"), 10_000);
-        room.Render(80, 24, 15_000); // walk (<= 3.5 s) is over, she is talking
+        room.AdvanceAndRender(80, 24, 15_000); // walk (<= 3.5 s) is over, she is talking
         Assert.Equal(ActionKind.Visit, room.CurrentAction("did:plc:alice111")!.Kind);
 
-        room.Render(80, 24, 10_000 + 2 * 3500 + Room.BubbleMs + 1);
+        room.AdvanceAndRender(80, 24, 10_000 + 2 * Room.MaxWalkMs + Room.SpeechBoxMs + 1);
         Assert.Null(room.CurrentAction("did:plc:alice111"));
     }
 
     [Fact]
-    public void A_visitor_walks_out_without_a_bubble_and_speaks_once_she_arrives()
+    public void A_visitor_walks_out_without_a_speech_box_and_speaks_once_she_arrives()
     {
         Room Started()
         {
@@ -66,35 +66,35 @@ public class RoomTests
             return r;
         }
         var room = Started();
-        Assert.DoesNotContain("hey bob", room.Render(80, 24, 100));   // setting off
+        Assert.DoesNotContain("hey bob", room.AdvanceAndRender(80, 24, 100));   // setting off
         long walkMs = room.CurrentAction("did:plc:alice")!.WalkMs;
-        Assert.InRange(walkMs, 1, Room.BubbleMs);
-        Assert.DoesNotContain("hey bob", Started().Render(80, 24, walkMs - 1));   // the last moment of the walk
-        Assert.Contains("hey bob", Started().Render(80, 24, walkMs));             // arrived
+        Assert.InRange(walkMs, 1, Room.SpeechBoxMs);
+        Assert.DoesNotContain("hey bob", Started().AdvanceAndRender(80, 24, walkMs - 1));   // the last moment of the walk
+        Assert.Contains("hey bob", Started().AdvanceAndRender(80, 24, walkMs));             // arrived
 
         // at the moment she sets off she is still at her seat, but drawn walking rather than standing idle
         var idle = Make("alice", "bob");
         var visiting = Make("alice", "bob");
         visiting.Handle(Post("alice", "hey bob", "bob"), 1000);
-        Assert.NotEqual(idle.Render(80, 24, 1000), visiting.Render(80, 24, 1000));
+        Assert.NotEqual(idle.AdvanceAndRender(80, 24, 1000), visiting.AdvanceAndRender(80, 24, 1000));
     }
 
     [Fact]
-    public void Visitor_stands_next_to_the_target_while_talking()
+    public void Visitor_talking_to_the_target_shows_the_speech_box_and_both_names()
     {
         var room = Make("alice", "bob");
         room.Handle(Post("alice", "hey bob", "bob"), 0);
-        string frame = room.Render(80, 24, 4000);
+        string frame = room.AdvanceAndRender(80, 24, 4000);
         Assert.Contains("hey bob", frame);
         Assert.Contains("alice.test", frame);
         Assert.Contains("bob.test", frame);
     }
 
     [Fact]
-    public void Thirty_guys_fit_on_80x24_and_frames_have_the_right_shape()
+    public void Thirty_figures_fit_on_80x24_and_frames_have_the_right_shape()
     {
         var room = Make(Enumerable.Range(0, 30).Select(i => $"user{i:D4}").ToArray());
-        string frame = room.Render(80, 24, 12_345);
+        string frame = room.AdvanceAndRender(80, 24, 12_345);
         Assert.Equal(23, frame.Count(c => c == '\n')); // 24 rows, the last without newline
         Assert.Contains("\x1b[48;2;", frame);
     }
@@ -103,9 +103,9 @@ public class RoomTests
     public void Full_room_seats_a_speaker_who_has_no_seat()
     {
         var room = Make(Enumerable.Range(0, 100).Select(i => $"u{i:D4}").ToArray());
-        room.Render(80, 24, 0);
+        room.AdvanceAndRender(80, 24, 0);
         room.Handle(Post("u0099", "let me in"), 1000);
-        Assert.Contains("let me in", room.Render(80, 24, 2000));
+        Assert.Contains("let me in", room.AdvanceAndRender(80, 24, 2000));
     }
 
     [Fact]
@@ -121,10 +121,10 @@ public class RoomTests
     [InlineData("\U0001F642 emoji and 漢字 and\nnewlines\tand tabs")]   // \U0001F642 slightly smiling face
     [InlineData("")]
     [InlineData("Supercalifragilisticexpialidocious_Supercalifragilisticexpialidocious")]
-    public void Bubble_text_is_short_and_single_width(string text)
+    public void Short_lines_is_short_and_single_width(string text)
     {
-        var lines = BubbleText.Format(text);
-        Assert.InRange(lines.Length, 1, 3);
-        Assert.All(lines, l => { Assert.True(l.Length <= 22); Assert.DoesNotContain('\n', l); });
+        var lines = ShortLines.Format(text);
+        Assert.InRange(lines.Length, 1, ShortLines.DefaultMaxLines);
+        Assert.All(lines, l => { Assert.True(l.Length <= ShortLines.DefaultMaxWidth); Assert.DoesNotContain('\n', l); });
     }
 }

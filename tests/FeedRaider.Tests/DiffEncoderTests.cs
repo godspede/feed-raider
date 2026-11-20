@@ -5,13 +5,14 @@ using TUImation;
 
 namespace FeedRaider.Tests;
 
-/// <summary>A tiny terminal: just the sequences DiffEncoder may emit (CUP, CUF, CHA, CR/LF, SGR truecolor, ED 2), enough to replay a frame stream.</summary>
+/// <summary>A tiny terminal: just the sequences DiffEncoder may emit (CUP, CUF, CHA, CR/LF, SGR truecolour, ED 2), enough to replay a frame stream.</summary>
 sealed class MiniTerm(int cols, int rows)
 {
     public readonly char[] Ch = Enumerable.Repeat(' ', cols * rows).ToArray();
     public readonly uint[] Fg = new uint[cols * rows], Bg = new uint[cols * rows];
     private int _r, _c;
-    private uint _fg = 0xFFFFFF, _bg;
+    private const uint DefaultForeground = 0xFFFFFF;
+    private uint _fg = DefaultForeground, _bg;
     private bool _wrap;
 
     public void Feed(string s)
@@ -32,11 +33,25 @@ sealed class MiniTerm(int cols, int rows)
             else
             {
                 if (_wrap) { _c = 0; _r = Math.Min(rows - 1, _r + 1); _wrap = false; }
+                if (CellWidth.Of(ch) == 2 && _c == cols - 1) { _c = 0; _r = Math.Min(rows - 1, _r + 1); }     // a wide char that does not fit wraps first
                 int o = _r * cols + _c;
-                Ch[o] = ch; Fg[o] = _fg; Bg[o] = _bg;
-                if (_c == cols - 1) _wrap = true; else _c++;
+                Put(o, ch);
+                if (CellWidth.Of(ch) == 2)
+                {
+                    Put(o + 1, '\0');
+                    if (_c + 2 >= cols) { _c = cols - 1; _wrap = true; } else _c += 2;
+                }
+                else if (_c == cols - 1) _wrap = true; else _c++;
             }
         }
+    }
+
+    // like xterm: a cell drawn over half of a wide char blanks the other half; a wide char's second cell has the first one's look
+    private void Put(int o, char ch)
+    {
+        if (Ch[o] == '\0' && o % cols > 0) Ch[o - 1] = ' ';
+        if (CellWidth.Of(Ch[o]) == 2 && o % cols < cols - 1) Ch[o + 1] = ' ';
+        Ch[o] = ch; Fg[o] = _fg; Bg[o] = _bg;
     }
 
     private void Csi(char f, int[] p)
@@ -53,7 +68,7 @@ sealed class MiniTerm(int cols, int rows)
                 if (p.Length == 0) p = [0];
                 for (int k = 0; k < p.Length; k++)
                 {
-                    if (p[k] == 0) { _fg = 0xFFFFFF; _bg = 0; }
+                    if (p[k] == 0) { _fg = DefaultForeground; _bg = 0; }
                     else if (p[k] is 38 or 48 && k + 4 < p.Length && p[k + 1] == 2)
                     {
                         uint c = (uint)(p[k + 2] << 16 | p[k + 3] << 8 | p[k + 4]);
@@ -73,6 +88,7 @@ sealed class MiniTerm(int cols, int rows)
     {
         int m = Array.IndexOf(Quads, ch);
         if (ch == ' ') return $"q{bg:x6}{bg:x6}{bg:x6}{bg:x6}";
+        if (ch == '\0') return $"wide-second-cell{bg:x6}";
         if (m >= 0)
             return "q" + string.Concat(Enumerable.Range(0, 4).Select(b => ((m >> b & 1) != 0 ? fg : bg).ToString("x6")));
         return $"{ch}{fg:x6}{bg:x6}";
@@ -100,8 +116,8 @@ public class DiffEncoderTests
         var scr = new Screen(cols, rows);
         var enc = new DiffEncoder();
         var term = new MiniTerm(cols, rows);
-        game.LoggedIn = true;
-        game.Queue.Offer(new FeedPost("at://did:plc:a/app.bsky.feed.post/1", "c1", "did:plc:a", "a.bsky.social", "just shipped the thing we have been working on for months, tell me what you think", 240, 3, 1, null, null));
+        game.SignedIn = true;
+        game.Posts.Offer(new FeedPost("at://did:plc:a/app.bsky.feed.post/1", "c1", "did:plc:a", "a.bsky.social", "just shipped the thing we have been working on for months, tell me what you think", 240, 3, 1, null, null));
         game.OfferDark(new DarkPost(DarknessKind.Spam, 11, "buy followers cheap click my profile now"));
         var inp = game.Input;
         for (int f = 0; f < 500; f++)
@@ -109,7 +125,7 @@ public class DiffEncoderTests
             inp.Key(GameKey.Fire, true);
             inp.Key(GameKey.Left, f / 40 % 2 == 0); inp.Key(GameKey.Right, f / 40 % 2 == 1);
             game.Step();
-            view.Render(game, scr);
+            view.FitAndRender(game, scr);
             term.Feed(enc.Encode(scr));
             AssertSame(scr, term, $"frame {f}");
         }
@@ -202,12 +218,12 @@ public class QuadComposerTests
             int col0 = rng.Next(-2, 6), row0 = rng.Next(-1, 3);
             scr.Clear(0);
             quad.Compose(s, ox, oy, scr, col0, row0);
-            for (int cy = 0; cy < 6; cy++)
-                for (int cx = 0; cx < 8; cx++)
+            for (int cy = 0; cy < s.H / 2; cy++)
+                for (int cx = 0; cx < s.W / 2; cx++)
                 {
                     int sc = col0 + cx, sr = row0 + cy;
                     if (sc < 0 || sc >= scr.Cols || sr < 0 || sr >= scr.Rows) continue;
-                    uint P(int dx, int dy) => s.P[Math.Clamp(cy * 2 + dy - oy, 0, 11) * 16 + Math.Clamp(cx * 2 + dx - ox, 0, 15)];
+                    uint P(int dx, int dy) => s.P[Math.Clamp(cy * 2 + dy - oy, 0, s.H - 1) * s.W + Math.Clamp(cx * 2 + dx - ox, 0, s.W - 1)];
                     var px = new Rgb?[] { Surface.Unpack(P(0, 0)), Surface.Unpack(P(1, 0)), Surface.Unpack(P(0, 1)), Surface.Unpack(P(1, 1)) };
                     var (g, fg, bg) = QuadRenderer.Block(px);
                     int t = sr * scr.Cols + sc;

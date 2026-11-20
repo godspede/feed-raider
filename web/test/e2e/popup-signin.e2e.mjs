@@ -21,6 +21,7 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const wwwroot = fileURLToPath(new URL('../../../src/FeedRaider.Web/wwwroot/', import.meta.url));
 const PAGE_READY_MS = 30e3;   // the opening page's Sign in button turns on (or, after a reload, the session is found) within this
 const POPUP_MS = 15e3;        // the popup opens, and its authorization page shows, within this
+const HANDOFF_MS = 5e3;       // the opening page shows the account within this once the popup is done
 const noBus = process.argv.includes('--no-bus');
 const abandon = process.argv.includes('--abandon');
 const reload = process.argv.includes('--reload');
@@ -58,7 +59,10 @@ function startSite(bundle) {
       const body = await readFile(join(wwwroot, path === '/' ? 'index.html' : decodeURIComponent(path).replace(/^\/+/, '')));
       res.writeHead(200, { 'Content-Type': types[extname(path)] || (path === '/' ? 'text/html' : 'application/octet-stream') });
       res.end(body);
-    } catch { res.writeHead(404); res.end(); }
+    } catch (e) {
+      if (!['ENOENT', 'ENOTDIR', 'EISDIR'].includes(e.code) && !(e instanceof URIError)) throw e;   // a missing file, a folder or a bad escape is a 404; any other failure is a real fault
+      res.writeHead(404); res.end();
+    }
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({
     origin: `http://127.0.0.1:${server.address().port}`,
@@ -85,7 +89,7 @@ try {
   const opener = await context.newPage();
   watchConsole(opener, 'opener');
   await opener.goto(site.origin);
-  await opener.waitForFunction(() => !document.getElementById('start-login').disabled, null, { timeout: PAGE_READY_MS });
+  await opener.waitForFunction(() => !document.getElementById('start-signin').disabled, null, { timeout: PAGE_READY_MS });
   // the start page signs in at bsky.social; here the same signIn goes to the mock, from a click so the popup is allowed
   await opener.evaluate(({ target, abandon }) => {
     const b = document.createElement('button');
@@ -111,7 +115,7 @@ try {
   popup.on('close', () => { popupClosed = true; });
   // no focus, no bringToFront: the opening page must notice by itself (hand-off, storage event or its own asking)
   // a page that never shows the account is caught by the check of `shown` below, with its own message
-  await opener.waitForFunction(() => document.getElementById('start-signed')?.hidden === false, null, { timeout: 5000 }).catch(() => {});
+  await opener.waitForFunction(() => document.getElementById('start-signed')?.hidden === false, null, { timeout: HANDOFF_MS }).catch(() => {});
   const after = await opener.evaluate(() => window.__e2e);
   const shown = await opener.evaluate(() => (document.getElementById('start-signed')?.hidden === false ? document.getElementById('start-who-name')?.textContent || '?' : ''));
   if (process.env.E2E_VERBOSE) console.info('pages:', context.pages().map((p) => p.url()).join(' | '));
@@ -120,11 +124,11 @@ try {
   let adopted = abandon ? !!shown : typeof after === 'string' && after.startsWith('{');
   let reloaded = '';
   if (reload) {
-    // the operator's report: he closed the popup himself and reloaded the opening page, which must find the saved session
+    // the player closes the popup and reloads the opening page, which must find the saved session
     if (!popupClosed) await popup.close();
     if (loseSub) await opener.evaluate(() => localStorage.removeItem('@@atproto/oauth-client-browser(sub)'));
     await opener.reload();
-    await opener.waitForFunction(() => document.getElementById('start-signed')?.hidden === false || !document.getElementById('start-login').disabled, null, { timeout: PAGE_READY_MS });
+    await opener.waitForFunction(() => document.getElementById('start-signed')?.hidden === false || !document.getElementById('start-signin').disabled, null, { timeout: PAGE_READY_MS });
     const again = await opener.evaluate(() => ({
       who: document.getElementById('start-signed')?.hidden === false ? document.getElementById('start-who-name')?.textContent || '?' : '',
       error: document.getElementById('start-error')?.style.display === 'block' ? document.getElementById('start-error').textContent : '',

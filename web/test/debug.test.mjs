@@ -49,7 +49,7 @@ test('debug panel: signed out, it asks for a sign-in; with no sign-in on the pag
   assert.equal(text(asks.panel.children[1]), 'Sign in with Bluesky (top right) to read the feed.');
   assert.equal(asks.calls.length, 0, 'no feed is read without a session');
   const none = await run({ me: null, auth: null });
-  assert.equal(text(none.panel.children[1]), 'Sign-in is unavailable on this page (it needs HTTPS or localhost).');
+  assert.equal(text(none.panel.children[1]), 'Sign-in is not available on this page (it needs HTTPS or localhost).');
 });
 
 test('debug panel: signed in, it reads ten posts of the discover feed by default and counts them', async () => {
@@ -81,7 +81,7 @@ test('debug panel: a row shows the author, the counts and the text, and marks a 
   assert.equal(text(reply.children[0]), '@user7.test (a reply)  likes 7  reposts 2  replies 3');
   assert.equal(text(plain.children[0]), '@user8.test  likes 8  reposts 2  replies 3');
   assert.equal(text(reply.children[1]), 'post number 7');
-  assert.equal(reply.children[2].children[0].textContent, 'like');
+  for (const r of [reply, plain]) assert.deepEqual(r.children[2].children.filter((c) => c.tag === 'button').map((b) => b.textContent), ['like', 'repost', 'undo']);
 });
 
 test('debug panel: a feed that fails to load says so in place of the count', async () => {
@@ -94,7 +94,7 @@ test('debug panel: the like button likes that post only, and a failed like can b
   const liked = [];
   let fail = true;
   const { panel } = await run({ posts: posts(2), bridge: { Like: async (uri) => { liked.push(uri); if (fail) throw new Error('no'); return JSON.stringify({ uri: 'at://like/1' }); } } });
-  const [like, result] = rows(panel)[1].children[2].children;
+  const [like, , , result] = rows(panel)[1].children[2].children;
   await like.onclick();
   assert.deepEqual(liked, [post(2).uri]);
   assert.equal(text(result), 'like failed: no');
@@ -103,4 +103,49 @@ test('debug panel: the like button likes that post only, and a failed like can b
   await like.onclick();
   assert.equal(text(result), 'liked: at://like/1');
   assert.equal(like.disabled, true, 'a like that went through cannot be sent twice');
+});
+
+test('debug panel: repost sends that post, and undo deletes the record the last write made, newest first', async () => {
+  const sent = [];
+  const { panel } = await run({ posts: posts(2), bridge: {
+    Like: async () => JSON.stringify({ uri: 'at://like/1' }),
+    Repost: async (uri) => { sent.push(['repost', uri]); return JSON.stringify({ uri: 'at://repost/1' }); },
+    Delete: async (rec) => { sent.push(['delete', rec]); },
+  } });
+  const [like, repost, undo, result] = rows(panel)[0].children[2].children;
+  await undo.onclick();
+  assert.deepEqual(sent, [], 'nothing was written, so nothing is deleted');
+  await like.onclick();
+  await repost.onclick();
+  assert.equal(text(result), 'reposted: at://repost/1');
+  await undo.onclick();
+  assert.deepEqual(sent, [['repost', post(1).uri], ['delete', 'at://repost/1']]);
+  assert.equal(text(result), 'undone: at://repost/1');
+  await undo.onclick();
+  assert.deepEqual(sent.at(-1), ['delete', 'at://like/1']);
+});
+
+test('debug panel: a failed repost says why and can be tried again', async () => {
+  let fail = true;
+  const { panel } = await run({ posts: posts(1), bridge: {
+    Repost: async () => { if (fail) throw new Error('sign in again'); return JSON.stringify({ uri: 'at://repost/2' }); },
+  } });
+  const [, repost, , result] = rows(panel)[0].children[2].children;
+  await repost.onclick();
+  assert.equal(text(result), 'repost failed: sign in again');
+  assert.equal(repost.disabled, false);
+  fail = false;
+  await repost.onclick();
+  assert.equal(text(result), 'reposted: at://repost/2');
+});
+
+// ?debug=feed is a test page, not the game. The start page covers the whole window and makes everything behind it inert, so
+// if it showed here the header's sign-in could not be pressed and the page would be useless.
+test('the start page never covers the debug page', () => {
+  assert.match(main, /const debugFeed = debug === 'feed';/);
+  assert.match(main, /const needsStart = [^;\n]*!debugFeed/, 'the start page is not wanted on the debug page');
+  assert.match(main, /const behindStart = spectatorMode \|\| debugFeed \? \[\] :/, 'nothing behind it is made inert');
+  assert.match(main, /let choice = !debugFeed && \(handle \|\| randomFromUrl\)/, 'no run starts under the debug page');
+  const html = readFileSync(new URL('../../src/FeedRaider.Web/wwwroot/index.html', import.meta.url), 'utf8');
+  assert.match(html, /body\.debug #start \{ display: none; \}/, 'and the page hides it even before the script runs');
 });

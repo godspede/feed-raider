@@ -4,6 +4,15 @@ namespace FeedRaider.Tests;
 
 public class TerminalKeysTests
 {
+    /// <summary>A key held with no release ends inside this many frames, or the hold is counted as never ending.</summary>
+    private const int MaxFramesHeld = 10_000;
+    /// <summary>The auto-repeats a terminal sends while a key is held down.</summary>
+    private const int RepeatsSent = 20;
+    private const int MsPerSecond = 1000;
+    private const int VkShift = 0x10;
+    /// <summary>The ends of the Control Panel's delay (0 to 3) and speed (0 to 31) scales, and a value past both.</summary>
+    private const int ShortestDelay = 0, LongestDelay = 3, SlowestSpeed = 0, FastestSpeed = 31, PastBothScales = 99;
+
     private static List<TermKeyEvent> Parse(string input)
     {
         var p = new TerminalKeyParser();
@@ -34,6 +43,13 @@ public class TerminalKeysTests
     [InlineData("B", TermKey.Bomb, KeyAction.Press)]
     [InlineData("[98u", TermKey.Bomb, KeyAction.Press)]
     [InlineData("e", TermKey.Like, KeyAction.Press)]
+    [InlineData("r", TermKey.Repost, KeyAction.Press)]
+    [InlineData("R", TermKey.Repost, KeyAction.Press)]
+    [InlineData("[", TermKey.MarkUp, KeyAction.Press)]
+    [InlineData("]", TermKey.MarkDown, KeyAction.Press)]
+    [InlineData("[114u", TermKey.Repost, KeyAction.Press)]
+    [InlineData("[91u", TermKey.MarkUp, KeyAction.Press)]
+    [InlineData("[93;1:3u", TermKey.MarkDown, KeyAction.Release)]
     [InlineData("m", TermKey.Mute, KeyAction.Press)]
     [InlineData("q", TermKey.Quit, KeyAction.Press)]
     [InlineData("\x03", TermKey.Quit, KeyAction.Press)]
@@ -90,80 +106,83 @@ public class TerminalKeysTests
     public void DetectsKittyReply(string received, bool kitty) => Assert.Equal(kitty, TerminalKeyParser.IsKittyReply(received));
 
     [Theory]
-    [InlineData(0x25, true, TermKey.Left, KeyAction.Press)]
-    [InlineData(0x26, false, TermKey.Up, KeyAction.Release)]
-    [InlineData(0x27, true, TermKey.Right, KeyAction.Press)]
-    [InlineData(0x28, false, TermKey.Down, KeyAction.Release)]
-    [InlineData(0x57, true, TermKey.Up, KeyAction.Press)]
-    [InlineData(0x41, false, TermKey.Left, KeyAction.Release)]
-    [InlineData(0x53, true, TermKey.Down, KeyAction.Press)]
-    [InlineData(0x44, true, TermKey.Right, KeyAction.Press)]
-    [InlineData(0x20, false, TermKey.Fire, KeyAction.Release)]
-    [InlineData(0x46, true, TermKey.AutoFire, KeyAction.Press)]
-    [InlineData(0x42, true, TermKey.Bomb, KeyAction.Press)]
-    [InlineData(0x45, true, TermKey.Like, KeyAction.Press)]
-    [InlineData(0x4D, true, TermKey.Mute, KeyAction.Press)]
-    [InlineData(0x4D, false, TermKey.Mute, KeyAction.Release)]
-    [InlineData(0x51, true, TermKey.Quit, KeyAction.Press)]
-    [InlineData(0x1B, true, TermKey.Quit, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.LeftArrow, true, TermKey.Left, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.UpArrow, false, TermKey.Up, KeyAction.Release)]
+    [InlineData((int)ConsoleKey.RightArrow, true, TermKey.Right, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.DownArrow, false, TermKey.Down, KeyAction.Release)]
+    [InlineData((int)ConsoleKey.W, true, TermKey.Up, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.A, false, TermKey.Left, KeyAction.Release)]
+    [InlineData((int)ConsoleKey.S, true, TermKey.Down, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.D, true, TermKey.Right, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.Spacebar, false, TermKey.Fire, KeyAction.Release)]
+    [InlineData((int)ConsoleKey.F, true, TermKey.AutoFire, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.B, true, TermKey.Bomb, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.E, true, TermKey.Like, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.R, true, TermKey.Repost, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.Oem4, true, TermKey.MarkUp, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.Oem6, true, TermKey.MarkDown, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.M, true, TermKey.Mute, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.M, false, TermKey.Mute, KeyAction.Release)]
+    [InlineData((int)ConsoleKey.Q, true, TermKey.Quit, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.Escape, true, TermKey.Quit, KeyAction.Press)]
     public void MapsWin32Records(int vk, bool down, TermKey key, KeyAction action)
     {
         Assert.Equal(new TermKeyEvent(key, action), Win32Keys.Map(vk, down));
     }
 
     [Fact]
-    public void UnmappedWin32KeyIsNull() => Assert.Null(Win32Keys.Map(0x10, true)); // Shift
+    public void UnmappedWin32KeyIsNull() => Assert.Null(Win32Keys.Map(VkShift, true));
 
     [Fact]
     public void WindowsTimingFollowsTheControlPanelScales()
     {
-        var slowest = KeyRepeatTiming.FromWindows(3, 0);
+        var slowest = KeyRepeatTiming.FromWindows(LongestDelay, SlowestSpeed);
         Assert.Equal(1000, slowest.DelayMs);
         Assert.Equal(400, slowest.IntervalMs);
-        var fastest = KeyRepeatTiming.FromWindows(0, 31);
+        var fastest = KeyRepeatTiming.FromWindows(ShortestDelay, FastestSpeed);
         Assert.Equal(250, fastest.DelayMs);
         Assert.Equal(33, fastest.IntervalMs);
-        Assert.Equal(KeyRepeatTiming.FromWindows(3, 31), KeyRepeatTiming.FromWindows(99, 99));
+        Assert.Equal(KeyRepeatTiming.FromWindows(LongestDelay, FastestSpeed), KeyRepeatTiming.FromWindows(PastBothScales, PastBothScales));
     }
 
     [Fact]
     public void FirstHoldBridgesTheDelayAndRepeatHoldsOnlyTheGap()
     {
-        var t = new KeyRepeatTiming(500, 40);
+        var t = KeyRepeatTiming.Default;
         Assert.True(t.FirstHoldMs > t.DelayMs + t.IntervalMs);
         Assert.True(t.RepeatHoldMs > t.IntervalMs);
-        Assert.True(t.RepeatHoldMs < 2 * t.IntervalMs + 40);
+        Assert.True(t.RepeatHoldMs < 2 * t.IntervalMs);
     }
 
     private static int FramesHeld(InputState inp, GameKey k)
     {
         int n = 0;
-        while (inp.Held(k) && n < 10_000) { inp.EndFrame(); n++; }
+        while (inp.Held(k) && n < MaxFramesHeld) { inp.EndFrame(); n++; }
         return n;
     }
 
-    private static int Frames(int ms) => (ms * Tuning.Fps + 999) / 1000;
+    private static int Frames(int ms) => (ms * Tuning.Fps + MsPerSecond - 1) / MsPerSecond;
 
     [Fact]
     public void FallbackFirstPressHoldsPastTheRepeatDelay()
     {
         var inp = new InputState();
-        var t = new KeyRepeatTiming(500, 40);
+        var t = KeyRepeatTiming.Default;
         inp.Press(GameKey.Right, t);
         Assert.Equal(Frames(t.FirstHoldMs), FramesHeld(inp, GameKey.Right));
-        Assert.True(Frames(t.FirstHoldMs) * 1000 / Tuning.Fps >= t.DelayMs);
+        Assert.True(Frames(t.FirstHoldMs) * MsPerSecond / Tuning.Fps >= t.DelayMs);
     }
 
     [Fact]
     public void FallbackRepeatsKeepTheKeyHeldAndReleaseLandsWithinAnInterval()
     {
         var inp = new InputState();
-        var t = new KeyRepeatTiming(500, 40);
+        var t = KeyRepeatTiming.Default;
         inp.Press(GameKey.Left, t);
-        int frames = Tuning.Fps / 2; // ~500 ms: the first repeat arrives
+        int frames = Frames(t.DelayMs);
         for (int i = 0; i < frames; i++) inp.EndFrame();
         Assert.True(inp.Held(GameKey.Left));
-        for (int r = 0; r < 20; r++)
+        for (int r = 0; r < RepeatsSent; r++)
         {
             inp.Press(GameKey.Left, t); // auto-repeat each interval
             inp.EndFrame();
@@ -177,7 +196,7 @@ public class TerminalKeysTests
     public void FallbackRepeatNeverShortensAHold()
     {
         var inp = new InputState();
-        var t = new KeyRepeatTiming(500, 40);
+        var t = KeyRepeatTiming.Default;
         inp.Press(GameKey.Up, t);
         inp.Press(GameKey.Up, t);
         Assert.Equal(Frames(t.FirstHoldMs), FramesHeld(inp, GameKey.Up));
@@ -189,8 +208,9 @@ public class TerminalKeysTests
         var inp = new InputState();
         var r = new KeyRouter(inp, hasReleases: true, KeyRepeatTiming.Default);
         r.Apply(new(TermKey.Right, KeyAction.Press));
-        for (int i = 0; i < 5 * Tuning.Fps; i++) inp.EndFrame();
-        Assert.True(inp.Held(GameKey.Right)); // far longer than any timer
+        const int FarPastAnyTimer = 5 * Tuning.Fps;
+        for (int i = 0; i < FarPastAnyTimer; i++) inp.EndFrame();
+        Assert.True(inp.Held(GameKey.Right));
         r.Apply(new(TermKey.Right, KeyAction.Release));
         Assert.False(inp.Held(GameKey.Right));
     }
@@ -258,6 +278,19 @@ public class TerminalKeysTests
     }
 
     [Fact]
+    public void RepostAndTheMarkKeysLatchOnTheInput()
+    {
+        var inp = new InputState();
+        var r = new KeyRouter(inp, true, KeyRepeatTiming.Default);
+        r.Apply(new(TermKey.Repost, KeyAction.Press));
+        r.Apply(new(TermKey.MarkUp, KeyAction.Press));
+        r.Apply(new(TermKey.MarkDown, KeyAction.Press));
+        Assert.Equal(InputState.LikeLatchFrames, inp.RepostLatch);
+        Assert.True(inp.MarkUpPressed);
+        Assert.True(inp.MarkDownPressed);
+    }
+
+    [Fact]
     public void QuitIsReported()
     {
         var r = new KeyRouter(new InputState(), true, KeyRepeatTiming.Default);
@@ -281,9 +314,32 @@ public class TerminalKeysTests
     public void WithoutReleasesAKeyUpEventIsIgnoredAndPressesUseTheTimer()
     {
         var inp = new InputState();
-        var t = new KeyRepeatTiming(500, 40);
+        var t = KeyRepeatTiming.Default;
         var r = new KeyRouter(inp, false, t);
         r.Apply(new(TermKey.Down, KeyAction.Press));
         Assert.Equal(Frames(t.FirstHoldMs), FramesHeld(inp, GameKey.Down));
+    }
+
+    [Fact]
+    public void A_terminal_key_press_hands_firing_back_from_the_pointer()
+    {
+        var inp = new InputState();
+        const int AnyCol = 10, AnyRow = 5;
+        inp.Pointer(AnyCol, AnyRow);
+        Assert.True(inp.Firing);
+        inp.Press(GameKey.Left, KeyRepeatTiming.Default);
+        Assert.False(inp.Firing);
+    }
+
+    [Fact]
+    public void No_byte_above_ascii_is_a_key()
+    {
+        const int FirstHigh = 0x80, LastHigh = 0xFF;
+        for (int b = FirstHigh; b <= LastHigh; b++)
+        {
+            var ev = new List<TermKeyEvent>();
+            new TerminalKeyParser().Feed((byte)b, ev);
+            Assert.True(ev.Count == 0, $"byte 0x{b:X2} made a key");
+        }
     }
 }

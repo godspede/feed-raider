@@ -11,4 +11,37 @@
     <ProjectReference Include="..\FeedRaider.Engine\FeedRaider.Engine.csproj" />
   </ItemGroup>
 
+  <!--
+    A publish serves the .NET runtime and the NuGet packages it uses, compiled to WebAssembly, from wwwroot/_framework/.
+    This target copies their licence texts there as plain files, after the publish has written its boot manifest, so they
+    are neither listed in it nor fingerprinted:
+      _framework/LICENSE.txt and _framework/THIRD-PARTY-NOTICES.txt, from the resolved runtime pack;
+      _framework/<package>.LICENSE.txt and _framework/<package>.THIRD-PARTY-NOTICES.txt, from each package with a runtime file.
+    A missing file fails the publish, naming the file; a build or run that does not publish is left as it is.
+  -->
+  <Target Name="PublishThirdPartyLicences" AfterTargets="Publish" DependsOnTargets="ResolveFrameworkReferences;ResolvePackageAssets">
+    <PropertyGroup>
+      <ThirdPartyLicenceDir>$(PublishDir)wwwroot/_framework/</ThirdPartyLicenceDir>
+      <ThirdPartyLicenceFileName>LICENSE.TXT</ThirdPartyLicenceFileName>
+      <ThirdPartyNoticesFileName>THIRD-PARTY-NOTICES.TXT</ThirdPartyNoticesFileName>
+    </PropertyGroup>
+    <ItemGroup>
+      <_RuntimePackForLicence Include="@(ResolvedRuntimePack)" Condition="'%(ResolvedRuntimePack.FrameworkName)' == 'Microsoft.NETCore.App'" />
+      <_PackageForLicence Include="%(RuntimeCopyLocalItems.NuGetPackageId)" NuGetPackageId="%(RuntimeCopyLocalItems.NuGetPackageId)" NuGetPackageVersion="%(RuntimeCopyLocalItems.NuGetPackageVersion)" Condition="'%(RuntimeCopyLocalItems.NuGetPackageId)' != ''" />
+    </ItemGroup>
+    <Error Condition="'@(_RuntimePackForLicence)' == ''" Text="No resolved runtime pack for Microsoft.NETCore.App: the publish cannot carry the .NET runtime's licence texts." />
+    <Error Condition="'%(_RuntimePackForLicence.PackageDirectory)' == ''" Text="The runtime pack %(_RuntimePackForLicence.Identity) has no package folder: the publish cannot carry its licence texts." />
+    <GetPackageDirectory Items="@(_PackageForLicence)" PackageFolders="@(AssetsFilePackageFolder)">
+      <Output TaskParameter="Output" ItemName="_ResolvedPackageForLicence" />
+    </GetPackageDirectory>
+    <ItemGroup>
+      <_ThirdPartyLicence Include="%(_RuntimePackForLicence.PackageDirectory)/$(ThirdPartyLicenceFileName)" TargetName="LICENSE.txt" />
+      <_ThirdPartyLicence Include="%(_RuntimePackForLicence.PackageDirectory)/$(ThirdPartyNoticesFileName)" TargetName="THIRD-PARTY-NOTICES.txt" />
+      <_ThirdPartyLicence Include="%(_ResolvedPackageForLicence.PackageDirectory)/$(ThirdPartyLicenceFileName)" TargetName="%(_ResolvedPackageForLicence.Identity).LICENSE.txt" />
+      <_ThirdPartyLicence Include="%(_ResolvedPackageForLicence.PackageDirectory)/$(ThirdPartyNoticesFileName)" TargetName="%(_ResolvedPackageForLicence.Identity).THIRD-PARTY-NOTICES.txt" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(_ThirdPartyLicence.FullPath)')" Text="%(_ThirdPartyLicence.FullPath) was not found: the publish cannot carry it as _framework/%(_ThirdPartyLicence.TargetName)." />
+    <Copy SourceFiles="@(_ThirdPartyLicence)" DestinationFiles="@(_ThirdPartyLicence->'$(ThirdPartyLicenceDir)%(TargetName)')" />
+  </Target>
+
 </Project>

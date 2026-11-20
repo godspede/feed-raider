@@ -14,7 +14,7 @@ public static class Wander
     /// <summary>Offset in [-1,1] on both axes. Scale it by the room's slack.</summary>
     public static (double X, double Y) Offset(string did, long timeMs)
     {
-        ulong h = Hashing.Fnv64(did);
+        ulong h = Hashing.MixedFnv64(did);
         return (Axis(h, 0, timeMs), Axis(h, YLaneBase, timeMs));
     }
 

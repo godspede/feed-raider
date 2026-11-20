@@ -135,11 +135,11 @@
     },
     {
       "post": {
-        "uri": "at://did:plc:aporn/app.bsky.feed.post/aporn",
-        "cid": "bafyaporn",
+        "uri": "at://did:plc:author-porn/app.bsky.feed.post/author-porn",
+        "cid": "bafyauthor-porn",
         "author": {
-          "did": "did:plc:aporn",
-          "handle": "aporn.example.com",
+          "did": "did:plc:author-porn",
+          "handle": "author-porn.example.com",
           "labels": [
             {
               "val": "porn"
@@ -158,11 +158,11 @@
     },
     {
       "post": {
-        "uri": "at://did:plc:asexual/app.bsky.feed.post/asexual",
-        "cid": "bafyasexual",
+        "uri": "at://did:plc:author-sexual/app.bsky.feed.post/author-sexual",
+        "cid": "bafyauthor-sexual",
         "author": {
-          "did": "did:plc:asexual",
-          "handle": "asexual.example.com",
+          "did": "did:plc:author-sexual",
+          "handle": "author-sexual.example.com",
           "labels": [
             {
               "val": "sexual"
@@ -181,11 +181,11 @@
     },
     {
       "post": {
-        "uri": "at://did:plc:anudity/app.bsky.feed.post/anudity",
-        "cid": "bafyanudity",
+        "uri": "at://did:plc:author-nudity/app.bsky.feed.post/author-nudity",
+        "cid": "bafyauthor-nudity",
         "author": {
-          "did": "did:plc:anudity",
-          "handle": "anudity.example.com",
+          "did": "did:plc:author-nudity",
+          "handle": "author-nudity.example.com",
           "labels": [
             {
               "val": "nudity"
@@ -204,11 +204,11 @@
     },
     {
       "post": {
-        "uri": "at://did:plc:agraphic/app.bsky.feed.post/agraphic",
-        "cid": "bafyagraphic",
+        "uri": "at://did:plc:author-graphic/app.bsky.feed.post/author-graphic",
+        "cid": "bafyauthor-graphic",
         "author": {
-          "did": "did:plc:agraphic",
-          "handle": "agraphic.example.com",
+          "did": "did:plc:author-graphic",
+          "handle": "author-graphic.example.com",
           "labels": [
             {
               "val": "graphic-media"

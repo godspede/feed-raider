@@ -12,15 +12,3 @@ public interface IFrameSink
 {
     void Write(string frame);
 }
-
-/// <summary>Pushes post events at the engine. Implementations own their connection.</summary>
-public interface IEventSource
-{
-    IAsyncEnumerable<PostEvent> ReadAsync(CancellationToken ct);
-}
-
-/// <summary>An event source that can say what its connection is doing, for the status line.</summary>
-public interface IHasState
-{
-    string State { get; }
-}

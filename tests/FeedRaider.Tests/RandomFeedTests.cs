@@ -51,8 +51,8 @@ public class RandomFeedTests
         Assert.DoesNotContain(signedOut.Posts, p => p.AuthorHandle == "optout.example.com");
         var optout = signedIn.Posts.Single(p => p.AuthorHandle == "optout.example.com");
         Assert.True(optout.AuthorOptOut);
-        Assert.True(WingQueue.Eligible(optout));
-        Assert.False(WingQueue.Eligible(optout, signedOut: true));
+        Assert.True(PostRules.Allowed(optout, signedOut: false));
+        Assert.False(PostRules.Allowed(optout, signedOut: true));
     }
 
     [Theory]
@@ -60,10 +60,10 @@ public class RandomFeedTests
     [InlineData("sexual")]
     [InlineData("nudity")]
     [InlineData("graphic")]
-    [InlineData("aporn")]
-    [InlineData("asexual")]
-    [InlineData("anudity")]
-    [InlineData("agraphic")]
+    [InlineData("author-porn")]
+    [InlineData("author-sexual")]
+    [InlineData("author-nudity")]
+    [InlineData("author-graphic")]
     public void Adult_labels_on_the_post_or_the_author_are_dropped_in_every_mode(string who)
     {
         foreach (bool signedOut in new[] { true, false })
@@ -71,12 +71,11 @@ public class RandomFeedTests
     }
 
     [Fact]
-    public void Eligible_rejects_adult_posts_built_by_hand()
+    public void Shown_rejects_adult_posts_built_by_hand()
     {
         var p = new FeedPost("at://x/p/1", "c", "did:plc:x", "x.example.com", "a plain joke about a very confused pigeon", 1, 0, 0, null, null, Adult: true);
-        Assert.False(WingQueue.Eligible(p));
-        Assert.True(WingQueue.Eligible(p with { Adult = false }));
-        Assert.False(new WingQueue().Offer(p));
+        Assert.False(PostRules.Shown(p, signedOut: false, textOnly: false));
+        Assert.True(PostRules.Shown(p with { Adult = false }, signedOut: false, textOnly: false));
     }
 
     [Fact]

@@ -5,11 +5,18 @@ using System.Text.Json;
 
 namespace FeedRaider.Engine;
 
+/// <summary>An AppView request answered with an error status. The message is for a developer; <see cref="Status"/> lets the caller pick words for the player.</summary>
+public sealed class BskyStatusException(int status, string message) : InvalidOperationException(message)
+{
+    public int Status { get; } = status;
+}
+
 /// <summary>Read-only access to the public AppView. No auth, no writes.</summary>
 public static class BskyClient
 {
     public const string AppView = "https://public.api.bsky.app";
     public const int DefaultCap = 100;
+    private const int MaxErrorBodyChars = 120;   // how much of a failed response's body goes into the error
     private const int PageLimit = 100;   // the most follows getFollows returns in one page
 
     /// <summary>Fetches the accounts <paramref name="handle"/> follows, paginating up to <paramref name="cap"/>.
@@ -26,7 +33,7 @@ public static class BskyClient
             using var resp = await http.GetAsync(url, ct).ConfigureAwait(false);
             string body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode)
-                throw new InvalidOperationException($"getFollows for '{actor}' failed: {(int)resp.StatusCode} {Truncate(body, 120)}");
+                throw new BskyStatusException((int)resp.StatusCode, $"getFollows for '{actor}' failed: {(int)resp.StatusCode} {Truncate(body, MaxErrorBodyChars)}");
             var (page, next) = ParseFollows(body);
             follows.AddRange(page);
             cursor = page.Count == 0 ? null : next;
@@ -35,13 +42,16 @@ public static class BskyClient
         return follows.Take(cap).ToList();
     }
 
+    /// <summary>The follows on one getFollows page, and the cursor to the next. A follow that carries
+    /// <see cref="FeedMapper.OptOutLabel"/> is left out: follows are only read for signed-out viewers (Play as someone and the
+    /// spectator view), and that author asks not to be shown to them.</summary>
     public static (List<Follow> Follows, string? Cursor) ParseFollows(string json)
     {
         using var doc = JsonDocument.Parse(json);
         var list = new List<Follow>();
         if (doc.RootElement.TryGetProperty("follows", out var arr) && arr.ValueKind == JsonValueKind.Array)
             foreach (var f in arr.EnumerateArray())
-                if (f.TryGetProperty("did", out var did) && did.GetString() is { Length: > 0 } d)
+                if (f.TryGetProperty("did", out var did) && did.GetString() is { Length: > 0 } d && !FeedMapper.HasLabel(f, FeedMapper.OptOutLabel))
                     list.Add(new Follow(d, f.TryGetProperty("handle", out var h) ? h.GetString() ?? d : d));
         string? cursor = doc.RootElement.TryGetProperty("cursor", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
         return (list, cursor);
@@ -51,7 +61,7 @@ public static class BskyClient
 }
 
 /// <summary>Jetstream over <see cref="ClientWebSocket"/> (the browser's WebSocket under wasm). Reconnects on drop.</summary>
-public sealed class JetstreamSource : IEventSource, IHasState
+public sealed class JetstreamSource
 {
     public string State { get; private set; } = "connecting";
 
@@ -59,9 +69,11 @@ public sealed class JetstreamSource : IEventSource, IHasState
     /// <summary>Above this the DIDs are sent as an options_update message instead of in the URL.</summary>
     public const int MaxUrlLength = 8000;
     internal const int ReceiveBufferBytes = 16 * 1024;
+    private const int BackoffCapSeconds = 30;
+    private const int BackoffMaxDoublings = 5;   // 1 << 5 = 32 s, already above the cap
 
-    /// <summary>The wait before reconnect number <paramref name="failures"/>: 2, 4, 8, 16, then 30 seconds.</summary>
-    internal static TimeSpan Backoff(int failures) => TimeSpan.FromSeconds(Math.Min(30, 1 << Math.Min(failures, 5)));
+    /// <summary>The wait before reconnect number <paramref name="failures"/>: 2, 4, 8, 16, then the cap.</summary>
+    internal static TimeSpan Backoff(int failures) => TimeSpan.FromSeconds(Math.Min(BackoffCapSeconds, 1 << Math.Min(failures, BackoffMaxDoublings)));
 
     private readonly IReadOnlyList<string> _dids;
     private readonly string _endpoint;
@@ -127,9 +139,9 @@ public sealed class JetstreamSource : IEventSource, IHasState
             var buffer = new byte[ReceiveBufferBytes];
             while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
-                var (bytes, failure) = await ReceiveMessageAsync(ws, buffer, ct);
-                if (bytes is null) { State = failure is null ? "reconnecting" : $"reconnecting ({failure})"; break; }
-                if (JetstreamParser.TryParse(Encoding.UTF8.GetString(bytes), out var post)) yield return post!;
+                var (text, failure) = await ReceiveTextAsync(ws, buffer, ct);
+                if (text is null) { State = failure is null ? "reconnecting" : $"reconnecting ({failure})"; break; }
+                if (JetstreamParser.TryParse(text, out var post)) yield return post!;
             }
         }
     }
@@ -152,6 +164,38 @@ public sealed class JetstreamSource : IEventSource, IHasState
         catch (OperationCanceledException)
         {
             return (false, null);
+        }
+    }
+
+    /// <summary>One whole text message, decoded straight from the receive buffer: no byte copy of the message is made, and a
+    /// character split across two frames is joined by the decoder. Text is null when the socket closed, was cancelled or failed;
+    /// Failure then says why it failed (null for a close or a cancel).</summary>
+    internal static async Task<(string? Text, string? Failure)> ReceiveTextAsync(ClientWebSocket ws, byte[] buffer, CancellationToken ct)
+    {
+        try
+        {
+            var r = await ws.ReceiveAsync(buffer, ct).ConfigureAwait(false);
+            if (r.MessageType == WebSocketMessageType.Close) return (null, null);
+            if (r.EndOfMessage) return (Encoding.UTF8.GetString(buffer, 0, r.Count), null);   // the usual case: the whole message in one frame
+            var decoder = Encoding.UTF8.GetDecoder();
+            var text = new System.Text.StringBuilder();
+            var chars = new char[buffer.Length];
+            while (true)
+            {
+                int n = decoder.GetChars(buffer, 0, r.Count, chars, 0, flush: r.EndOfMessage);
+                text.Append(chars, 0, n);
+                if (r.EndOfMessage) return (text.ToString(), null);
+                r = await ws.ReceiveAsync(buffer, ct).ConfigureAwait(false);
+                if (r.MessageType == WebSocketMessageType.Close) return (null, null);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return (null, null);
+        }
+        catch (Exception e) when (e is WebSocketException or ObjectDisposedException or InvalidOperationException)
+        {
+            return (null, e.Message);
         }
     }
 

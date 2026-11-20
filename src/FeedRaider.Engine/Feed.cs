@@ -6,16 +6,25 @@ namespace FeedRaider.Engine;
 /// <summary>A strong reference to a record: its at:// URI plus the CID of the version seen.</summary>
 public sealed record PostRef(string Uri, string Cid);
 
+/// <summary>What a post carries besides its text, for the one-line note on a card.</summary>
+public enum AttachmentKind { None, Picture, Video, Link, Quote, Other }
+
+/// <summary>One picture attached to a post: the address of its thumbnail, and its shape in pixels (0 by 0 when the post does not say).</summary>
+public sealed record PostPicture(string Thumb, int Width = 0, int Height = 0);
+
 /// <summary>A post from a feed. <see cref="ReplyRoot"/> and <see cref="ReplyParent"/> are null for a top-level post.
-/// <see cref="AuthorOptOut"/>: the author carries the <c>!no-unauthenticated</c> label (no logged-out viewers).
+/// <see cref="AuthorOptOut"/>: the author carries the <c>!no-unauthenticated</c> label (no signed-out viewers).
 /// <see cref="Adult"/>: the post or its author carries an adult or graphic label.
 /// <see cref="Labelled"/>: the post or its author carries any other label, bar <see cref="FeedMapper.HarmlessLabels"/>.
-/// <see cref="LinkText"/>: the text is only a link, or points at another bsky.app post (a quote without the embed).</summary>
+/// <see cref="LinkText"/>: the text is only a link, or points at another bsky.app post (a quote without the embed).
+/// <see cref="Pictures"/>: the pictures attached to the post itself, at most <see cref="FeedMapper.MaxPictures"/>; null when there are none.</summary>
 public sealed record FeedPost(
     string Uri, string Cid, string AuthorDid, string AuthorHandle, string Text,
     int LikeCount, int RepostCount, int ReplyCount, PostRef? ReplyRoot, PostRef? ReplyParent,
     string? AvatarUrl = null, bool HasEmbed = false, bool AlreadyLiked = false, bool AuthorOptOut = false, bool Adult = false,
-    bool Labelled = false, bool LinkText = false)
+    bool Labelled = false, bool LinkText = false,
+    string? DisplayName = null, bool AlreadyReposted = false, string? LikeUri = null, string? RepostUri = null,
+    AttachmentKind Attachment = AttachmentKind.None, string? AttachmentText = null, IReadOnlyList<PostPicture>? Pictures = null)
 {
     public PostRef Ref => new(Uri, Cid);
 }
@@ -29,18 +38,6 @@ public sealed record SessionInfo(string Did, string Handle);
 public interface IFeedSource
 {
     Task<FeedPage> GetPageAsync(string feedUri, string? cursor, int limit, CancellationToken ct);
-}
-
-/// <summary>Writes to the signed-in user's repo. Each call is one public record; callers only invoke it on an explicit user action.</summary>
-public interface IActions
-{
-    Task<PostRef> LikeAsync(PostRef post, CancellationToken ct);
-}
-
-public interface ISession
-{
-    /// <summary>The signed-in account, or null when signed out.</summary>
-    SessionInfo? Current { get; }
 }
 
 /// <summary>Known feed generators. Every URI was checked with app.bsky.feed.getFeedGenerator.</summary>
@@ -87,7 +84,7 @@ public static class Feeds
 public static partial class FeedMapper
 {
     /// <summary>Maps an <c>app.bsky.feed.getFeed</c> response body to a page. Items without uri, cid or author DID are skipped, and so
-    /// are reposts (the post belongs to another author, who was not asked for) and adult posts. With <paramref name="signedOut"/> (the page was read without a login) so are authors who opted out of logged-out viewers.</summary>
+    /// are reposts (the post belongs to another author, who was not asked for) and adult posts. With <paramref name="signedOut"/> (the page was read without signing in) so are authors who opted out of signed-out viewers.</summary>
     public static FeedPage ParsePage(string json, bool skipReposts = true, bool signedOut = false)
     {
         using var doc = JsonDocument.Parse(json);
@@ -95,7 +92,7 @@ public static partial class FeedMapper
         var posts = new List<FeedPost>();
         if (root.TryGetProperty("feed", out var feed) && feed.ValueKind == JsonValueKind.Array)
             foreach (var item in feed.EnumerateArray())
-                if (!(skipReposts && IsRepost(item)) && item.TryGetProperty("post", out var p) && ParsePost(p) is { } post && Raider.WingQueue.Allowed(post, signedOut)) posts.Add(post);
+                if (!(skipReposts && IsRepost(item)) && item.TryGetProperty("post", out var p) && ParsePost(p) is { } post && Raider.PostRules.Allowed(post, signedOut)) posts.Add(post);
         var cursor = root.TryGetProperty("cursor", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
         return new FeedPage(posts, cursor);
     }
@@ -123,15 +120,82 @@ public static partial class FeedMapper
                 parentRef = Ref(reply, "parent");
             }
         }
+        var viewer = ViewerOf(p);
+        var (kind, attText) = AttachmentOf(p);
         return new FeedPost(uri, cid, did, Str(author, "handle") ?? did, text,
             Int(p, "likeCount"), Int(p, "repostCount"), Int(p, "replyCount"), rootRef, parentRef,
             Str(author, "avatar"), HasEmbed(p) || HasRecordEmbed(p), AlreadyLiked(p),
-            HasLabel(author, OptOutLabel), HasLabel(p, AdultLabels) || HasLabel(author, AdultLabels) || HasSelfLabel(p, AdultLabels),
+            HasLabel(author, OptOutLabel), IsAdult(p),
             HasOtherLabel(p) || HasOtherLabel(author) || HasSelfLabel(p, null),
-            IsLinkOrQuotedPost(p, text));
+            IsLinkOrQuotedPost(p, text),
+            Clean(Str(author, "displayName")), viewer.Repost is not null, viewer.Like, viewer.Repost, kind, attText, kind == AttachmentKind.Picture ? PicturesOf(p) : null);
     }
 
-    /// <summary>The author's request not to be shown to logged-out viewers.</summary>
+    /// <summary>The most pictures a post may carry.</summary>
+    public const int MaxPictures = 4;
+
+    /// <summary>The pictures of the post's own embed view (<c>app.bsky.embed.images#view</c>): each one's thumbnail address and, where
+    /// the post gives it, its shape. Null when there is none: a quoted post's pictures, a video's poster and a link card's are not read.</summary>
+    public static IReadOnlyList<PostPicture>? PicturesOf(JsonElement p)
+    {
+        if (!p.TryGetProperty("embed", out var e) || e.ValueKind != JsonValueKind.Object
+            || Str(e, "$type") is not { } type || !type.StartsWith("app.bsky.embed.images", StringComparison.Ordinal)
+            || !e.TryGetProperty("images", out var imgs) || imgs.ValueKind != JsonValueKind.Array) return null;
+        var list = new List<PostPicture>();
+        foreach (var img in imgs.EnumerateArray())
+        {
+            if (list.Count >= MaxPictures) break;
+            if (img.ValueKind != JsonValueKind.Object || Str(img, "thumb") is not { Length: > 0 } thumb) continue;
+            int w = 0, h = 0;
+            if (img.TryGetProperty("aspectRatio", out var ar) && ar.ValueKind == JsonValueKind.Object)
+            {
+                w = Int(ar, "width");
+                h = Int(ar, "height");
+                if (w <= 0 || h <= 0) w = h = 0;
+            }
+            list.Add(new PostPicture(thumb, w, h));
+        }
+        return list.Count > 0 ? list : null;
+    }
+
+    private static string? Clean(string? s) => string.IsNullOrWhiteSpace(s) ? null : CellText.Clean(s) is { Length: > 0 } c ? c : null;
+
+    private readonly record struct Viewer(string? Like, string? Repost);
+
+    private static Viewer ViewerOf(JsonElement p) =>
+        p.TryGetProperty("viewer", out var v) && v.ValueKind == JsonValueKind.Object
+            ? new Viewer(Str(v, "like") is { Length: > 0 } l ? l : null, Str(v, "repost") is { Length: > 0 } r ? r : null)
+            : default;
+
+    /// <summary>What the post carries: from the embed view, else from the stored record's embed. The text is the first alt text of
+    /// pictures, the alt text of a video, or "title, host" of a link card; cleaned of line breaks and control characters, or null.</summary>
+    public static (AttachmentKind Kind, string? Text) AttachmentOf(JsonElement p)
+    {
+        JsonElement e;
+        if (p.TryGetProperty("embed", out var ev) && ev.ValueKind == JsonValueKind.Object) e = ev;
+        else if (p.TryGetProperty("record", out var r) && r.ValueKind == JsonValueKind.Object && r.TryGetProperty("embed", out var er) && er.ValueKind == JsonValueKind.Object) e = er;
+        else return (AttachmentKind.None, null);
+        string type = Str(e, "$type") ?? "";
+        if (type.StartsWith("app.bsky.embed.record", StringComparison.Ordinal)) return (AttachmentKind.Quote, null);
+        if (type.StartsWith("app.bsky.embed.images", StringComparison.Ordinal))
+        {
+            string? alt = null;
+            if (e.TryGetProperty("images", out var imgs) && imgs.ValueKind == JsonValueKind.Array && imgs.GetArrayLength() > 0 && imgs[0].ValueKind == JsonValueKind.Object)
+                alt = Str(imgs[0], "alt");
+            return (AttachmentKind.Picture, Clean(alt));
+        }
+        if (type.StartsWith("app.bsky.embed.video", StringComparison.Ordinal)) return (AttachmentKind.Video, Clean(Str(e, "alt")));
+        if (type.StartsWith("app.bsky.embed.external", StringComparison.Ordinal))
+        {
+            var ext = e.TryGetProperty("external", out var x) && x.ValueKind == JsonValueKind.Object ? x : e;
+            string? title = Clean(Str(ext, "title"));
+            string? host = Str(ext, "uri") is { } u && Uri.TryCreate(u, UriKind.Absolute, out var uri) && uri.Host.Length > 0 ? uri.Host : null;
+            return (AttachmentKind.Link, title is not null && host is not null ? $"{title}, {host}" : title ?? host);
+        }
+        return (AttachmentKind.Other, null);
+    }
+
+    /// <summary>The author's request not to be shown to signed-out viewers.</summary>
     public const string OptOutLabel = "!no-unauthenticated";
 
     /// <summary>Labels that keep a post (or a post by that author) out of the game in every mode.</summary>
@@ -154,20 +218,32 @@ public static partial class FeedMapper
     {
         if (!e.TryGetProperty("labels", out var labels) || labels.ValueKind != JsonValueKind.Array) return false;
         foreach (var l in labels.EnumerateArray())
-            if (l.ValueKind == JsonValueKind.Object && Str(l, "val") is { } v && Other(v)) return true;
+            if (l.ValueKind == JsonValueKind.Object && Str(l, "val") is { } v && IsUnlistedLabel(v)) return true;
         return false;
     }
 
-    private static bool Other(string v) => Array.IndexOf(AdultLabels, v) < 0 && Array.IndexOf(HarmlessLabels, v) < 0;
+    private static bool IsUnlistedLabel(string v) => Array.IndexOf(AdultLabels, v) < 0 && Array.IndexOf(HarmlessLabels, v) < 0;
+
+    /// <summary>True when a post view carries one of <see cref="AdultLabels"/>: on the post, on its author, or as a self-label of its record.
+    /// Such a post's words are shown nowhere in the game.</summary>
+    public static bool IsAdult(JsonElement p) =>
+        HasLabel(p, AdultLabels)
+        || (p.TryGetProperty("author", out var author) && author.ValueKind == JsonValueKind.Object && HasLabel(author, AdultLabels))
+        || HasSelfLabel(p, AdultLabels);
+
+    /// <summary>True when a post record (not a post view) self-labels itself with one of <see cref="AdultLabels"/>.</summary>
+    public static bool IsSelfLabelledAdult(JsonElement record) => RecordHasSelfLabel(record, AdultLabels);
 
     // the post's own self-labels (record.labels.values[].val): one of vals, or with vals null any label Other counts
-    private static bool HasSelfLabel(JsonElement p, string[]? vals)
+    private static bool HasSelfLabel(JsonElement p, string[]? vals) =>
+        p.TryGetProperty("record", out var rec) && rec.ValueKind == JsonValueKind.Object && RecordHasSelfLabel(rec, vals);
+
+    private static bool RecordHasSelfLabel(JsonElement rec, string[]? vals)
     {
-        if (!p.TryGetProperty("record", out var rec) || rec.ValueKind != JsonValueKind.Object
-            || !rec.TryGetProperty("labels", out var l) || l.ValueKind != JsonValueKind.Object
+        if (!rec.TryGetProperty("labels", out var l) || l.ValueKind != JsonValueKind.Object
             || !l.TryGetProperty("values", out var values) || values.ValueKind != JsonValueKind.Array) return false;
         foreach (var v in values.EnumerateArray())
-            if (v.ValueKind == JsonValueKind.Object && Str(v, "val") is { } s && (vals is null ? Other(s) : Array.IndexOf(vals, s) >= 0)) return true;
+            if (v.ValueKind == JsonValueKind.Object && Str(v, "val") is { } s && (vals is null ? IsUnlistedLabel(s) : Array.IndexOf(vals, s) >= 0)) return true;
         return false;
     }
 
@@ -189,8 +265,7 @@ public static partial class FeedMapper
     [GeneratedRegex(@"bsky\.app/profile/\S+/post/", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BskyPostUrl();
 
-    /// <summary>True when the text links to another bsky.app post, or is a link and little else (what is left once links are removed is
-    /// too short to show). The facets count as well as the visible text: a link facet can sit under a shortened label.</summary>
+    /// <summary>True when the text links to another bsky.app post, or is only a link (nothing is left once links are removed). The facets count as well as the visible text: a link facet can sit under a shortened label.</summary>
     public static bool IsLinkOrQuotedPost(JsonElement p, string text)
     {
         bool facetLink = false;
@@ -207,7 +282,7 @@ public static partial class FeedMapper
             }
         if (BskyPostUrl().IsMatch(text)) return true;
         if (!facetLink && !Url().IsMatch(text)) return false;
-        return Raider.Tuning.WingMinTextChars > BubbleText.Sanitize(Url().Replace(text, " ")).Length;
+        return CellText.Clean(Url().Replace(text, " ")).Length == 0;
     }
 
     private static PostRef? Ref(JsonElement e, string name) =>

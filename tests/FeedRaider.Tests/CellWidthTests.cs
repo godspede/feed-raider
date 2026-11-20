@@ -19,18 +19,18 @@ public class CellWidthTests
         { "สวัสดี thai", "สวสด thai" },
         { "नमस्ते hindi", "नमसत hindi" },
         { "café e҉ Z̤ͧalgo", "cafe e Zalgo" },
-        { "\u2b50 star \u2b55 ring \u2b1b box \u2705 ok", "? star ? ring ? box ? ok" },
-        { "\U0001f468\u200d\U0001f469\u200d\U0001f467 family", "??? family" },
-        { "\U0001f3f3\ufe0f\u200d\U0001f308 flag", "?? flag" },
-        { "日本語 ＡＢ　wide", "??? ?? wide" },
+        { "\u2b50 star \u2b55 ring \u2b1b box \u2705 ok", "star ring box ok" },
+        { "\U0001f468\u200d\U0001f469\u200d\U0001f467 family", "family" },
+        { "\U0001f3f3\ufe0f\u200d\U0001f308 flag", "flag" },
+        { "日本語 ＡＢ　wide", "wide" },
         { "word⁠joiner ​ zero ­soft", "wordjoiner zero soft" },
         { "⃣⃣ lead", "lead" },
     };
 
     [Theory, MemberData(nameof(Posts))]
-    public void Sanitized_post_text_is_one_xterm_cell_per_char(string text, string expected)
+    public void Cleaned_post_text_is_one_xterm_cell_per_char(string text, string expected)
     {
-        string clean = BubbleText.Sanitize(text);
+        string clean = CellText.CleanSingle(text);
         Assert.Equal(expected, clean);
         Assert.All(clean, c => Assert.Equal(1, CellWidth.Of(c)));
     }
@@ -52,7 +52,8 @@ public class CellWidthTests
     {
         var s = new Screen(12, 1);
         s.Text(0, 0, "A⃝B日C", 0xFFFFFF);
-        Assert.Equal("A?B?C", new string(s.Ch, 0, 5));
+        Assert.Equal("AB" + (char)0x65E5 + Screen.Continue + "C", new string(s.Ch, 0, 5));      // the mark has no cell, the wide char two; no ?
+        Assert.DoesNotContain('?', s.Ch);
         s.Text(0, 0, "\u2588\u258c\u2026\u2665\u2598", 0xFFFFFF);
         Assert.Equal("\u2588\u258c\u2026\u2665\u2598", new string(s.Ch, 0, 5));
     }

@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { avatarCid, didDocUrl, metadataUrl } from '../../src/FeedRaider.Web/wwwroot/page.js';
+import { avatarCid, cellAt, createGestures, didDocUrl, FIELD_MAX_COLS, grants, leftPanel, metadataUrl, renderLog, SIDE_GAP_COLS, SIDE_MIN_COLS } from '../../src/FeedRaider.Web/wwwroot/page.js';
 
 const wwwroot = new URL('../../src/FeedRaider.Web/wwwroot/', import.meta.url);
 const metadataScript = fileURLToPath(new URL('../make-client-metadata.mjs', import.meta.url));
@@ -85,7 +85,10 @@ test('a page opened on localhost moves to the loopback IP before any script or s
 test('an avatar is read from the author\'s PDS: the DID document is found, and the CDN URL gives the blob cid', () => {
   assert.equal(didDocUrl('did:plc:abc123'), 'https://plc.directory/did:plc:abc123');
   assert.equal(didDocUrl('did:web:pds.example.com'), 'https://pds.example.com/.well-known/did.json');
-  for (const bad of ['did:web:host.example.com%3A8080', 'did:web:', 'did:key:z6Mk', null, 7]) assert.equal(didDocUrl(bad), null, String(bad));
+  assert.equal(didDocUrl('did:web:PDS.Example.com'), 'https://pds.example.com/.well-known/did.json');
+  for (const bad of ['did:web:host.example.com%3A8080', 'did:web:host.example.com:user:alice', 'did:web:', 'did:key:z6Mk', null, 7,
+    'did:web:localhost', 'did:web:printer.local', 'did:web:127.0.0.1', 'did:web:nodots', 'did:web:router.home.arpa', 'did:web:box.internal',
+    'did:web:a.example.com%2Fpath', 'did:web:[::1]']) assert.equal(didDocUrl(bad), null, String(bad));
   assert.equal(avatarCid('https://cdn.bsky.app/img/avatar/plain/did:plc:abc123/bafkreiabcdef@jpeg'), 'bafkreiabcdef');
   assert.equal(avatarCid('https://cdn.bsky.app/img/avatar_thumbnail/plain/did:web:pds.example.com/bafkreiabcdef'), 'bafkreiabcdef');
   for (const bad of ['https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:abc/bafk@jpeg', 'https://pds.example.com/', undefined]) assert.equal(avatarCid(bad), null, String(bad));
@@ -103,9 +106,207 @@ test('the preview image is declared with absolute URLs on the site and og.png is
   assert.equal(tag('property', 'og:image:width'), '1200');
   assert.equal(tag('property', 'og:image:height'), '630');
   assert.ok(tag('property', 'og:image:alt')?.length > 20);
+  assert.equal(tag('name', 'twitter:image:alt'), tag('property', 'og:image:alt'));
+  // the alt says what the picture says: it quotes every pill web/make-og-image.mjs draws
+  const pills = [...readFileSync(new URL('../make-og-image.mjs', import.meta.url), 'utf8').matchAll(/<li>([^<]+)<\/li>/g)].map((m) => m[1]);
+  assert.ok(pills.length > 0);
+  for (const pill of pills) assert.ok(tag('property', 'og:image:alt').includes(pill), pill);
   const png = readFileSync(new URL('og.png', wwwroot));
   assert.equal(png.subarray(1, 4).toString(), 'PNG');
   assert.equal(png.toString('latin1', 12, 16), 'IHDR');
   assert.equal(png.readUInt32BE(16), 1200);
   assert.equal(png.readUInt32BE(20), 630);
+});
+
+const NEW_SCOPE = JSON.parse(readFileSync(new URL('../scope.json', import.meta.url), 'utf8')).granular;
+const ALL = { like: true, unlike: true, repost: true, unrepost: true };
+const NONE = { like: false, unlike: false, repost: false, unrepost: false };
+
+test('grants: the old scope string can like and nothing more', () => {
+  const old = 'atproto repo:app.bsky.feed.like?action=create rpc:app.bsky.feed.getFeed?aud=did:web:api.bsky.app%23bsky_appview';
+  assert.deepEqual(grants(old), { ...NONE, like: true });
+});
+
+test('grants: the new scope string, and transition:generic, can do all four', () => {
+  assert.deepEqual(grants(NEW_SCOPE), ALL);
+  assert.deepEqual(grants('atproto transition:generic'), ALL);
+});
+
+test('grants: nothing granted, or nothing known, is none', () => {
+  for (const s of ['', '   ', null, undefined, 'atproto']) assert.deepEqual(grants(s), NONE);
+});
+
+test('grants: a collection scope without actions allows every action, and other collections count for nothing', () => {
+  assert.deepEqual(grants('atproto repo:app.bsky.feed.repost'), { ...NONE, repost: true, unrepost: true });
+  assert.deepEqual(grants('atproto repo:app.bsky.feed.post?action=create&action=delete'), NONE);
+  assert.deepEqual(grants('atproto repo:app.bsky.feed.like?action=delete'), { ...NONE, unlike: true });
+});
+
+// --- the feed log on the field's left: cells, clicks, taps and the pause menu's list ---
+
+const metrics = { left: 10, top: 20, cellW: 8, cellH: 16, cols: 100, rows: 40 };
+
+test('cellAt: a pointer position is a column and row of the terminal, and nothing outside it', () => {
+  assert.deepEqual(cellAt(10, 20, metrics), { col: 0, row: 0 });
+  assert.deepEqual(cellAt(10 + 8 * 5 + 7, 20 + 16 * 3 + 15, metrics), { col: 5, row: 3 });
+  assert.deepEqual(cellAt(10 + 8 * 99 + 7, 20 + 16 * 39 + 15, metrics), { col: 99, row: 39 });
+  assert.equal(cellAt(9, 30, metrics), null, 'left of the terminal');
+  assert.equal(cellAt(30, 19, metrics), null, 'above it');
+  assert.equal(cellAt(10 + 8 * 100, 30, metrics), null, 'right of it');
+  assert.equal(cellAt(30, 20 + 16 * 40, metrics), null, 'below it');
+  assert.equal(cellAt(NaN, 30, metrics), null);
+  assert.equal(cellAt(30, 30, { ...metrics, cellW: 0 }), null, 'a terminal not laid out yet');
+});
+
+test('leftPanel: where the feed log stands, from the same sums as the game, and nothing when the window is too narrow', () => {
+  // 150 columns: the field is 64 wide, 43 columns either side; the panel is 40 wide (one spare column), 2 off the field
+  assert.deepEqual(leftPanel(150), { col: 43 - 2 - 40, cols: 40 });
+  assert.deepEqual(leftPanel(200), { col: 68 - 2 - 44, cols: 44 });
+  assert.equal(leftPanel(100), null);
+  assert.equal(leftPanel(48), null);
+});
+
+test('leftPanel: a window just wide enough for the narrowest feed log shows it, and one column less shows nothing', () => {
+  const narrowest = FIELD_MAX_COLS + 2 * (SIDE_MIN_COLS + SIDE_GAP_COLS + 1);
+  assert.deepEqual(leftPanel(narrowest), { col: 1, cols: SIDE_MIN_COLS });
+  assert.equal(leftPanel(narrowest - 1), null);
+});
+
+function gestureRig(inPanel) {
+  const calls = [];
+  let t = 0;
+  const host = {
+    tap: (c) => calls.push(['tap', c]), bomb: () => calls.push(['bomb']),
+    click: (c) => calls.push(['click', c]), inPanel,
+  };
+  return { calls, g: createGestures(host, () => t), at: (ms) => { t = ms; } };
+}
+
+test('gestures: a click on the left panel is a click and no tap; a click elsewhere is a tap', () => {
+  const { calls, g } = gestureRig((c) => c[0] < 30);
+  g.mouseDown(0, [12, 7]);
+  assert.deepEqual(calls, [['click', [12, 7]]]);
+  calls.length = 0;
+  g.mouseDown(0, [60, 7]);
+  assert.deepEqual(calls, [['tap', [60, 7]]]);
+  calls.length = 0;
+  g.mouseDown(2, [12, 7]);
+  assert.deepEqual(calls, [['bomb']], 'the right button still bombs');
+});
+
+test('gestures: a quick tap on the left panel clicks, and neither taps nor asks for a steering drag', () => {
+  const { calls, g, at } = gestureRig((c) => c[0] < 30);
+  at(1000);
+  g.touchStart(1, 50, 50, [12, 7]);
+  assert.equal(g.touchMove(1, 3, 1), false, 'the finger moved a little: no steering');
+  at(1100);
+  g.touchEnd(0);
+  assert.deepEqual(calls, [['click', [12, 7]]]);
+});
+
+test('gestures: a long press or a drag that began on the left panel is not a click and still does not steer', () => {
+  const { calls, g, at } = gestureRig((c) => c[0] < 30);
+  at(0);
+  g.touchStart(1, 50, 50, [12, 7]);
+  assert.equal(g.touchMove(1, 30, 0), false);
+  at(100);
+  g.touchEnd(0);
+  assert.equal(calls.some((c) => c[0] === 'click'), false);
+  calls.length = 0;
+  at(0);
+  g.touchStart(1, 50, 50, [12, 7]);
+  at(900);
+  g.touchEnd(0);
+  assert.equal(calls.some((c) => c[0] === 'click'), false);
+});
+
+test('gestures: a touch on the field still steers', () => {
+  const { calls, g } = gestureRig((c) => c[0] < 30);
+  g.touchStart(1, 50, 50, [60, 7]);
+  assert.equal(g.touchMove(1, 3, 1), true);
+  assert.deepEqual(calls, []);
+});
+
+// A stand-in for the document: just what renderLog uses.
+function fakeDoc() {
+  const make = (tag) => {
+    const el = {
+      tag, children: [], attrs: {}, listeners: {}, className: '', textContent: '', hidden: false, disabled: false, title: '',
+      append(...kids) { el.children.push(...kids); },
+      replaceChildren(...kids) { el.children = kids; },
+      setAttribute(k, v) { el.attrs[k] = String(v); },
+      getAttribute(k) { return el.attrs[k] ?? null; },
+      addEventListener(type, fn) { (el.listeners[type] ||= []).push(fn); },
+      click() { for (const fn of el.listeners.click || []) fn({ preventDefault() {} }); },
+    };
+    return el;
+  };
+  return { createElement: make };
+}
+const find = (el, pred, out = []) => { if (pred(el)) out.push(el); for (const c of el.children || []) find(c, pred, out); return out; };
+const buttons = (li) => find(li, (e) => e.tag === 'button');
+const entry = (n, more = {}) => ({
+  uri: `at://x/post/${n}`, name: `Name ${n}`, handle: `h${n}.test`, text: `post number ${n}`,
+  like: 'off', repost: 'off', likeCount: String(n), repostCount: '0', likeLocked: false, repostLocked: false, ...more,
+});
+const logEls = (doc) => ({ list: doc.createElement('ol'), empty: doc.createElement('p') });
+
+test('renderLog: one list item per entry, in the order given, with name, handle, text and two buttons', () => {
+  const doc = fakeDoc();
+  const els = logEls(doc);
+  renderLog(els, [entry(2), entry(1)], { doc, press() {} });
+  assert.equal(els.list.children.length, 2);
+  const [first, second] = els.list.children;
+  assert.equal(first.tag, 'li');
+  const text = (li) => find(li, () => true).map((e) => e.textContent).join('|');
+  assert.match(text(first), /Name 2.*@h2\.test.*post number 2/);
+  assert.match(text(second), /Name 1.*@h1\.test.*post number 1/);
+  assert.equal(buttons(first).length, 2);
+  assert.equal(els.empty.hidden, true);
+  assert.equal(els.list.hidden, false);
+});
+
+test('renderLog: an empty log reads "No posts have gone by yet."', () => {
+  const doc = fakeDoc();
+  const els = logEls(doc);
+  renderLog(els, [entry(1)], { doc, press() {} });
+  renderLog(els, [], { doc, press() {} });
+  assert.equal(els.list.children.length, 0);
+  assert.equal(els.empty.hidden, false);
+  assert.equal(els.empty.textContent, 'No posts have gone by yet.');
+});
+
+test('renderLog: each button is pressed when its state is lit; pending is busy; a marked one is not pressed', () => {
+  const doc = fakeDoc();
+  const els = logEls(doc);
+  renderLog(els, [entry(1, { like: 'lit', repost: 'off' }), entry(2, { like: 'pending', repost: 'marked' })], { doc, press() {} });
+  const [a, b] = els.list.children.map(buttons);
+  assert.equal(a[0].getAttribute('aria-pressed'), 'true');
+  assert.equal(a[1].getAttribute('aria-pressed'), 'false');
+  assert.equal(a[0].getAttribute('aria-busy'), null);
+  assert.equal(b[0].getAttribute('aria-busy'), 'true');
+  assert.equal(b[1].getAttribute('aria-pressed'), 'false');
+  assert.match(a[0].textContent, /1/, 'the count shows');
+});
+
+test('renderLog: a repost the sign-in may not make is disabled and says why', () => {
+  const doc = fakeDoc();
+  const els = logEls(doc);
+  renderLog(els, [entry(1, { repostLocked: true })], { doc, press() {} });
+  const [like, repost] = buttons(els.list.children[0]);
+  assert.equal(like.disabled, false);
+  assert.equal(repost.disabled, true);
+  assert.match(repost.title, /sign in again/i);
+  assert.match(repost.getAttribute('aria-label'), /sign in again/i);
+});
+
+test('renderLog: pressing a button names the post and the action', () => {
+  const doc = fakeDoc();
+  const els = logEls(doc);
+  const pressed = [];
+  renderLog(els, [entry(1)], { doc, press: (uri, action) => pressed.push([uri, action]) });
+  const [like, repost] = buttons(els.list.children[0]);
+  like.click();
+  repost.click();
+  assert.deepEqual(pressed, [['at://x/post/1', 'like'], ['at://x/post/1', 'repost']]);
 });

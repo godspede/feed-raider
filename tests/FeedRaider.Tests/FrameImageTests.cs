@@ -55,4 +55,17 @@ public class FrameImageTests
             for (int x = 0; x < CellW; x++) seen.Add(Pixel(px, CellW, x, y));
         Assert.Equal(new HashSet<uint> { 0xffffffu, 0u }, seen);
     }
+
+    [Theory]
+    [InlineData('\u2605')]
+    [InlineData('\u21B3')]
+    public void A_gold_cards_star_and_the_thread_notes_arrow_are_drawn_as_their_own_shapes_not_as_a_question_mark(char mark)
+    {
+        var drawn = new byte[CellW * CellH * 3];
+        var unknown = new byte[CellW * CellH * 3];
+        FrameImage.DrawCell(drawn, CellW, 0, 0, mark, 0xffffff, 0x000000);
+        FrameImage.DrawCell(unknown, CellW, 0, 0, '?', 0xffffff, 0x000000);
+        Assert.Contains((byte)0xff, drawn);
+        Assert.NotEqual(unknown, drawn);
+    }
 }

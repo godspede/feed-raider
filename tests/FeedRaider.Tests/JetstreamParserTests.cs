@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FeedRaider.Engine;
 
 namespace FeedRaider.Tests;
@@ -87,6 +88,32 @@ public class JetstreamParserTests
         string field = bad.StartsWith("\"operation\"") ? "\"operation\":\"create\"" : "\"collection\":\"app.bsky.feed.post\"";
         Assert.True(JetstreamParser.TryParse(json, out _));
         Assert.False(JetstreamParser.TryParse(json.Replace(field, bad), out _));
+    }
+
+    public static TheoryData<string> AdultLabels() => new(FeedMapper.AdultLabels);
+
+    /// <summary>A create-post commit whose record self-labels itself with <paramref name="label"/>, or carries no labels when it is null.</summary>
+    private static string SelfLabelledCommit(string? label) => JsonSerializer.Serialize(new
+    {
+        did = "did:plc:abc",
+        time_us = 1,
+        kind = "commit",
+        commit = new
+        {
+            operation = "create",
+            collection = JetstreamParser.PostCollection,
+            record = label is null ? (object)new { text = "hi" } : new { text = "hi", labels = new { values = new[] { new { val = label } } } },
+        },
+    });
+
+    [Theory]
+    [MemberData(nameof(AdultLabels))]
+    public void A_post_that_self_labels_itself_adult_is_not_a_post(string label)
+    {
+        Assert.True(JetstreamParser.TryParse(SelfLabelledCommit(null), out var plain));
+        Assert.Equal("hi", plain!.Text);
+        Assert.False(JetstreamParser.TryParse(SelfLabelledCommit(label), out var e));
+        Assert.Null(e);
     }
 
     [Fact]

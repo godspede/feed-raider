@@ -1,4 +1,4 @@
-// ATProto OAuth login and the few XRPC calls the game needs. Everything crosses to .NET as JSON strings.
+// ATProto OAuth sign-in and the few XRPC calls the game needs. Everything crosses to .NET as JSON strings.
 import { BrowserOAuthClient } from '@atproto/oauth-client-browser';
 import { buildAtprotoLoopbackClientId } from '@atproto/oauth-types';
 import { Agent } from '@atproto/api';
@@ -8,12 +8,12 @@ import { metadataUrl, signIn as signInWith, signInFailed, popupKey, completeCall
 const APPVIEW_DID = 'did:web:api.bsky.app', APPVIEW_SERVICE = 'bsky_appview';
 const isLoopback = ['127.0.0.1', '[::1]', 'localhost'].includes(location.hostname);
 
-let client, agent, reader, did = null, handle = null, returnSearch = null, failure = null, note = null;
+let client, agent, reader, did = null, handle = null, granted = null, returnSearch = null, failure = null, note = null;
 // Reading localStorage throws when the browser blocks storage (private mode, cookies off). The page then runs without it: callers take null as "no storage" and skip saving the sign-in report.
 const storage = () => { try { return globalThis.localStorage ?? null; } catch { return null; } };
 
 // ?scope=transition requests atproto transition:generic instead of the granular scopes (loopback only; Pages is fixed by client-metadata.json).
-export function requestedScope() {
+function requestedScope() {
   const pick = new URLSearchParams(location.search).get('scope');
   return pick === 'transition' ? scopes.transition : scopes.granular;
 }
@@ -52,9 +52,13 @@ async function adopt(session) {
   // Writes go straight to the user's PDS. Only reads carry the appview proxy header: with it on a write, the PDS would forward
   // createRecord to the appview instead of saving the like.
   agent = new Agent(session);
+  // what this sign-in was granted: the page turns it into what the player may do. Null when the token set carries no scope.
+  granted = (await session.getTokenInfo(false)).scope ?? null;
   reader = agent.withProxy(APPVIEW_SERVICE, APPVIEW_DID);
   try {
     const r = await fetch(`${PUBLIC_API}/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`);
+    // the handle is only shown; the DID stands in for it when the lookup is refused, and the refusal is logged
+    if (!r.ok) console.warn(`profile lookup answered ${r.status}, showing the DID as the handle`);
     handle = r.ok ? (await r.json()).handle : did;
   } catch (e) {
     if (!(e instanceof TypeError)) throw e;
@@ -70,7 +74,7 @@ async function restoreOutcome() {
   return out;
 }
 
-// Restores a saved session, or finishes the callback of a redirect or a popup. Returns the session JSON, or null when logged out.
+// Restores a saved session, or finishes the callback of a redirect or a popup. Returns the session JSON, or null when signed out.
 // Only a client that cannot be made throws: a failed callback or restore leaves the page signed out but able to sign in again,
 // and initError() says why, as it does for a recent sign-in that left no session.
 export async function init() {
@@ -114,7 +118,7 @@ async function finishCallback(params, redirectUri) {
   });
   note = callbackNote({ popup: !!popupKey(result.state), handle });
   if (!popupKey(result.state) && typeof result.state === 'string' && result.state.startsWith('?')) {
-    // a fresh login carries the query string we left with (?debug=feed, ?handle=...), so the page can go back to it
+    // a fresh sign-in carries the query string we left with (?debug=feed, ?handle=...), so the page can go back to it
     returnSearch = result.state;
   }
 }
@@ -129,17 +133,17 @@ export function initNote() {
   return note;
 }
 
-// The query string the user had before the login redirect, or null when this load was not a login callback.
+// The query string the user had before the sign-in redirect, or null when this load was not a sign-in callback.
 export function returnTo() {
   return returnSearch;
 }
 
 export function session() {
-  return did ? JSON.stringify({ did, handle }) : null;
+  return did ? JSON.stringify({ did, handle, scope: granted }) : null;
 }
 
 // An empty input goes to bsky.social itself: its own page offers the account picker or the remembered session.
-export async function login(input) {
+export async function signInRedirect(input) {
   const h = input.trim().replace(/^@/, '') || ENTRYWAY;
   await client.signInRedirect(h, { scope: client.clientMetadata.scope, state: location.search });
 }
@@ -166,12 +170,13 @@ export async function adoptSaved() {
   return session();
 }
 
-export async function logout() {
+export async function signOut() {
   clearSignIn(storage());
   if (client && did) await client.revoke(did);
-  did = handle = agent = reader = null;
+  did = handle = agent = reader = granted = null;
 }
 
+// The same words @atproto/api throws with no session, which HostBridge's Plain reads as "signed out".
 const need = () => { if (!agent) throw new Error('not logged in'); return agent; };
 const needReader = () => { if (!reader) throw new Error('not logged in'); return reader; };
 
@@ -186,7 +191,8 @@ export async function getTimeline(cursor, limit) {
   return JSON.stringify(res.data);
 }
 
-// One post's thread, as deep as asked: the game reads the author's next reply with depth 1 and no parents.
+// One post's thread, as deep as asked. The game asks when a hold finishes a like, with depth 1 and no parents, and reads
+// the author's own next reply out of the answer.
 export async function getPostThread(uri, depth, parentHeight) {
   const res = await needReader().app.bsky.feed.getPostThread({ uri, depth, parentHeight });
   return JSON.stringify(res.data);
@@ -195,4 +201,29 @@ export async function getPostThread(uri, depth, parentHeight) {
 export async function like(uri, cid) {
   const res = await need().app.bsky.feed.like.create({ repo: did }, { subject: { uri, cid }, createdAt: new Date().toISOString() });
   return JSON.stringify({ uri: res.uri, cid: res.cid });
+}
+
+// A refusal for missing scope is the player's cue to sign in again, in those words; anything else passes through as it came.
+async function write(call) {
+  try {
+    return await call();
+  } catch (e) {
+    const m = `${e?.error ?? ''} ${e?.message ?? ''}`;
+    if (e?.status === 403 || /scope|insufficient/i.test(m)) throw new Error('sign in again: this sign-in does not allow that', { cause: e });
+    throw e;
+  }
+}
+
+export async function repost(uri, cid) {
+  return write(async () => {
+    const res = await need().app.bsky.feed.repost.create({ repo: did }, { subject: { uri, cid }, createdAt: new Date().toISOString() });
+    return JSON.stringify({ uri: res.uri, cid: res.cid });
+  });
+}
+
+// Deletes one of the player's own like or repost records, named by its address (at://did/collection/rkey) and nothing else.
+export async function remove(recordUri) {
+  const m = /^at:\/\/([^/]+)\/(app\.bsky\.feed\.(?:like|repost))\/([^/]+)$/.exec(recordUri);
+  if (!m || m[1] !== did) throw new Error('not one of your likes or reposts');
+  await write(() => need().com.atproto.repo.deleteRecord({ repo: did, collection: m[2], rkey: m[3] }));
 }

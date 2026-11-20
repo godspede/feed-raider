@@ -4,18 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Feed Raider</title>
-  <meta name="description" content="A vertical shoot-'em-up that plays like scrolling Bluesky. Fly through your feed and shoot it down, in your browser.">
+  <meta name="description" content="A vertical shoot-'em-up over your Bluesky feed: real posts scroll behind the fight, and you rest your ship on a post's heart or repost button to like or repost it.">
   <meta property="og:title" content="Feed Raider">
-  <meta property="og:description" content="A vertical shoot-'em-up that plays like scrolling Bluesky. Fly through your feed and shoot it down, in your browser.">
+  <meta property="og:description" content="A vertical shoot-'em-up over your Bluesky feed: real posts scroll behind the fight, and you rest your ship on a post's heart or repost button to like or repost it.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://feed-raider.famelos.com/">
   <meta property="og:image" content="https://feed-raider.famelos.com/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Feed Raider: pixel-art ships at stage 4 flying through a Bluesky-style feed, a lit mine and a pink splitter drifting down, a wingman's speech box with the author's self-thread opened in it, beside the text: Bluesky posts fly in as wingmen; AT Protocol OAuth sign-in; GitHub Pages, static, no server.">
+  <meta property="og:image:alt" content="Feed Raider: a pixel-art ship with a shield at stage 4, flying over invented post cards, as a Bluesky feed would show them, while a large purple enemy and its escorts come down, beside the text: A shoot-'em-up built from your Bluesky feed. Real posts scroll behind the fight. Rest on a post's heart to like it. Ten bosses, in your browser.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="https://feed-raider.famelos.com/og.png">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23181a11'/%3E%3Cpath d='M16 5l9 21-9-5-9 5z' fill='%23a3b35f'/%3E%3Ccircle cx='16' cy='17' r='2' fill='%23e9ead3'/%3E%3C/svg%3E">
+  <meta name="twitter:image:alt" content="Feed Raider: a pixel-art ship with a shield at stage 4, flying over invented post cards, as a Bluesky feed would show them, while a large purple enemy and its escorts come down, beside the text: A shoot-'em-up built from your Bluesky feed. Real posts scroll behind the fight. Rest on a post's heart to like it. Ten bosses, in your browser.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23151D28'/%3E%3Cpath d='M16 5l9 21-9-5-9 5z' fill='%230F73FF'/%3E%3Ccircle cx='16' cy='17' r='2' fill='%23FFFFFF'/%3E%3C/svg%3E">
   <!-- Sign-in on a local server needs the loopback IP, not "localhost", and the sign-in library would otherwise move the page
        there while the runtime is loading. Moving before anything else loads keeps the path, the query and the fragment. -->
   <script>if (location.hostname === 'localhost') { const u = new URL(location.href); u.hostname = '127.0.0.1'; window.stop(); location.replace(u.href); }</script>
@@ -23,236 +24,351 @@
   <!-- xterm.js is served with the page (xterm/, MIT, see xterm/LICENSE), not from a CDN -->
   <link rel="stylesheet" href="./xterm/xterm.min.css">
   <style>
-    /* one look for the page and the game: the terminal's own monospace face, the game's palette, square pixel edges.
-       Colours are "Olive dusk": olive ground, olive accents, periwinkle links; the glow and faint scanlines give it a terminal look. */
+    /* one look for everything in HTML over and around the game: the dark blue-grey "dim" theme of Bluesky's own app. One strong
+       colour (its blue), blue-grey surfaces with hairline borders, white text with a blue-grey second voice, pill buttons,
+       rounded panels and fields, a plain sans-serif face in sentence case. The values are the dim steps of the app's
+       open-source theme package (@bsky.app/alf 0.2.2); nothing is fetched, the face is whatever sans-serif is installed. */
     :root {
-      --ground: #181a11; --paper: #2b2d24; --panel2: #34362d; --line: #484a41;
-      --text: #e9ead3; --dim: #c0c1ab; --accent: #98a8e1;
-      --ok: #a3b35f; --warn: #d8b86a; --crit: #e2919f;
-      --olive: #a3b35f; --olive-light: #b9c76e; --olive-deep: #5d6a35; --wine: #a8324d;
+      --bg: #151D28; --surface: #1C2736; --surface-2: #222E3F; --line: #2C3A4E; --line-strong: #394960;
+      --text: #FFFFFF; --dim: #ABB8C9;
+      /* the blue: --primary is the theme's own (big labels, rings, sliders, toggles). White body-size text needs 4.5:1, which
+         the next deeper step gives, so small solid buttons rest on --primary-deep; --primary-hover is halfway between the two */
+      --primary: #0F73FF; --primary-hover: #0B6AF0; --primary-deep: #0661E0; --primary-press: #0A52B8;
+      --primary-light: #4D97FF; --primary-tint: #123464;
+      --negative: #EB2452; --negative-bg: #500B1C;
+      --like: #EC4899; --repost: #0AC266;
+      --chip: rgba(21, 29, 40, .94);
+      --backdrop: rgba(8, 12, 18, .72);
+      --shadow: 0 10px 40px rgba(0, 0, 0, .4);
+      --sans: Inter, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       --mono: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
-      --glow: 0 0 10px rgba(163, 179, 95, .45);
-      --scan: rgba(0, 0, 0, .22);
+      accent-color: var(--primary);
+      color-scheme: dark;
     }
     * { box-sizing: border-box; }
-    html, body { height: 100%; margin: 0; background: var(--ground); color: var(--text); font: 14px/1.5 var(--mono); }
+    html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 var(--sans); }
     body { display: flex; flex-direction: column; }
-    header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; min-height: 40px; padding: 4px 12px; border-bottom: 2px solid var(--line); }
-    /* the wordmark: bold, spaced capitals */
-    h1, #menu-title { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--text); white-space: nowrap; }
+    header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; min-height: 48px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
+    /* the wordmark: heavy and tight; where it is a title it also wears a hard blue shadow one step down and right, the one
+       thing kept from the arcade look */
+    h1, #menu-title { margin: 0; font-size: 16px; font-weight: 800; letter-spacing: -.01em; color: var(--text); white-space: nowrap; }
     form { display: flex; gap: 8px; }
-    input { background: var(--ground); color: var(--text); caret-color: var(--olive); border: 2px solid var(--line); border-radius: 0; padding: 4px 8px; font: inherit; width: 16em; }
+    input[type="text"], textarea { background: var(--surface); color: var(--text); caret-color: var(--primary); border: 1px solid var(--line-strong); border-radius: 8px; padding: 5px 10px; font: inherit; }
+    input[type="text"] { width: 16em; }
     input::placeholder { color: var(--dim); opacity: 1; }
-    input:focus { border-color: var(--olive); }
-    button { background: var(--olive); color: var(--ground); border: 0; border-radius: 0; padding: 5px 12px; font: inherit; font-weight: 700; cursor: pointer; box-shadow: 0 3px 0 var(--olive-deep); }
-    button:hover:not(:disabled) { background: var(--olive-light); box-shadow: 0 3px 0 var(--olive-deep), var(--glow); }
-    button:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 1px 0 var(--olive-deep); }
-    :focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+    input[type="text"]:hover, textarea:hover { border-color: var(--dim); }
+    input[type="text"]:focus, textarea:focus { border-color: var(--primary); background: var(--surface-2); }
+    /* buttons are pills. A plain button is the theme's secondary: blue-grey with a hairline. The solid blue one is the first
+       choice where it sits (the start page, the pause menu, a dialog), so there is one of it per place: it is named here, and
+       any button added later is a secondary. */
+    button { background: var(--surface-2); color: var(--text); border: 0; border-radius: 999px; padding: 6px 14px; font: inherit; font-weight: 600; cursor: pointer; box-shadow: inset 0 0 0 1px var(--line-strong); transition: background-color .12s, box-shadow .12s; }
+    button:hover:not(:disabled) { background: var(--line); }
+    button:active:not(:disabled) { background: var(--line-strong); }
+    button.primary, #menu-resume, #howto-close, #start-retry, header form button { background: var(--primary-deep); color: var(--text); box-shadow: none; }
+    button.primary:hover:not(:disabled), #menu-resume:hover:not(:disabled), #howto-close:hover:not(:disabled), #start-retry:hover:not(:disabled), header form button:hover:not(:disabled) { background: var(--primary-hover); }
+    button.primary:active:not(:disabled), #menu-resume:active:not(:disabled), #howto-close:active:not(:disabled), #start-retry:active:not(:disabled), header form button:active:not(:disabled) { background: var(--primary-press); }
+    button:disabled { opacity: .5; cursor: default; }
+    /* a toggle that is on is tinted blue with a blue edge, whatever it is: a pressed button or a switch */
+    button[aria-pressed="true"], [role="switch"][aria-checked="true"] { background: var(--primary-tint); box-shadow: inset 0 0 0 1px var(--primary); }
+    button[aria-pressed="true"]:hover:not(:disabled), [role="switch"][aria-checked="true"]:hover:not(:disabled) { background: var(--primary-tint); box-shadow: inset 0 0 0 2px var(--primary-light); }
+    /* a checkbox is drawn as the theme's switch: a pill track and a round knob that slides over and turns the track blue */
+    input[type="checkbox"] { -webkit-appearance: none; appearance: none; position: relative; flex: none; width: 44px; height: 26px; margin: 0; padding: 0; border: 0; border-radius: 999px; background: var(--line-strong); cursor: pointer; transition: background-color .12s; }
+    input[type="checkbox"]::before { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--text); transition: transform .12s; }
+    input[type="checkbox"]:checked { background: var(--primary); }
+    input[type="checkbox"]:checked::before { transform: translateX(18px); }
+    input[type="checkbox"]:disabled { opacity: .5; cursor: default; }
+    /* a blue ring with a gap, on every control */
+    :focus-visible { outline: 2px solid var(--primary-light); outline-offset: 2px; }
+    a { color: var(--primary-light); text-underline-offset: 3px; }
+    a:hover { color: var(--text); }
     #note { color: var(--dim); font-size: 13px; }
-    #note a { color: var(--dim); }
-    #error { color: var(--text); background: var(--wine); padding: 6px 16px; display: none; border: 2px solid var(--crit); }
+    body.game #error { position: fixed; left: 0; right: 0; bottom: 0; z-index: 3; pointer-events: none; padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
+    #error { color: var(--text); background: var(--negative-bg); padding: 8px 16px; display: none; border: 1px solid var(--negative); }
     #right { margin-left: auto; display: flex; gap: 8px 12px; align-items: center; }
     #who { display: flex; gap: 8px; align-items: center; color: var(--text); }
-    /* music: a speaker button and a volume slider, in the pause menu (in the header for the spectator view) */
-    #mute { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 28px; padding: 0; }
+    /* music: a round speaker button and a volume slider, in the pause menu (in the header for the spectator view) */
+    #mute { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; }
     #mute[hidden], #vol[hidden] { display: none; }
-    #mute.muted { background: transparent; color: var(--text); box-shadow: inset 0 0 0 2px var(--line); }
-    #mute.muted:hover { color: var(--text); box-shadow: inset 0 0 0 2px var(--olive); }
+    /* sound on is the blue one. Its pressed state means "muted", so that is the quiet one: an empty ring and a crossed speaker */
+    #mute, #mute:hover:not(:disabled) { background: var(--primary-tint); box-shadow: inset 0 0 0 1px var(--primary); }
+    #mute:hover:not(:disabled) { box-shadow: inset 0 0 0 2px var(--primary-light); }
+    #mute.muted { background: transparent; color: var(--dim); box-shadow: inset 0 0 0 1px var(--line-strong); }
+    #mute.muted:hover:not(:disabled) { background: var(--surface-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--dim); }
     #mute .wave { display: inline; }
     #mute.muted .wave { display: none; }
     #mute .cross { display: none; }
     #mute.muted .cross { display: inline; }
-    /* the volume slider as a HUD gauge: a framed track, olive fill, a square thumb */
-    #vol { -webkit-appearance: none; appearance: none; width: 7em; height: 20px; padding: 0; border: 0; background: transparent; cursor: pointer; }
-    #vol::-webkit-slider-runnable-track { height: 8px; background: var(--paper); border: 2px solid var(--line); }
-    #vol::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 18px; margin-top: -7px; background: var(--olive); border: 0; border-radius: 0; box-shadow: 0 0 0 2px var(--ground); }
-    #vol::-moz-range-track { height: 4px; background: var(--paper); border: 2px solid var(--line); }
-    #vol::-moz-range-progress { height: 4px; background: var(--olive); }
-    #vol::-moz-range-thumb { width: 10px; height: 18px; background: var(--olive); border: 0; border-radius: 0; box-shadow: 0 0 0 2px var(--ground); }
-    #vol:hover::-webkit-slider-thumb { background: var(--olive-light); box-shadow: 0 0 0 2px var(--ground), var(--glow); }
-    #vol:hover::-moz-range-thumb { background: var(--olive-light); box-shadow: 0 0 0 2px var(--ground), var(--glow); }
+    /* every slider (volume, feed speed, any added later): a thin pill track, a round blue thumb with a white edge */
+    input[type="range"] { -webkit-appearance: none; appearance: none; width: 7em; height: 28px; margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer; }
+    input[type="range"]::-webkit-slider-runnable-track { height: 4px; background: var(--line-strong); border-radius: 999px; }
+    input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -8px; background: var(--primary); border: 2px solid var(--text); border-radius: 50%; }
+    input[type="range"]::-moz-range-track { height: 4px; background: var(--line-strong); border-radius: 999px; }
+    input[type="range"]::-moz-range-progress { height: 4px; background: var(--primary); border-radius: 999px; }
+    input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; background: var(--primary); border: 2px solid var(--text); border-radius: 50%; }
+    input[type="range"]:hover::-webkit-slider-thumb { background: var(--primary-light); }
+    input[type="range"]:hover::-moz-range-thumb { background: var(--primary-light); }
     .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
     #play-title { display: none; }
     body.playing #play-title { display: block; }
-    #debug { display: none; max-height: 40vh; overflow: auto; padding: 8px 16px; border-bottom: 2px solid var(--line); font-size: 13px; }
-    #debug h2 { margin: 0 0 6px; font-size: 14px; color: var(--text); }
+    #debug { display: none; max-height: 40vh; overflow: auto; padding: 8px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
+    #debug h2 { margin: 0 0 6px; font-size: 15px; color: var(--text); }
     #debug .post { border-top: 1px solid var(--line); padding: 6px 0; }
     #debug .meta { color: var(--dim); }
     #debug .text { color: var(--text); white-space: pre-wrap; margin: 2px 0 4px; }
     #debug .result { margin-left: 8px; word-break: break-all; }
-    #debug button { margin-right: 6px; padding: 2px 10px; }
-    #debug textarea { display: block; width: min(40em, 100%); background: var(--ground); color: var(--text); border: 2px solid var(--line); border-radius: 0; font: inherit; margin-bottom: 4px; }
-    button:disabled { opacity: .5; cursor: default; }
+    #debug button { margin-right: 6px; padding: 2px 12px; }
+    #debug textarea { display: block; width: min(40em, 100%); margin-bottom: 4px; }
     #term { flex: 1; min-height: 0; padding: 8px 12px; }
-    /* game: the terminal is the playfield, so no scrolling, selecting or long-press menus on it */
+    /* game: the terminal is the field, so no scrolling, selecting or long-press menus on it */
     body.game { overscroll-behavior: none; position: fixed; inset: 0; }
     body.game #term, body.game #term * { touch-action: none; user-select: none; -moz-user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
     body.game #term { cursor: crosshair; padding: 0; }
     /* game: no header bar; the title, sound and sign-in live in the pause menu. ?debug=feed keeps it for its sign-in. */
     body.game:not(.debug) header { display: none; }
-    body.game header form:not(#login), body.game #note { display: none; }
-    body.playing #login { display: none; }
-    /* the gear at the top right of the field, beside the Stage readout: a 44 px target around a HUD-sized button. Tab
-       reaches it; a press never takes focus from the game, and Space and the arrows stay with the game. */
-    #gear { position: fixed; z-index: 2; padding: 0; background: transparent; box-shadow: none; cursor: pointer; }
+    body.game header form:not(#signin), body.game #note { display: none; }
+    body.playing #signin { display: none; }
+    /* the gear at the top right of the field, beside the Stage readout: a round 44 px target around a HUD-sized icon. It
+       is quiet at rest; under the pointer or the focus ring the whole round target fills in. Tab reaches it; a press
+       never takes focus from the game, and Space and the arrows stay with the game. */
+    #gear { position: fixed; z-index: 2; padding: 0; background: transparent; box-shadow: none; border-radius: 50%; cursor: pointer; }
     #gear[hidden], #side[hidden] { display: none; }
-    #gear .face { position: absolute; display: flex; align-items: center; justify-content: center; background: var(--paper); color: var(--olive); box-shadow: inset 0 0 0 2px var(--line); }
+    #gear .face { position: absolute; display: flex; align-items: center; justify-content: center; background: var(--surface); color: var(--dim); border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line); }
     #gear svg { width: 70%; height: 70%; }
-    #gear .hole { fill: var(--paper); }
-    #gear:hover:not(:disabled) { background: transparent; box-shadow: none; }
-    #gear:hover .face { color: var(--olive-light); box-shadow: inset 0 0 0 2px var(--olive), var(--glow); }
-    #gear:active:not(:disabled) { transform: none; box-shadow: none; }
+    #gear .hole { fill: var(--surface); }
+    #gear:hover:not(:disabled), #gear:focus-visible { background: rgba(34, 46, 63, .72); box-shadow: none; }
+    #gear:active:not(:disabled) { background: rgba(44, 58, 78, .9); box-shadow: none; }
+    #gear:hover .face, #gear:focus-visible .face { color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
     /* how to play and what it is: one text, in the pause menu and, on a wide window, in the empty margin right of the field */
-    .info { font-size: 13px; }
-    .info h2 { margin: 0 0 8px; font-size: 13px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--text); }
-    .info h2::before { content: "> "; color: var(--olive); letter-spacing: 0; }
-    .info section + section { margin-top: 18px; }
+    .info { font-size: 14px; color: var(--text); }
+    .info h2 { margin: 0 0 10px; font-size: 17px; font-weight: 700; line-height: 1.3; color: var(--text); }
+    .info section + section { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
     .info p, .info ul { margin: 0 0 8px; }
     .info ul { padding-left: 1.2em; }
     .info li + li { margin-top: 4px; }
-    .info b { color: var(--text); }
-    .info a { color: var(--accent); text-underline-offset: 3px; }
-    .info a:hover { color: var(--text); }
-    .info dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 10px; }
-    .info dt { color: var(--olive); font-weight: 700; }
-    .info dd { margin: 0; }
-    kbd { display: inline-block; padding: 0 4px; font: inherit; line-height: 1.3; color: var(--text); background: var(--paper); border: 1px solid var(--line); border-bottom-width: 2px; }
-    /* the side panel looks like a comm panel: a paper field in a line frame */
-    #side { position: fixed; z-index: 1; overflow-y: auto; padding: 14px 16px; background: var(--paper); border: 2px solid var(--line); }
-    #side kbd { background: var(--ground); }
+    .info b { color: var(--text); font-weight: 600; }
+    .info dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0 0 12px; }
+    .info dt { color: var(--dim); font-weight: 600; }
+    .info dd { margin: 0; color: var(--text); }
+    kbd { display: inline-block; padding: 0 6px; font: 12px/1.5 var(--mono); color: var(--text); background: var(--surface-2); border: 1px solid var(--line-strong); border-radius: 6px; }
+    /* the side panel: a raised, rounded card with a hairline edge */
+    #side { position: fixed; z-index: 1; overflow-y: auto; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+    #side kbd { background: var(--bg); }
     /* the pause menu: a real dialog over a dimmed game; the controls on the left, the help beside them, stacked on a phone */
-    #menu { width: min(60em, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0; overflow: auto; color: var(--text); border: 2px solid var(--line); background:
-      repeating-linear-gradient(to bottom, transparent 0 2px, var(--scan) 2px 3px), var(--ground);
-      box-shadow: 0 0 24px rgba(163, 179, 95, .14); }
-    #menu::backdrop { background: rgba(24, 26, 17, .78); }
+    #menu { width: min(60em, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0; overflow: auto; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
+    #menu::backdrop { background: var(--backdrop); }
     #menu[open] { display: grid; grid-template-columns: minmax(16em, 20em) 1fr; }
-    #menu .controls { display: flex; flex-direction: column; gap: 12px; padding: 22px 20px 22px 24px; border-right: 2px solid var(--line); }
-    #menu-title { font-size: 24px; letter-spacing: .14em; white-space: normal; text-shadow: 3px 3px 0 var(--olive-deep), var(--glow); }
-    #menu .paused { margin: -4px 0 4px; }
-    #menu .paused::before { content: "> "; color: var(--olive); }
-    #menu button { min-height: 44px; padding: 8px 16px; }
-    #menu .ghost { background: transparent; color: var(--text); box-shadow: inset 0 0 0 2px var(--line); }
-    #menu .ghost:hover:not(:disabled) { background: transparent; box-shadow: inset 0 0 0 2px var(--olive), var(--glow); }
-    #menu .ghost:active:not(:disabled) { transform: translateY(1px); box-shadow: inset 0 0 0 2px var(--olive); }
-    /* a fieldset is min-content wide by default, which pushed the slider past the column's edge */
-    #menu-sound { display: flex; align-items: center; gap: 12px; min-width: 0; margin: 0; padding: 10px 12px; border: 2px solid var(--line); }
-    #menu-sound[hidden] { display: none; }
-    #menu-sound legend { padding: 0 6px; color: var(--text); font-weight: 700; }
-    #menu #mute { width: 44px; height: 36px; min-height: 0; padding: 0; }
-    #menu #vol { flex: 1 1 0; width: 0; min-width: 6em; height: 36px; }
-    #menu-who { margin: 0; color: var(--text); overflow-wrap: anywhere; }
-    #menu #menu-signout, #menu #menu-signout:hover:not(:disabled), #menu #menu-signout:active:not(:disabled) { align-self: flex-start; min-height: 44px; padding: 6px 0; background: transparent; color: var(--accent); font-weight: 400; text-decoration: underline; text-underline-offset: 3px; box-shadow: none; transform: none; }
+    #menu [hidden] { display: none !important; }
+    #menu .controls { display: flex; flex-direction: column; gap: 12px; padding: 22px 20px 22px 24px; border-right: 1px solid var(--line); }
+    #menu-title { font-size: 26px; white-space: normal; text-shadow: 2px 2px 0 var(--primary-deep); }
+    #menu .paused { margin: -6px 0 4px; color: var(--dim); }
+    /* the general rules of the pause menu. They are written with :where(), so they weigh next to nothing: whatever is added to
+       the pause menu later (a button, a group, a list, a row with a toggle) takes this look with no rule of its own, and any
+       rule that does name it wins. Every control is at least 44 px tall. */
+    :where(#menu) button { min-height: 44px; padding: 8px 18px; }
+    :where(#menu .controls) :where(p) { margin: 0; color: var(--dim); overflow-wrap: anywhere; }
+    :where(#menu .controls) :where(h3, h4) { margin: 4px 0 0; font-size: 15px; font-weight: 700; color: var(--text); }
+    :where(#menu) fieldset { display: flex; align-items: center; gap: 12px; min-width: 0; margin: 0; padding: 6px 14px 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }   /* a fieldset is min-content wide by default, which pushed the slider past the column's edge */
+    :where(#menu) legend { padding: 0 6px; color: var(--dim); font-size: 13px; font-weight: 600; }
+    :where(#menu) input[type="range"] { flex: 1 1 0; width: 0; min-width: 6em; height: 44px; }
+    :where(#menu .controls) :where(ul, ol) { margin: 0; padding: 0; list-style: none; }
+    :where(#menu .controls) :where(li) { padding: 10px 0; overflow-wrap: anywhere; }
+    :where(#menu .controls) :where(li + li) { border-top: 1px solid var(--line); }
+    :where(#menu .controls) :where(label) { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
+    /* "ghost" is the quietest button: no fill until the pointer is on it */
+    #menu .ghost { background: transparent; color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
+    #menu .ghost:hover:not(:disabled) { background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--dim); }
+    #menu .ghost:active:not(:disabled) { background: var(--line); }
+    #menu #mute { flex: none; width: 44px; height: 44px; min-height: 0; padding: 0; }
+    #feed-speed-name { min-width: 5.5em; color: var(--text); }
+    /* the Pictures switch: the whole row is its touch target, the name sits where the feed speed's does */
+    #menu-pictures { flex-wrap: wrap; }
+    #menu-pictures label { flex: 1 1 100%; justify-content: flex-start; cursor: pointer; }
+    #pictures-name { min-width: 5.5em; color: var(--text); }
+    #pictures-note { flex: 1 1 100%; font-size: 13px; }
+    /* the Feed log group: a status line and the posts that scrolled off, each with a like and a repost button. The status
+       line stays in the page for a screen reader but takes no room until it has something to say. */
+    #menu-log { display: block; padding: 6px 14px 10px; }
+    #menu-log-status { margin: 0; color: var(--text); }
+    #menu-log-status:not(:empty) { margin-bottom: 6px; }
+    #menu-log-list { max-height: 36vh; overflow-y: auto; }
+    #menu-log-list .log-who { margin: 0; color: var(--text); }
+    #menu-log-list .log-who strong { font-weight: 600; }
+    #menu-log-list .log-who span { margin-left: 8px; color: var(--dim); }
+    #menu-log-list .log-text { margin: 2px 0 6px; color: var(--text); }
+    #menu-log-list .log-buttons { display: flex; gap: 8px; }
+    /* the like and repost buttons, as under a post in the app. The count is white or blue-grey in every state, so it reads
+       at 4.5:1 and better; the state is said by the pill around it, in shape as well as colour.
+       Off: quiet, no fill and no ring. Marked (set here only): a thin ring and a faint fill in the like pink or the repost
+       green. Lit (really liked or reposted): a thick ring, a fuller fill and bold type. */
+    #menu #menu-log-list button { flex: 1 1 0; min-width: 44px; min-height: 44px; background: transparent; color: var(--dim); font-weight: 500; font-variant-numeric: tabular-nums; box-shadow: none; }
+    #menu #menu-log-list button:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+    #menu #menu-log-list button.marked { color: var(--text); font-weight: 600; }
+    #menu #menu-log-list button.marked.log-like { background: rgba(236, 72, 153, .1); box-shadow: inset 0 0 0 1px var(--like); }
+    #menu #menu-log-list button.marked.log-repost { background: rgba(10, 194, 102, .1); box-shadow: inset 0 0 0 1px var(--repost); }
+    #menu #menu-log-list button.lit { color: var(--text); font-weight: 700; }
+    #menu #menu-log-list button.lit.log-like { background: rgba(236, 72, 153, .24); box-shadow: inset 0 0 0 2px var(--like); }
+    #menu #menu-log-list button.lit.log-repost { background: rgba(10, 194, 102, .24); box-shadow: inset 0 0 0 2px var(--repost); }
+    /* being sent: faded, with a waiting pointer; not allowed: fainter still, and its title says why */
+    #menu #menu-log-list button[aria-busy="true"] { opacity: .65; cursor: progress; }
+    #menu #menu-log-list button:disabled { opacity: .4; cursor: not-allowed; }
+    #menu-log-empty { margin: 0; color: var(--dim); }
+    /* the sign-out link is a button drawn as a link: every state comes from one selector set with one box, so it never jumps */
+    #menu #menu-signout, #menu #menu-signout:hover:not(:disabled), #menu #menu-signout:active:not(:disabled) { align-self: flex-start; min-height: 44px; padding: 6px 0; background: transparent; color: var(--primary-light); font-weight: 400; text-decoration: underline; text-underline-offset: 3px; border-radius: 4px; box-shadow: none; transform: none; }
     #menu #menu-signout:hover:not(:disabled) { color: var(--text); }
-    #menu-signout[hidden] { display: none; }
     #menu .info { padding: 22px 24px; }
     @media (max-width: 720px) {
       #menu[open] { grid-template-columns: 1fr; }
-      #menu .controls { border-right: 0; border-bottom: 2px solid var(--line); }
+      #menu .controls { border-right: 0; border-bottom: 1px solid var(--line); }
       #menu .info { padding: 18px 20px 20px 24px; }
     }
     /* game: no text selection or highlight anywhere; inputs stay selectable so a handle can be typed and fixed */
     body.game { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
     body.game input, body.game textarea { user-select: text; -webkit-user-select: text; }
     /* start page: plain HTML and CSS, painted before any script runs; it covers the page until the game starts.
-       A navy haze from the top and faint scanlines sit behind the content, never over it. */
-    #start { position: fixed; inset: 0; z-index: 5; overflow-y: auto; background:
-      repeating-linear-gradient(to bottom, transparent 0 2px, var(--scan) 2px 3px),
-      radial-gradient(ellipse 90% 55% at 50% 0%, rgba(163, 179, 95, .10), transparent 70%),
-      var(--ground); }
+       A soft haze of the theme's ground sits behind the content, never over it, and the field shows through it. */
+    #start { position: fixed; inset: 0; z-index: 5; overflow-y: auto; display: flex; background:
+      radial-gradient(ellipse 70% 70% at 50% 50%, rgba(21, 29, 40, .55), rgba(21, 29, 40, .12)); }
+    /* while the game loads from an address that names a handle (no start page buttons, no tour) the page is opaque */
+    #start.booting { background:
+      radial-gradient(ellipse 90% 55% at 50% 0%, rgba(15, 115, 255, .12), transparent 70%),
+      var(--bg); }
     html.spectator #start { display: none; }
-    #start-form { min-height: 100%; max-width: 28em; margin: 0 auto; padding: 24px 18px; display: flex; flex-direction: column; justify-content: center; gap: 14px; }
-    #start h1 { font-size: 30px; letter-spacing: .14em; white-space: normal; text-shadow: 3px 3px 0 var(--olive-deep), var(--glow); animation: pulse 3.87s ease-in-out infinite; }
-    /* eight beats at 124 bpm, the house tempo of the soundtrack: the glow swells on the one and settles */
-    @keyframes pulse { 0%, 100% { text-shadow: 3px 3px 0 var(--olive-deep), 0 0 6px rgba(163, 179, 95, .25); } 12% { text-shadow: 3px 3px 0 var(--olive-deep), 0 0 16px rgba(163, 179, 95, .6); } }
-    #start .tagline { margin: -6px 0 6px; color: var(--text); }
-    #start .tagline::before { content: "> "; color: var(--olive); }
+    #start[hidden] { display: none; } /* #start sets its own display, which would otherwise beat the hidden attribute and leave the start page over a run */
+    body.debug #start { display: none; } /* ?debug=feed is a test page: the start page must not cover its sign-in */
+    /* no panel: the title rides at the top of the field and four big pills float over the tour. The column is most of
+       the field's width and the whole window's on a phone. The field is 64 cells of the terminal's monospace face, so the
+       column is measured in that face's ch and its children are set back to the page's sans-serif. Each button carries its
+       own contrast (white on blue, white on blue-grey) and is see-through only as far as no frame of the field can wash a
+       label out; the title and the small lines sit on their own dark chips. Everything between and around shows the field. */
+    #start-form { width: min(58ch, 100%); min-height: 100%; margin: 0 auto; padding: 10px 12px 6px; display: flex; flex-direction: column; align-items: stretch; gap: clamp(10px, 2.2vh, 18px); font-family: var(--mono); font-size: 14px; }
+    #start-form > * { font-family: var(--sans); font-size: 15px; }
+    #start-choices { margin-top: auto; }
+    #start-form > h1 { align-self: center; text-align: center; background: var(--chip); padding: 6px 20px; border-radius: 999px; }
+    /* the small print: one quiet line at the foot of the field, under the buttons and clear of them. The gap above it is the band
+       the ship flies in, and the buttons sit low enough that a boss and its speech show above them. */
+    #start-foot { margin-top: clamp(24px, 14vh, 130px); display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0 6px; }
+    #start .hint, #start .alt, #start-signed { background: var(--chip); padding: 0 12px; border-radius: 999px; }
+    #start h1 { position: relative; z-index: 0; font-size: 26px; white-space: nowrap; text-shadow: 3px 3px 0 var(--primary-deep); }
+    /* eight beats at 122 bpm, the tempo of the start page's music: a blue glow swells on the one and settles. The glow is two copies
+       of the title in transparent text behind it, one with the faint glow and one with the bright, and only their opacity moves, so
+       the title is not repainted every frame. With motion reduced, neither shows. */
+    #start h1::before, #start h1::after { content: 'Feed Raider' / ''; position: absolute; inset: 0; z-index: -1; padding: inherit; color: transparent; opacity: 0; animation: 3.93s ease-in-out infinite; }
+    #start h1::before { text-shadow: 0 0 6px rgba(15, 115, 255, .25); animation-name: glow-settle; }
+    #start h1::after { text-shadow: 0 0 18px rgba(77, 151, 255, .8); animation-name: glow-swell; }
+    /* an endless animation keeps the browser drawing frames, so the glow holds still while the tour sleeps */
+    #start.asleep h1::before, #start.asleep h1::after { animation-play-state: paused; }
+    @keyframes glow-settle { 0%, 100% { opacity: 1; } 12% { opacity: 0; } }
+    @keyframes glow-swell { 0%, 100% { opacity: 0; } 12% { opacity: 1; } }
     #start button { min-height: 44px; padding: 10px 20px; font-size: 15px; }
     #start [hidden] { display: none !important; }
     #start-load { display: flex; flex-direction: column; gap: 8px; }
-    /* the load bar is segmented like the HUD's bomb pips */
-    #start-bar { height: 16px; padding: 2px; border: 2px solid var(--line); background: var(--ground); overflow: hidden; }
-    #start-bar span { display: block; height: 100%; width: 0; background: repeating-linear-gradient(to right, var(--olive) 0 8px, transparent 8px 10px); transition: width .2s; }
+    /* the load bar: a thin pill that fills with blue */
+    #start-bar { height: 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--chip); overflow: hidden; }
+    #start-bar span { display: block; height: 100%; width: 0; background: var(--primary); border-radius: 999px; transition: width .2s; }
     #start-bar.indeterminate span { width: 35%; animation: slide 1.2s ease-in-out infinite alternate; }
     @keyframes slide { from { margin-left: 0; } to { margin-left: 65%; } }
-    #start-load-text { margin: 0; font-size: 13px; }
+    #start-load-text { align-self: flex-start; margin: 0; padding: 2px 12px; font-size: 13px; color: var(--dim); background: var(--chip); border-radius: 999px; }
     #start-retry { align-self: flex-start; }
-    #start-load.failed #start-load-text { color: var(--text); background: var(--wine); padding: 8px 12px; border: 2px solid var(--crit); }
-    #start-handle-form, #start-signed { display: flex; flex-direction: column; gap: 10px; }
-    #start-choices { display: flex; flex-direction: column; gap: 12px; }
-    /* each choice is a comm panel: a paper field in a line frame. Pointed at or typed in, it lifts on a hard olive
-       shadow (the card never moves, so what is inside it holds still under the pointer) and four corner brackets snap in, stepping out from each corner like pixels drawing. */
-    #start .choice { --br: linear-gradient(var(--olive), var(--olive)); display: flex; flex-direction: column; gap: 10px; padding: 16px 18px 18px; background:
-      var(--br) 0 0 / 0 4px no-repeat, var(--br) 0 0 / 4px 0 no-repeat,
-      var(--br) 100% 0 / 0 4px no-repeat, var(--br) 100% 0 / 4px 0 no-repeat,
-      var(--br) 0 100% / 0 4px no-repeat, var(--br) 0 100% / 4px 0 no-repeat,
-      var(--br) 100% 100% / 0 4px no-repeat, var(--br) 100% 100% / 4px 0 no-repeat,
-      var(--paper); background-origin: border-box; border: 2px solid var(--line); transition: box-shadow .12s steps(2), border-color .12s steps(2), background-size .18s steps(3); }
-    #start .choice:hover, #start .choice:focus-within { border-color: var(--olive-deep); box-shadow: 4px 4px 0 var(--olive-deep); background-size: 20px 4px, 4px 20px, 20px 4px, 4px 20px, 20px 4px, 4px 20px, 20px 4px, 4px 20px, auto; }
-    #start .choice h2 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: .04em; color: var(--text); }
-    #start .blurb { margin: 0; font-size: 13px; flex: 1; }
+    #start-load.failed #start-load-text { align-self: stretch; color: var(--text); background: var(--negative-bg); padding: 10px 14px; border: 1px solid var(--negative); border-radius: 12px; }
+    #start-handle-form { display: flex; flex-direction: column; gap: 10px; }
+    #start-choices { display: flex; flex-direction: column; gap: clamp(10px, 2.2vh, 18px); }
+    /* each choice is one big button; the card has no frame of its own */
+    #start .choice { display: flex; flex-direction: column; gap: 6px; }
+    #start .choice h2 { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }   /* the button says it; the heading names the group for a screen reader */
+    /* the three other choices are the theme's secondary button: blue-grey and see-through, with a hairline that keeps the
+       pill's edge over a busy frame */
+    #start .ghost { background: rgba(34, 46, 63, .72); color: var(--text); box-shadow: inset 0 0 0 1px rgba(171, 184, 201, .32), 0 10px 24px rgba(0, 0, 0, .35); }
+    #start .ghost:hover:not(:disabled) { background: rgba(44, 58, 78, .9); box-shadow: inset 0 0 0 1px var(--dim), 0 10px 24px rgba(0, 0, 0, .35); }
+    #start .ghost:active:not(:disabled) { background: var(--line-strong); }
     @media (min-width: 900px) {
-      #start-form { max-width: 64em; gap: 16px; }
-      #start h1 { font-size: 46px; }
-      #start-choices { flex-direction: row; align-items: stretch; gap: 16px; }
-      #start .choice { flex: 1 1 0; min-width: 0; padding: 22px 22px 24px; gap: 14px; }
-      #start .choice h2 { font-size: 18px; }
-      #start .blurb { font-size: 14px; }
-      #start .primary { padding: 10px 12px; letter-spacing: .05em; }
+      #start h1 { font-size: 34px; }
     }
     .combo { position: relative; }
-    #start input { width: 100%; min-height: 48px; font-size: 16px; padding: 8px 12px; }
-    #start-suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 2; margin: 2px 0 0; padding: 0; list-style: none; background: var(--ground); border: 2px solid var(--line); overflow: hidden; }
-    #start-suggest li { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 6px 12px; cursor: pointer; color: var(--text); }
-    #start-suggest li + li { border-top: 1px solid var(--line); }
-    #start-suggest li:hover { background: var(--panel2); }
-    #start-suggest li[aria-selected="true"] { background: var(--panel2); color: var(--text); box-shadow: inset 0 0 0 2px var(--olive); }
-    #start-suggest img, #start-avatar { width: 32px; height: 32px; border-radius: 0; background: var(--line); object-fit: cover; flex: none; }
-    #start-suggest .name { display: block; color: var(--text); font-weight: 700; }
-    #start-suggest li[aria-selected="true"] .name { color: var(--text); }
-    #start-suggest .at { display: block; font-size: 12px; }
-    #start .primary { width: 100%; min-height: 50px; font-size: 15px; letter-spacing: .08em; text-transform: uppercase; box-shadow: 0 4px 0 var(--olive-deep); }
-    #start .primary:hover:not(:disabled) { box-shadow: 0 4px 0 var(--olive-deep), var(--glow); }
-    #start .primary:active:not(:disabled) { box-shadow: 0 1px 0 var(--olive-deep); transform: translateY(3px); }
-    #start-signed { align-items: stretch; }
-    #start-who { display: flex; align-items: center; gap: 12px; color: var(--text); font-weight: 700; }
-    /* the link is a button, so `#start button` (padding 10px 20px, 15px type, glow and press-down rules) out-ranked a bare
-       `#start-signout` at rest while the :hover rule here out-ranked it back: padding and type size changed on hover and the
-       link jumped. Every state now comes from one selector set with one box; hover changes colour only. */
-    #start #start-signout, #start #start-signout:hover:not(:disabled), #start #start-signout:active:not(:disabled) { align-self: center; background: transparent; color: var(--accent); font-weight: 400; font-size: 13px; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; min-height: 44px; padding: 6px 8px; box-shadow: none; transform: none; }
+    #start input { width: 100%; min-height: 48px; font-size: 16px; padding: 8px 16px; border-radius: 12px; }
+    #start-suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 2; margin: 4px 0 0; padding: 4px; list-style: none; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+    #start-suggest li { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 6px 10px; border-radius: 8px; cursor: pointer; color: var(--text); }
+    #start-suggest li:hover { background: var(--surface-2); }
+    #start-suggest li[aria-selected="true"] { background: var(--primary-tint); color: var(--text); box-shadow: inset 0 0 0 1px var(--primary); }
+    /* accounts wear round pictures, as they do in the app */
+    #start-suggest img, #start-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--line-strong); object-fit: cover; flex: none; }
+    #start-suggest .name { display: block; color: var(--text); font-weight: 600; }
+    #start-suggest .at { display: block; font-size: 13px; color: var(--dim); }
+    /* the four choices: one size, wide and tall pills in large bold type; the drop shadow lifts them off the field. The height
+       and the type give way on a short or narrow window, so all four fit without a scroll. */
+    #start .big { width: 100%; min-height: clamp(54px, 10vh, 80px); padding: 8px 20px; font-size: clamp(19px, 5.4vw, 24px); font-weight: 700; line-height: 1.15; }
+    /* the one solid blue button is the first choice: Sign in with Bluesky, or Play once signed in. Its label is large and
+       bold, so it may sit on the theme's own blue (3:1 and better over any frame) and not on the deeper step */
+    #start .primary { background: rgba(15, 115, 255, .85); color: var(--text); box-shadow: 0 10px 24px rgba(0, 0, 0, .35); }
+    #start .primary:hover:not(:disabled) { background: var(--primary); box-shadow: 0 10px 24px rgba(0, 0, 0, .35), 0 0 0 4px rgba(77, 151, 255, .35); }
+    #start .primary:active:not(:disabled) { background: var(--primary-deep); }
+    /* over the field a ring has no known backing, so it is the theme's blue between two white bands: one of the two always shows */
+    #start :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; box-shadow: 0 0 0 6px #fff !important; }
+    /* who is signed in and the way out: small text in the foot line, never between the buttons */
+    #start-signed { display: flex; align-items: center; gap: 4px; }
+    #start-who { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--dim); overflow-wrap: anywhere; }
+    #start #start-avatar { width: 20px; height: 20px; }
+    /* every state of the sign-out link comes from one selector set with one box; hover changes colour only */
+    #start #start-signout, #start #start-signout:hover:not(:disabled), #start #start-signout:active:not(:disabled) { background: transparent; color: var(--primary-light); font-weight: 400; font-size: 13px; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; min-height: 44px; padding: 6px 8px; box-shadow: none; transform: none; }
     #start #start-signout:hover:not(:disabled) { color: var(--text); }
-    #start .hint { margin: 0; font-size: 13px; color: var(--accent); }
-    #start-note { margin: 0; color: var(--text); background: var(--paper); padding: 8px 12px; font-size: 14px; border: 2px solid var(--line); }
-    #start-error { display: none; margin: 0; color: var(--text); background: var(--wine); padding: 8px 12px; font-size: 14px; border: 2px solid var(--crit); }
-    #start .controls { margin: 0; font-size: 13px; }
+    #start .hint { margin: 0; font-size: 12px; line-height: 26px; text-align: center; color: var(--dim); }
+    #start .hint:empty { display: none; }
+    #start-note { margin: 0; text-align: center; color: var(--text); background: var(--surface); padding: 10px 14px; font-size: 14px; border: 1px solid var(--line-strong); border-radius: 12px; }
+    #start-error { display: none; margin: 0; color: var(--text); background: var(--negative-bg); padding: 10px 14px; font-size: 14px; border: 1px solid var(--negative); border-radius: 12px; }
     #start .alt { margin: 0; font-size: 13px; text-align: center; }
-    #start.booting #start-choices, #start.booting .hint, #start.booting .controls, #start.booting .alt { display: none !important; }
-    #start .alt a { color: var(--accent); display: inline-block; padding: 12px 8px; text-underline-offset: 3px; }
+    #start.booting #start-choices, #start.booting #start-foot { display: none !important; }
+    #start .alt a { display: inline-block; padding: 12px 8px; line-height: 20px; color: var(--primary-light); border-radius: 4px; }
     #start .alt a:hover { color: var(--text); }
+    /* How to play: a dialog over the start page, with the same text as the pause menu's help */
+    #howto { width: min(34em, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 22px 24px; overflow: auto; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
+    #howto::backdrop { background: var(--backdrop); }
+    #howto button { min-height: 44px; min-width: 7em; margin-top: 16px; }
     @media (max-width: 640px) {
       body.game header { min-height: 36px; padding: 3px 8px; gap: 4px 8px; }
-      body.game input { width: 11em; }
+      body.game input[type="text"] { width: 11em; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation: none !important; transition: none !important; }
-      button:active:not(:disabled), #start .primary:active:not(:disabled) { transform: none; }
+      #start { background: rgba(21, 29, 40, .4); }
       #start-bar.indeterminate span { width: 100%; opacity: .5; }
+    }
+    /* forced colours: the system's palette replaces every fill and drops every shadow, so each shape gets a real edge, the
+       see-through backings turn solid, and "on", "selected", "filled" and "focused" are said with the system's highlight */
+    @media (forced-colors: active) {
+      button, input[type="checkbox"], #gear .face, #start-bar, #start-form > h1, #start .hint, #start .alt, #start-signed, #start-load-text { border: 1px solid ButtonText; }
+      button.primary, #menu-resume, #howto-close, #start-retry, header form button { border: 3px solid ButtonText; }
+      #start .big, #start .hint, #start .alt, #start-signed, #start-form > h1, #start-load-text, #start-bar { background: Canvas; }
+      #start #start-signout, #menu #menu-signout, #gear { border: 0; }
+      :focus-visible, #start :focus-visible { outline: 3px solid Highlight; outline-offset: 2px; }
+      button[aria-pressed="true"], [role="switch"][aria-checked="true"], #start-suggest li[aria-selected="true"], input[type="checkbox"]:checked { forced-color-adjust: none; background: Highlight; color: HighlightText; border-color: Highlight; box-shadow: none; }
+      #start-suggest li[aria-selected="true"] .name, #start-suggest li[aria-selected="true"] .at { color: HighlightText; }
+      #mute.muted { forced-color-adjust: auto; }
+      #menu #menu-log-list button.marked { border: 3px double ButtonText; }
+      #menu #menu-log-list button:disabled { color: GrayText; border-color: GrayText; }
+      input[type="checkbox"]::before { forced-color-adjust: none; background: ButtonText; }
+      input[type="checkbox"]:checked::before { background: HighlightText; }
+      #start-bar span, input[type="range"]::-moz-range-progress { forced-color-adjust: none; background: Highlight; }
+      input[type="range"]::-webkit-slider-runnable-track { forced-color-adjust: none; background: ButtonText; }
+      input[type="range"]::-moz-range-track { forced-color-adjust: none; background: ButtonText; }
+      input[type="range"]::-webkit-slider-thumb { forced-color-adjust: none; background: Highlight; border-color: ButtonText; }
+      input[type="range"]::-moz-range-thumb { forced-color-adjust: none; background: Highlight; border-color: ButtonText; }
     }
   </style>
 </head>
 <body>
+  <script>if (!document.documentElement.classList.contains('spectator')) document.body.classList.add('game'); if (new URLSearchParams(location.search).get('debug') === 'feed') document.body.classList.add('debug');</script>
   <header>
     <h1>Feed Raider</h1>
     <form method="get">
       <input type="text" name="handle" placeholder="handle, e.g. bsky.app" aria-label="Bluesky handle" autocomplete="off" spellcheck="false">
-      <button type="submit">watch</button>
+      <button type="submit">Watch</button>
     </form>
     <span id="note">A watch-only view of a feed, nothing to fly. <a href="./">Play the game</a></span>
     <div id="right">
-    <form id="login">
-      <input type="text" name="login-handle" placeholder="your handle, e.g. you.bsky.social" aria-label="Your Bluesky handle" autocomplete="username" spellcheck="false">
+    <form id="signin">
+      <input type="text" name="signin-handle" placeholder="your handle, e.g. you.bsky.social" aria-label="Your Bluesky handle" autocomplete="username" spellcheck="false">
       <button type="submit">Sign in with Bluesky</button>
     </form>
-    <div id="who" style="display:none"><span></span> <button id="logout" type="button">Sign out</button></div>
+    <div id="who" style="display:none"><span></span> <button id="signout" type="button">Sign out</button></div>
     </div>
   </header>
   <section id="debug" aria-label="Feed debug"></section>
@@ -279,9 +395,27 @@
         </button>
         <input id="vol" type="range" min="0" max="100" step="5" value="50" aria-label="Volume" hidden>
       </fieldset>
+      <fieldset id="menu-speed">
+        <legend>Feed speed</legend>
+        <input id="feed-speed" type="range" min="1" max="5" step="1" value="3" aria-label="Feed speed">
+        <span id="feed-speed-name" aria-hidden="true">Normal</span>
+      </fieldset>
+      <fieldset id="menu-pictures">
+        <legend>Pictures</legend>
+        <label><input id="pictures" type="checkbox" role="switch" aria-label="Pictures" aria-describedby="pictures-note" checked><span id="pictures-name" aria-hidden="true">On</span></label>
+        <p id="pictures-note">Avatars and post pictures, read from each author's server; they use data.</p>
+      </fieldset>
+      <fieldset id="menu-log">
+        <legend>Feed log</legend>
+        <p id="menu-log-status" role="status"></p>
+        <ol id="menu-log-list" aria-label="Posts that have gone by, newest first" hidden></ol>
+        <p id="menu-log-empty">No posts have gone by yet.</p>
+      </fieldset>
       <p id="menu-who" role="status"></p>
+      <p id="menu-grants" role="status" hidden></p>
+      <button type="button" id="menu-signin-again" hidden>Sign in again</button>
       <button type="button" id="menu-signout" hidden>Sign out</button>
-      <button type="button" id="menu-quit" class="ghost">Back to main menu</button>
+      <button type="button" id="menu-quit" class="ghost">Back to start page</button>
     </div>
     <div id="menu-info" class="info"></div>
   </dialog>
@@ -292,19 +426,27 @@
       <dl>
         <dt>Move</dt><dd><kbd>WASD</kbd> or arrows, the mouse, or drag a finger</dd>
         <dt>Fire</dt><dd>hold <kbd>Space</kbd>, <kbd>F</kbd> for auto-fire; mouse and touch fire on their own</dd>
+        <dt>Like, repost</dt><dd>rest the ship on a post's heart or repost button for three seconds</dd>
+        <dt>Feed log</dt><dd><kbd>E</kbd> likes and <kbd>R</kbd> reposts the marked post, <kbd>[</kbd> and <kbd>]</kbd> move the mark, or click the icons; on a phone, the pause menu</dd>
         <dt>Bomb</dt><dd><kbd>B</kbd>, right click, or a two-finger tap</dd>
-        <dt>Like</dt><dd><kbd>E</kbd> near a wingman, or hold on it until its ring fills (a tap never likes)</dd>
         <dt>Pause</dt><dd><kbd>Esc</kbd> or the gear; <kbd>M</kbd> mutes</dd>
+        <dt>Feed speed</dt><dd><kbd>-</kbd> slows the feed, <kbd>+</kbd> speeds it up; the pause menu has a slider</dd>
       </dl>
-      <p><b>Wingmen</b> are posts from the feed you picked: yours, the follows of the handle you typed, or Random's. They fly in beside you and talk.</p>
-      <p><b>Liking</b> one gives you a power-up. If its author replied in their own thread, the reply opens in the same bubble and the next like reads on. Signed in, each like is a real Bluesky like; signed out, nothing is written.</p>
+      <p>You have <b>one shield</b>. A hit takes it down, and if you are hit without it the ship dies. A shield pickup puts it back.</p>
+      <p><b>Hold to like or repost.</b> Keep the ship on the heart or the repost button of a post and it builds up: the icon grows and brightens, beat by beat, for three seconds. Fly off early and it drains away with nothing done. A finished hold puts your shield back if it is down, powers up your guns for five seconds and takes a quarter off every living part of the enemies in the fight, once for each post.</p>
+      <p><b>Gold cards.</b> A post with 1000 likes or more has a gold top edge and a star with its like count (1.8K, say) at the end of its name row. Finishing a like or a repost on one gives a <b>bomb</b>, up to three, once for each gold card. <b>BANGER +BOMB</b> pops up.</p>
+      <p><b>Thread follow.</b> When a like finishes, the game looks for the author's own next reply to that post. If there is one, it scrolls in next, with an arrow and <b>thread</b> under its words. Liking that card brings the reply after it. A repost brings none, and when there is no reply nothing appears.</p>
+      <p>Signed in, a finished hold <b>likes or reposts that post from your account</b>, the same as pressing the button on Bluesky. That is all the game writes, and only when you hold or press a button in the feed log. Not signed in, the button lights up here and nothing is sent.</p>
+      <p>The <b>feed log</b> shows each post that scrolled off, with its like and repost icons lit if you did that. Press an icon (or <kbd>E</kbd> or <kbd>R</kbd> on the marked post) to undo a like or repost, or to make one you missed. Signed in, that writes or removes it on your account; not signed in, it only marks it here. The pause menu lists them too.</p>
+      <p>The <b>posts</b> come from the feed you picked: yours, the people followed by the handle you typed, or Random's. Each one scrolls down the field as a card you can read. A post's pictures are drawn small and dim under its words. Your ship, shots and enemies fly over the words and hide the letters they pass. Avatars and post pictures are read from each author's own server (their PDS); the <a href="https://github.com/godspede/feed-raider#privacy" target="_blank" rel="noopener">Privacy section of the README</a> says more.</p>
+      <p><b>Stages and bosses.</b> Each stage ends in a boss, and after stage 10 the ten bosses come round again. A boss speaks in its speech box, and so do the mini-bosses and lesser gunships that arrive during a stage: they say rude posts by strangers, drawn from Bluesky's moderation stream and from replies a thread's owner hid, not from your feed. A boss says a line of its own before any rude post has arrived, and as its last word.</p>
       <p><b>Random</b> plays posts from public Bluesky comedy feeds, with no account.</p>
     </section>
     <section>
       <h2>What it is</h2>
-      <p>A demo of what you can build for free:</p>
+      <p>An example of what you can build for free:</p>
       <ul>
-        <li><b>AT Protocol</b>: OAuth sign-in in the browser, then your own feed and your likes, through your own session.</li>
+        <li><b>AT Protocol</b>: OAuth sign-in in the browser, then your own feed, your likes and your reposts, through your own session.</li>
         <li><b>Bluesky</b>: its public feeds and API, for Random and Play as someone.</li>
         <li><b>GitHub Pages</b>: static hosting, no server. The game is C# on .NET in WebAssembly, running in your browser.</li>
       </ul>
@@ -313,11 +455,10 @@
   </template>
   <div id="start">
     <!-- [html-validate-disable-next no-multiple-main -- the start page and the game are never on screen together: the game is inert behind it and it is hidden once a run starts] -->
-    <main id="start-form" aria-label="Start menu">
+    <main id="start-form" aria-label="Start page">
       <h1>Feed Raider</h1>
-      <p class="tagline">Fly through your Bluesky feed and shoot it down.</p>
       <div id="start-load">
-        <!-- [html-validate-disable-next prefer-native-element -- the segmented HUD bar is drawn by the span inside; a native progress element cannot be styled to the same look in every browser] -->
+        <!-- [html-validate-disable-next prefer-native-element -- the bar is a pill that the span inside fills; a native progress element cannot be styled to the same look in every browser] -->
         <div id="start-bar" class="indeterminate" role="progressbar" aria-label="Loading the game" aria-valuemin="0" aria-valuemax="100"><span></span></div>
         <p id="start-load-text" role="status">Loading the game…</p>
         <button type="button" id="start-retry" hidden>Retry</button>
@@ -325,38 +466,47 @@
       <div id="start-choices">
         <section class="choice" id="start-card-signin" aria-labelledby="start-h-signin">
           <h2 id="start-h-signin">Sign in with Bluesky</h2>
-          <p class="blurb">Fly your own feed and like posts for real. Nothing else is ever posted.</p>
-          <button type="button" id="start-login" class="primary" disabled>Sign in with Bluesky</button>
-          <div id="start-signed" hidden>
-            <div id="start-who"><span id="start-who-name"></span></div>
-            <button type="button" id="start-play" class="primary">Play</button>
-            <button type="button" id="start-signout">not you? sign out</button>
-          </div>
+          <button type="button" id="start-signin" class="primary big" disabled>Sign in with Bluesky</button>
+          <button type="button" id="start-play" class="primary big" hidden>Play</button>
         </section>
         <section class="choice" id="start-card-guest" aria-labelledby="start-h-guest">
           <h2 id="start-h-guest">Play as someone</h2>
-          <p class="blurb">Type a handle. Your wingmen are the posts of the people they follow. No account needed.</p>
           <form id="start-handle-form" autocomplete="off">
-            <div class="combo">
+            <div class="combo" id="start-combo" hidden>
               <input type="text" id="start-handle" role="combobox" aria-label="A Bluesky handle" aria-autocomplete="list" aria-expanded="false" aria-controls="start-suggest" placeholder="someone.bsky.social" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="email" enterkeyhint="go">
               <!-- [html-validate-disable-next prefer-native-element -- the ARIA 1.2 combobox pattern wants a listbox popup owned by the input; a select or datalist cannot show avatars] -->
               <ul id="start-suggest" role="listbox" aria-label="Matching accounts" hidden></ul>
             </div>
-            <button type="submit" id="start-guest" class="primary">Play as someone</button>
+            <button type="submit" id="start-guest" class="ghost big">Play as someone</button>
           </form>
         </section>
         <section class="choice" id="start-card-random" aria-labelledby="start-h-random">
           <h2 id="start-h-random">Random</h2>
-          <p class="blurb">Posts from public Bluesky comedy feeds. No account, no typing.</p>
-          <button type="button" id="start-random" class="primary">Play random</button>
+          <button type="button" id="start-random" class="ghost big">Play random</button>
+        </section>
+        <section class="choice" id="start-card-howto" aria-labelledby="start-h-howto">
+          <h2 id="start-h-howto">Help</h2>
+          <button type="button" id="start-howto" class="ghost big" aria-haspopup="dialog" aria-controls="howto">How to play</button>
         </section>
       </div>
-      <p class="hint" id="start-hint">Without signing in, liking is off.</p>
       <div id="start-error" role="alert"></div>
       <p id="start-note" role="status" hidden></p>
-      <p class="controls"><kbd>WASD</kbd>/arrows move, <kbd>Space</kbd> fires (<kbd>F</kbd> auto-fire), <kbd>B</kbd> bomb, <kbd>E</kbd> likes a wingman's post, <kbd>Esc</kbd> pauses. Mouse or touch: hold on a wingman to like it (a tap never does), right click or two-finger tap bombs.</p>
-      <p class="alt"><a href="?mode=spectator">spectator view</a></p>
+      <div id="start-foot">
+        <p class="hint" id="start-hint">Sign in to like and repost for real.</p>
+        <div id="start-signed" hidden>
+          <div id="start-who"><span id="start-who-name"></span></div>
+          <button type="button" id="start-signout">Not you? Sign out</button>
+        </div>
+        <p class="alt"><a href="?mode=spectator">spectator view</a></p>
+        <p class="hint">Not made or endorsed by Bluesky.</p>
+      </div>
     </main>
+    <!-- inside the start page on purpose: everything else is inert until a run starts -->
+    <dialog id="howto" aria-labelledby="howto-title">
+      <h2 id="howto-title" class="sr-only">How to play Feed Raider</h2>
+      <div id="howto-info" class="info"></div>
+      <button type="button" id="howto-close" autofocus>Close</button>
+    </dialog>
   </div>
 
   <script src="./xterm/xterm.min.js"></script>

@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { readMusicManifest } from './music-manifest.mjs';
 
-// The music is never embedded (music/ under the wwwroot is not read at all): --music names a JSON list of {role, url} (role: menu,
+// The music is never embedded (music/ under the wwwroot is not read at all): --music names a JSON list of {role, url} (role: start,
 // gameplay, boss or gameover; url: the absolute mp3 URL), and that small list is inlined. Without it the bundle has no music.
 const args = process.argv.slice(2);
 let musicFile = null;
@@ -33,6 +33,11 @@ else {
 }
 const fw = join(root, '_framework');
 if (!existsSync(join(fw, 'dotnet.js'))) throw new Error(`no _framework/dotnet.js under ${root}; pass a publish output wwwroot`);
+// The publish writes the .NET runtime's licence texts into _framework/ under these names, and each NuGet package's as
+// <package>.LICENSE.txt and <package>.THIRD-PARTY-NOTICES.txt.
+const RUNTIME_LICENCES = ['LICENSE.txt', 'THIRD-PARTY-NOTICES.txt'];
+const PACKAGE_LICENCE = /\.(LICENSE|THIRD-PARTY-NOTICES)\.txt$/;
+const isFrameworkLicence = (name) => RUNTIME_LICENCES.includes(name) || PACKAGE_LICENCE.test(name);
 
 const dotnetSrc = readFileSync(join(fw, 'dotnet.js'), 'utf8');
 const hashes = {};
@@ -50,7 +55,7 @@ const add = (key, buf, type) => { files[key] = { type, data: b64gz(buf) }; };
 add('main.js', readFileSync(join(root, 'main.js')), 'js');
 add('page.js', readFileSync(join(root, 'page.js')), 'js');
 if (existsSync(join(root, 'atproto.js'))) add('atproto.js', readFileSync(join(root, 'atproto.js')), 'js');
-else console.warn('no atproto.js: login will be unavailable in the bundle');
+else console.warn('no atproto.js: sign-in will be unavailable in the bundle');
 // music.js also carries the master volume and mute that sfx.js plays through, so both are always embedded
 add('music.js', readFileSync(join(root, 'music.js')), 'js');
 add('sfx.js', readFileSync(join(root, 'sfx.js')), 'js');
@@ -61,6 +66,7 @@ add('dotnet.js', rebase(Buffer.from(dotnetSrc)), 'js');
 let checked = 0;
 for (const name of readdirSync(fw)) {
   if (name === 'dotnet.js' || /\.(br|gz)$/.test(name) || !statSync(join(fw, name)).isFile()) continue;
+  if (isFrameworkLicence(name)) continue; // held in the page's licence comment instead
   if (!/\.(js|wasm)$/.test(name)) { console.warn(`skipping ${name}`); continue; }
   const buf = readFileSync(join(fw, name));
   if (hashes[name]) {
@@ -117,5 +123,23 @@ if (!tag.test(html)) throw new Error('index.html has no <script type="module" sr
 // '<' is escaped so no key or value can close the script element early
 const json = JSON.stringify(files).replace(/</g, '\\u003c');
 html = html.replace(tag, () => `<script type="application/json" id="fr-files">${json}</script>\n  <script type="module">${boot}</script>`);
+// The page holds xterm, atproto.js when embedded, and the .NET runtime with its packages, so their licence files ride along as
+// one comment after the doctype.
+const packageLicences = readdirSync(fw).filter((name) => PACKAGE_LICENCE.test(name)).sort();
+const licenceFiles = [
+  'xterm/LICENSE',
+  ...(files['atproto.js'] ? ['atproto.js.LICENSES.txt'] : []),
+  ...[...RUNTIME_LICENCES, ...packageLicences].map((name) => `_framework/${name}`),
+];
+const licenceText = (name) => {
+  if (!existsSync(join(root, name))) throw new Error(`${name} is missing from ${root}; the page cannot carry its licence`);
+  const text = readFileSync(join(root, name), 'utf8').trim();
+  if (/--!?>/.test(text)) throw new Error(`${name} cannot sit in an HTML comment: it holds a comment end`);
+  return `${name}:\n\n${text}`;
+};
+const doctype = /^<!doctype html>/i;
+if (!doctype.test(html)) throw new Error('index.html does not start with <!doctype html>');
+const licences = licenceFiles.map(licenceText).join('\n\n');
+html = html.replace(doctype, (d) => `${d}\n<!--\nThird-party licences for the code in this page.\n\n${licences}\n-->`);
 writeFileSync(out, html);
 process.stdout.write(`wrote ${out}: ${(html.length / 1048576).toFixed(2)} MB, ${Object.keys(files).length} embedded files, ${checked} hashes verified\n`);

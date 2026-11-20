@@ -1,15 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { startView, renderStart, normalizeHandle, guestTarget, signInTarget, loadPercent, createTypeahead, stepActive, signIn, SignInCancelled, signInFailed, isOAuthCallback, popupKey, handOff, POPUP_STATE, watchSaved, completeCallback, noteSignIn, readSignIn, clearSignIn, SIGNIN_REPORT, REPORT_MS, restoreSaved, signInLost, callbackNote, CALLBACK_WAIT_NOTE } from '../../src/FeedRaider.Web/wwwroot/page.js';
+import { startView, renderStart, normaliseHandle, guestTarget, signInTarget, loadPercent, createTypeahead, stepActive, signIn, SignInCancelled, signInFailed, isOAuthCallback, popupKey, handOff, POPUP_STATE, watchSaved, completeCallback, noteSignIn, readSignIn, clearSignIn, SIGNIN_REPORT, REPORT_MS, restoreSaved, signInLost, callbackNote, CALLBACK_WAIT_NOTE } from '../../src/FeedRaider.Web/wwwroot/page.js';
 
-const el = (extra = {}) => ({ hidden: true, disabled: false, textContent: '', className: '', style: {}, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; }, ...extra });
+const el = () => ({ hidden: true, disabled: false, textContent: '', className: '', style: {}, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; } });
 const fakeEls = () => ({ form: el(), load: el(), loadText: el(), retry: el(), bar: el(), barFill: el(), cardSignIn: el(), signIn: el(), guest: el(), random: el(), hint: el(), signed: el(), play: el(), signOut: el() });
 const draw = (state) => { const els = fakeEls(); renderStart(els, startView(state)); return els; };
 const LOADING = { status: 'loading', percent: 63 };
 
 test('loading, signed out: bar at 63%, all three choices offered and usable', () => {
-  const els = draw({ loginAvailable: true, handle: null, load: LOADING });
+  const els = draw({ signInAvailable: true, handle: null, load: LOADING });
   assert.equal(els.load.hidden, false);
   assert.equal(els.loadText.textContent, 'Loading the game… 63%');
   assert.equal(els.barFill.style.width, '63%');
@@ -23,63 +23,66 @@ test('loading, signed out: bar at 63%, all three choices offered and usable', ()
   assert.equal(els.random.textContent, 'Play random');
   assert.equal(els.random.disabled, false);
   assert.equal(els.signed.hidden, true);
-  assert.equal(els.hint.textContent, 'Without signing in, liking is off.');
+  assert.equal(els.hint.textContent, 'Sign in to like and repost for real.');
 });
 
 test('loading with no progress numbers: the bar is indeterminate, not stuck at 0', () => {
-  const els = draw({ loginAvailable: true, handle: null, load: { status: 'loading', percent: null } });
+  const els = draw({ signInAvailable: true, handle: null, load: { status: 'loading', percent: null } });
   assert.equal(els.bar.className, 'indeterminate');
   assert.equal('aria-valuenow' in els.bar.attrs, false);
   assert.equal(els.loadText.textContent, 'Loading the game…');
 });
 
 test('ready: the load block is gone and every start is enabled', () => {
-  const els = draw({ loginAvailable: true, handle: null, load: { status: 'ready', percent: null } });
+  const els = draw({ signInAvailable: true, handle: null, load: { status: 'ready', percent: null } });
   assert.equal(els.load.hidden, true);
   assert.equal(els.guest.disabled, false);
   assert.equal(els.random.disabled, false);
 });
 
 test('queued start: the pressed button reads "loading 63%" and nothing else can start', () => {
-  const guest = draw({ loginAvailable: true, handle: null, load: LOADING, queued: 'guest' });
+  const guest = draw({ signInAvailable: true, handle: null, load: LOADING, queued: 'guest' });
   assert.equal(guest.guest.textContent, 'loading 63%');
   assert.equal(guest.random.textContent, 'Play random');
   assert.equal(guest.guest.disabled, true);
   assert.equal(guest.random.disabled, true);
   assert.equal(guest.signIn.disabled, true);
-  const random = draw({ loginAvailable: true, handle: null, load: LOADING, queued: 'random' });
+  const random = draw({ signInAvailable: true, handle: null, load: LOADING, queued: 'random' });
   assert.equal(random.random.textContent, 'loading 63%');
   assert.equal(random.guest.textContent, 'Play as someone');
   assert.equal(random.random.disabled, true);
   assert.equal(random.guest.disabled, true);
   assert.equal(random.signIn.disabled, true);
-  const play = draw({ loginAvailable: true, handle: 'alice.bsky.social', load: LOADING, queued: 'play' });
+  const play = draw({ signInAvailable: true, handle: 'alice.bsky.social', load: LOADING, queued: 'play' });
   assert.equal(play.play.textContent, 'loading 63%');
   assert.equal(play.play.disabled, true);
   assert.equal(play.random.disabled, true);
-  const blind = draw({ loginAvailable: true, handle: null, load: { status: 'loading', percent: null }, queued: 'random' });
+  const blind = draw({ signInAvailable: true, handle: null, load: { status: 'loading', percent: null }, queued: 'random' });
   assert.equal(blind.random.textContent, 'loading…');
 });
 
 test('load failure: a plain message and a retry button; starting is off, sign-in is not', () => {
-  const els = draw({ loginAvailable: true, handle: 'alice.bsky.social', load: { status: 'failed', percent: null }, queued: null });
+  const els = draw({ signInAvailable: true, handle: 'alice.bsky.social', load: { status: 'failed', percent: null }, queued: null });
   assert.equal(els.load.hidden, false);
   assert.equal(els.load.className, 'failed');
   assert.match(els.loadText.textContent, /could not load/);
   assert.equal(els.retry.hidden, false);
   assert.equal(els.bar.hidden, true);
   assert.equal(els.play.disabled, true);
-  const out = draw({ loginAvailable: true, handle: null, load: { status: 'failed', percent: null } });
+  const out = draw({ signInAvailable: true, handle: null, load: { status: 'failed', percent: null } });
   assert.equal(out.guest.disabled, true);
   assert.equal(out.random.disabled, true);
   assert.equal(out.signIn.disabled, false);
 });
 
-test('signed in: the first choice becomes Play as @handle with sign out; the other two stay', () => {
-  const v = startView({ loginAvailable: true, handle: 'alice.bsky.social' });
+test('signed in: the first choice becomes Play, with who and sign out in the small print; the other two stay', () => {
+  const v = startView({ signInAvailable: true, handle: 'alice.bsky.social' });
   assert.equal(v.mode, 'signed-in');
-  const els = draw({ loginAvailable: true, handle: 'alice.bsky.social' });
-  assert.equal(els.play.textContent, 'Play as @alice.bsky.social');
+  const els = draw({ signInAvailable: true, handle: 'alice.bsky.social' });
+  assert.equal(els.play.textContent, 'Play');
+  assert.equal(els.play.hidden, false);
+  assert.equal(els.hint.textContent, '', 'nothing left to sign in for');
+  assert.equal(draw({ signInAvailable: true, handle: null }).play.hidden, true, 'signed out there is no Play button');
   assert.equal(els.cardSignIn.hidden, false);
   assert.equal(els.signed.hidden, false);
   assert.equal(els.signOut.hidden, false);
@@ -88,26 +91,26 @@ test('signed in: the first choice becomes Play as @handle with sign out; the oth
   assert.equal(els.random.disabled, false);
 });
 
-test('login unavailable: no sign-in choice, the other two stay, and a stale handle is ignored', () => {
-  const els = draw({ loginAvailable: false, handle: 'alice.bsky.social' });
+test('sign-in unavailable: no sign-in choice, the other two stay, and a stale handle is ignored', () => {
+  const els = draw({ signInAvailable: false, handle: 'alice.bsky.social' });
   assert.equal(els.cardSignIn.hidden, true);
   assert.equal(els.signIn.hidden, true);
   assert.equal(els.guest.disabled, false);
   assert.equal(els.random.disabled, false);
   assert.equal(els.signed.hidden, true);
   assert.equal(els.signOut.hidden, true);
-  assert.match(els.hint.textContent, /not available/);
+  assert.equal(els.hint.textContent, 'Sign-in is not available on this page (it needs HTTPS or localhost), so likes and reposts here send nothing to Bluesky.');
 });
 
 test('OAuth client still starting: sign-in is shown but waits; a handle check in flight locks every start', () => {
-  assert.equal(draw({ loginAvailable: true, handle: null, authPending: true }).signIn.disabled, true);
-  const busy = draw({ loginAvailable: true, handle: null, busy: true });
+  assert.equal(draw({ signInAvailable: true, handle: null, authPending: true }).signIn.disabled, true);
+  const busy = draw({ signInAvailable: true, handle: null, busy: true });
   assert.equal(busy.guest.disabled, true);
   assert.equal(busy.random.disabled, true);
   assert.equal(busy.signIn.disabled, true);
 });
 
-test('guestTarget: an empty box asks for a handle, not Discover; a DID or URL is refused; a name is normalized', () => {
+test('guestTarget: an empty box asks for a handle, not Discover; a DID or URL is refused; a name is normalised', () => {
   assert.match(guestTarget('').error, /Type a handle/);
   assert.match(guestTarget('   ').error, /Type a handle/);
   assert.match(guestTarget('@').error, /Type a handle/);
@@ -125,18 +128,18 @@ test('loadPercent: whole percent, never 100 before the runtime says so, null wit
   assert.equal(loadPercent(undefined, undefined), null);
 });
 
-test('normalizeHandle: @ and bare names, .bsky.social only when no dot is typed', () => {
-  assert.equal(normalizeHandle('alice'), 'alice.bsky.social');
-  assert.equal(normalizeHandle('@alice'), 'alice.bsky.social');
-  assert.equal(normalizeHandle('  @Alice  '), 'alice.bsky.social');
-  assert.equal(normalizeHandle('bsky.app'), 'bsky.app');
-  assert.equal(normalizeHandle('@Bsky.App'), 'bsky.app');
-  assert.equal(normalizeHandle('alice.example.com'), 'alice.example.com');
-  assert.equal(normalizeHandle('did:plc:abc123'), 'did:plc:abc123');
-  assert.equal(normalizeHandle('https://example.com'), 'https://example.com');
-  assert.equal(normalizeHandle(''), '');
-  assert.equal(normalizeHandle('  @ '), '');
-  assert.equal(normalizeHandle(null), '');
+test('normaliseHandle: @ and bare names, .bsky.social only when no dot is typed', () => {
+  assert.equal(normaliseHandle('alice'), 'alice.bsky.social');
+  assert.equal(normaliseHandle('@alice'), 'alice.bsky.social');
+  assert.equal(normaliseHandle('  @Alice  '), 'alice.bsky.social');
+  assert.equal(normaliseHandle('bsky.app'), 'bsky.app');
+  assert.equal(normaliseHandle('@Bsky.App'), 'bsky.app');
+  assert.equal(normaliseHandle('alice.example.com'), 'alice.example.com');
+  assert.equal(normaliseHandle('did:plc:abc123'), 'did:plc:abc123');
+  assert.equal(normaliseHandle('https://example.com'), 'https://example.com');
+  assert.equal(normaliseHandle(''), '');
+  assert.equal(normaliseHandle('  @ '), '');
+  assert.equal(normaliseHandle(null), '');
 });
 
 test('sign-in target: an empty box is the bsky.social entryway', () => {
@@ -161,9 +164,9 @@ function clock() {
 const actorsBody = (n) => ({ actors: Array.from({ length: n }, (_, i) => ({ handle: `a${i}.bsky.social`, displayName: `A ${i}`, avatar: `https://cdn/${i}.jpg` })) });
 const flush = () => new Promise((r) => setImmediate(r));
 
-function typeaheadRig(body = actorsBody(8)) {
+function typeaheadRig() {
   const c = clock(), calls = [], shown = [];
-  const fetchImpl = async (url) => { calls.push(url); return { ok: true, json: async () => body }; };
+  const fetchImpl = async (url) => { calls.push(url); return { ok: true, json: async () => actorsBody(8) }; };
   const ta = createTypeahead({ fetchImpl, onResults: (r) => shown.push(r), setTimer: c.setTimer, clearTimer: c.clearTimer });
   return { c, calls, shown, ta };
 }
@@ -261,28 +264,30 @@ function fakeBus() {
     ends.add(end);
     return end;
   };
-  return { channel, posted, open: () => ends.size };
+  return { channel, posted, openEnds: () => ends.size };
 }
-// The page-wake hook, fired by hand: what focus or a tab turning visible does in the browser.
-function fakeWake() {
-  const wakes = new Set();
-  return { watch: (fn) => { wakes.add(fn); return () => wakes.delete(fn); }, fire: () => { for (const fn of wakes) fn(); }, count: () => wakes.size };
+// The page-return hook, fired by hand: what focus or a tab turning visible does in the browser.
+function fakeReturn() {
+  const returns = new Set();
+  return { watch: (fn) => { returns.add(fn); return () => returns.delete(fn); }, fire: () => { for (const fn of returns) fn(); }, count: () => returns.size };
 }
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 // Lets every promise already queued run: enough turns for signIn to reach its wait, with no real time passing.
 const settle = async () => { for (let i = 0; i < 10; i++) await flush(); };
+// The most 1 ms waits `until` makes before it gives up: two seconds or more, far longer than the timers it waits on.
+const UNTIL_MAX_POLLS = 2000;
 // Waits for a condition a real timer in the code under test brings about, failing rather than hanging.
 const until = async (cond, what) => {
-  for (let i = 0; i < 2000 && !cond(); i++) await tick(1);
+  for (let i = 0; i < UNTIL_MAX_POLLS && !cond(); i++) await tick(1);
   assert.ok(cond(), what);
 };
 // The key the popup's sign-in put in the authorization request's state, as the callback page reads it back.
 const keyOf = (client) => popupKey(client.calls.find((c) => c[0] === 'authorize')[2].state);
 
 test('sign-in: the popup is opened in the click, then pointed at the authorization page; a hand-off returns the saved session', async () => {
-  const client = fakeClient(), win = fakeWindow(), opened = [], bus = fakeBus(), wake = fakeWake();
+  const client = fakeClient(), win = fakeWindow(), opened = [], bus = fakeBus(), back = fakeReturn();
   let saved = null, waiting = 0;
-  const run = signIn(client, '@Alice', { scope: 's', state: '?x', open: (...a) => { opened.push(a); return win; }, restore: async () => saved, onWaiting: () => waiting++, channel: bus.channel, watch: wake.watch, pollMs: 5 });
+  const run = signIn(client, '@Alice', { scope: 's', state: '?x', open: (...a) => { opened.push(a); return win; }, restore: async () => saved, onWaiting: () => waiting++, channel: bus.channel, watch: back.watch, pollMs: 5 });
   await settle();
   assert.equal(opened[0][0], 'about:blank');
   assert.deepEqual(client.calls.map((c) => c[0]), ['authorize']);
@@ -297,8 +302,8 @@ test('sign-in: the popup is opened in the click, then pointed at the authorizati
   const out = await run;
   assert.equal(out.via, 'popup');
   assert.deepEqual(out.session, { sub: 'did:plc:me' });
-  assert.equal(bus.open(), 0, 'the channel is closed');
-  assert.equal(wake.count(), 0, 'focus and visibility are no longer watched');
+  assert.equal(bus.openEnds(), 0, 'the channel is closed');
+  assert.equal(back.count(), 0, 'focus and visibility are no longer watched');
 });
 
 test('sign-in: the authorization server cuts the popup off (closed reads true at once), which is no cancel', async (t) => {
@@ -307,7 +312,7 @@ test('sign-in: the authorization server cuts the popup off (closed reads true at
   const pass = async (ms) => { await flush(); t.mock.timers.tick(ms); await flush(); };
   const client = fakeClient(), win = fakeWindow();
   let settled = false, restores = 0;
-  const run = signIn(client, 'carol', { open: () => win, restore: async () => { restores++; return null; }, channel: fakeBus().channel, watch: fakeWake().watch, pollMs: 5, timeoutMs: 200 });
+  const run = signIn(client, 'carol', { open: () => win, restore: async () => { restores++; return null; }, channel: fakeBus().channel, watch: fakeReturn().watch, pollMs: 5, timeoutMs: 200 });
   run.then(() => { settled = true; }, () => { settled = true; });
   await pass(10);
   win.closed = true; // what Cross-Origin-Opener-Policy: same-origin on the authorization page does to the opener's handle
@@ -323,7 +328,7 @@ test('sign-in: the authorization server cuts the popup off (closed reads true at
 test('sign-in: the popup closes with no hand-off, and the session it saved is restored', async () => {
   const win = fakeWindow();
   let saved = null;
-  const run = signIn(fakeClient(), 'dave', { open: () => win, restore: async () => saved, channel: fakeBus().channel, watch: fakeWake().watch, pollMs: 5 });
+  const run = signIn(fakeClient(), 'dave', { open: () => win, restore: async () => saved, channel: fakeBus().channel, watch: fakeReturn().watch, pollMs: 5 });
   await settle();
   saved = { sub: 'did:plc:dave' }; // the callback saved it, but its message never came
   win.closed = true;
@@ -331,42 +336,42 @@ test('sign-in: the popup closes with no hand-off, and the session it saved is re
 });
 
 test('sign-in: back on a phone tab after the callback finished in another tab, focus or visibility restores the session', async () => {
-  const wake = fakeWake();
+  const back = fakeReturn();
   let saved = null;
-  const run = signIn(fakeClient(), 'erin', { open: () => fakeWindow(), restore: async () => saved, channel: fakeBus().channel, watch: wake.watch, pollMs: 5 });
+  const run = signIn(fakeClient(), 'erin', { open: () => fakeWindow(), restore: async () => saved, channel: fakeBus().channel, watch: back.watch, pollMs: 5 });
   await settle();
-  wake.fire(); // back too soon: nothing saved yet, keep waiting
+  back.fire(); // back too soon: nothing saved yet, keep waiting
   await settle();
   saved = { sub: 'did:plc:erin' };
-  wake.fire();
+  back.fire();
   assert.deepEqual((await run).session, { sub: 'did:plc:erin' });
 });
 
-test('sign-in: a wake during a slow restore asks again, so a session saved meanwhile is not missed', async () => {
-  const wake = fakeWake();
+test('sign-in: a return to the page during a slow restore asks again, so a session saved meanwhile is not missed', async () => {
+  const back = fakeReturn();
   let saved = null, first = true, release;
   const restore = async () => { if (first) { first = false; await new Promise((r) => { release = r; }); return null; } return saved; };
-  const run = signIn(fakeClient(), 'fay', { open: () => fakeWindow(), restore, channel: fakeBus().channel, watch: wake.watch, pollMs: 5 });
+  const run = signIn(fakeClient(), 'fay', { open: () => fakeWindow(), restore, channel: fakeBus().channel, watch: back.watch, pollMs: 5 });
   await settle();
-  wake.fire();
+  back.fire();
   await settle();
   saved = { sub: 'did:plc:fay' };
-  wake.fire();
+  back.fire();
   release();
   assert.deepEqual((await run).session, { sub: 'did:plc:fay' });
 });
 
 test('sign-in: a callback that failed in the popup rejects with its reason, which the start page shows as one line', async () => {
   const client = fakeClient(), bus = fakeBus();
-  const run = signIn(client, 'gus', { open: () => fakeWindow(), channel: bus.channel, watch: fakeWake().watch, pollMs: 5 });
+  const run = signIn(client, 'gus', { open: () => fakeWindow(), channel: bus.channel, watch: fakeReturn().watch, pollMs: 5 });
   await settle();
   assert.equal(await handOff(keyOf(client), { error: 'Issuer mismatch' }, { channel: bus.channel }), true);
-  await assert.rejects(run, (e) => signInFailed(e) === "Sign-in didn't finish: something went wrong. Try again.");
+  await assert.rejects(run, (e) => signInFailed(e) === "Sign-in did not finish: something went wrong. Try again.");
 });
 
 test('sign-in: a restore that throws rejects with its error', async () => {
   const win = fakeWindow();
-  const run = signIn(fakeClient(), 'hal', { open: () => win, restore: async () => { throw new Error('session was deleted'); }, channel: fakeBus().channel, watch: fakeWake().watch, pollMs: 5 });
+  const run = signIn(fakeClient(), 'hal', { open: () => win, restore: async () => { throw new Error('session was deleted'); }, channel: fakeBus().channel, watch: fakeReturn().watch, pollMs: 5 });
   await settle();
   win.closed = true;
   await assert.rejects(run, /session was deleted/);
@@ -374,7 +379,7 @@ test('sign-in: a restore that throws rejects with its error', async () => {
 
 test('sign-in: an empty box signs in at the bsky.social entryway; pressing again gives up on the old one quietly', async () => {
   const client = fakeClient(), ac = new AbortController();
-  const run = signIn(client, '', { open: () => fakeWindow(), channel: fakeBus().channel, watch: fakeWake().watch, signal: ac.signal });
+  const run = signIn(client, '', { open: () => fakeWindow(), channel: fakeBus().channel, watch: fakeReturn().watch, signal: ac.signal });
   await settle();
   assert.equal(client.calls[0][1], 'https://bsky.social');
   ac.abort();
@@ -411,9 +416,9 @@ test('sign-in: a popup closed before the authorization page loads is a cancel', 
   await assert.rejects(signIn(fakeClient(), 'ivy', { open: () => fakeWindow(true) }), (e) => e instanceof SignInCancelled && e.name === 'SignInCancelled');
 });
 
-test('sign-in: no hand-off, no wake and a popup that never reads closed: asking every so often still finds the saved session', async () => {
+test('sign-in: no hand-off, no return to the page and a popup that never reads closed: asking every so often still finds the saved session', async () => {
   let saved = null;
-  const run = signIn(fakeClient(), 'kim', { open: () => fakeWindow(), restore: async () => saved, channel: fakeBus().channel, watch: fakeWake().watch, pollMs: 5, restoreMs: 20, timeoutMs: 500 });
+  const run = signIn(fakeClient(), 'kim', { open: () => fakeWindow(), restore: async () => saved, channel: fakeBus().channel, watch: fakeReturn().watch, pollMs: 5, restoreMs: 20, timeoutMs: 500 });
   await settle();
   saved = { sub: 'did:plc:kim' }; // the callback saved it; its message was lost and the page never lost focus
   assert.deepEqual((await run).session, { sub: 'did:plc:kim' });
@@ -422,29 +427,31 @@ test('sign-in: no hand-off, no wake and a popup that never reads closed: asking 
 test('sign-in: a session found before the hand-off arrives still answers the late hand-off, so the popup closes', async () => {
   const bus = fakeBus(), client = fakeClient();
   let saved = null;
-  const run = signIn(client, 'kim', { open: () => fakeWindow(), restore: async () => saved, channel: bus.channel, watch: fakeWake().watch, pollMs: 5, restoreMs: 10, ackMs: 100, timeoutMs: 500 });
+  const run = signIn(client, 'kim', { open: () => fakeWindow(), restore: async () => saved, channel: bus.channel, watch: fakeReturn().watch, pollMs: 5, restoreMs: 10, ackMs: 100, timeoutMs: 500 });
   await settle();
   saved = { sub: 'did:plc:kim' }; // the callback restored it (storage changed) before it got to hand off
   assert.deepEqual((await run).session, { sub: 'did:plc:kim' });
   assert.equal(await handOff(keyOf(client), { sub: 'did:plc:kim' }, { channel: bus.channel, waitMs: 50 }), true);
-  await until(() => bus.open() === 0, 'the channel closes once no hand-off can still come');
+  await until(() => bus.openEnds() === 0, 'the channel closes once no hand-off can still come');
 });
 
 test('sign-in: a signal aborted as soon as the popup shows the authorization page still cancels', async () => {
   const bus = fakeBus(), stop = new AbortController();
-  const run = signIn(fakeClient(), 'kim', { open: () => fakeWindow(), restore: async () => null, onWaiting: () => stop.abort(), signal: stop.signal, channel: bus.channel, watch: fakeWake().watch, pollMs: 5, timeoutMs: 60e3 });
-  await assert.rejects(Promise.race([run, tick(200).then(() => { throw new Error('still waiting'); })]), (e) => e instanceof SignInCancelled);
-  assert.equal(bus.open(), 0);
+  // The sign-in's own timeout is a minute off, so only the signal can end it; the test stops waiting after GIVE_UP_MS.
+  const FAR_TIMEOUT_MS = 60e3, GIVE_UP_MS = 200;
+  const run = signIn(fakeClient(), 'kim', { open: () => fakeWindow(), restore: async () => null, onWaiting: () => stop.abort(), signal: stop.signal, channel: bus.channel, watch: fakeReturn().watch, pollMs: 5, timeoutMs: FAR_TIMEOUT_MS });
+  await assert.rejects(Promise.race([run, tick(GIVE_UP_MS).then(() => { throw new Error('still waiting'); })]), (e) => e instanceof SignInCancelled);
+  assert.equal(bus.openEnds(), 0);
 });
 
-// A window and document for the default page-wake hook, put on globalThis for one test.
+// A window and document for the default page-return hook, put on globalThis for one test.
 async function withFakePage(fn) {
   const window = new EventTarget(), document = Object.assign(new EventTarget(), { visibilityState: 'visible' });
   Object.assign(globalThis, { window, document });
   try { return await fn(window); } finally { delete globalThis.window; delete globalThis.document; }
 }
 
-test('sign-in: another page of the site writing storage (the callback saving the account) wakes the check', async () => {
+test('sign-in: another page of the site writing storage (the callback saving the account) runs the check again', async () => {
   await withFakePage(async (window) => {
     let saved = null;
     const run = signIn(fakeClient(), 'lou', { open: () => fakeWindow(), restore: async () => saved, channel: fakeBus().channel, pollMs: 5, timeoutMs: 300 });
@@ -534,7 +541,7 @@ test('completeCallback: each step reached goes in the sign-in report, a failure 
 
 const fakeStorage = () => {
   const m = new Map();
-  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), map: m };
+  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) };
 };
 
 test('sign-in report: written with its step and time, read back while recent, gone once stale, garbled or cleared; no storage is no error', () => {
@@ -566,7 +573,7 @@ test('restoreSaved: the library\'s current account first; the report is not aske
 });
 
 test('restoreSaved: the library forgot its current account but a callback saved one; that account is restored by its sub', async () => {
-  // the operator's case: the popup saved the session, the opener never heard, and the reload found the library's pointer gone
+  // the popup saved the session, the opener never heard, and the reload found the library's pointer gone
   const s = fakeStorage();
   noteSignIn(s, 'saved', { sub: 'did:plc:me' }, 1000);
   const asked = [];
@@ -597,12 +604,12 @@ test('restoreSaved: a restore of the reported account that fails is given back a
 
 test('signInLost: the start page says how far the last sign-in got, as one line; nothing without a report', () => {
   assert.equal(signInLost(null), null);
-  assert.match(signInLost({ step: 'started' }), /^Sign-in didn't finish: no answer from Bluesky reached this browser\..*Try again\.$/);
+  assert.match(signInLost({ step: 'started' }), /^Sign-in did not finish: no answer from Bluesky reached this browser\..*Try again\.$/);
   assert.match(signInLost({ step: 'answered' }), /closed before it saved your session/);
-  assert.equal(signInLost({ step: 'failed', error: 'Issuer mismatch' }), "Sign-in didn't finish: something went wrong. Try again.");
+  assert.equal(signInLost({ step: 'failed', error: 'Issuer mismatch' }), "Sign-in did not finish: something went wrong. Try again.");
   assert.match(signInLost({ step: 'saved', sub: 'did:plc:me' }), /no saved session was found in this browser/);
   assert.equal(signInLost({ step: 'saved', sub: 'did:plc:me' }, new Error('The session was deleted.')),
-    "Sign-in didn't finish: the sign-in window saved your session, but restoring it here failed (The session was deleted). Try again.");
+    "Sign-in did not finish: the sign-in window saved your session, but restoring it here failed (The session was deleted). Try again.");
 });
 
 test('callbackNote: a popup that saved the session says so and that it may be closed; a redirect or no account says nothing', () => {
@@ -616,7 +623,7 @@ test('handOff: false when no opener answers in time, so the callback page stays 
   const bus = fakeBus();
   assert.equal(await handOff('k', { sub: 'did:plc:me' }, { channel: bus.channel, waitMs: 20 }), false);
   assert.deepEqual(bus.posted, [{ key: 'k', sub: 'did:plc:me' }]);
-  assert.equal(bus.open(), 0);
+  assert.equal(bus.openEnds(), 0);
 });
 
 test('popupKey: only a popup sign-in state carries a key; a redirect state is the query string we left with', () => {
@@ -636,12 +643,12 @@ test('isOAuthCallback: the answer comes in the fragment (the library default) an
 });
 
 test('signInFailed: plain words for the known library failures, a generic line otherwise, no library text', () => {
-  const unreach = "Sign-in didn't finish: couldn't reach your Bluesky account's server. Check the handle and your connection, then try again.";
+  const unreach = "Sign-in did not finish: could not reach your Bluesky account's server. Check the handle and your connection, then try again.";
   assert.equal(signInFailed(new Error('Failed to resolve OAuth server metadata for resource "https://x"')), unreach);
-  assert.equal(signInFailed(new SignInCancelled()), "Sign-in didn't finish: the sign-in window was closed. Try again.");
-  assert.equal(signInFailed('access_denied'), "Sign-in didn't finish: Bluesky did not allow it. Try again when you are ready to approve.");
-  assert.equal(signInFailed(new Error('Unknown authorization session "x".')), "Sign-in didn't finish: something went wrong. Try again.");
-  assert.equal(signInFailed(new Error('')), "Sign-in didn't finish: something went wrong. Try again.");
+  assert.equal(signInFailed(new SignInCancelled()), "Sign-in did not finish: the sign-in window was closed. Try again.");
+  assert.equal(signInFailed('access_denied'), "Sign-in did not finish: Bluesky did not allow it. Try again when you are ready to approve.");
+  assert.equal(signInFailed(new Error('Unknown authorization session "x".')), "Sign-in did not finish: something went wrong. Try again.");
+  assert.equal(signInFailed(new Error('')), "Sign-in did not finish: something went wrong. Try again.");
 });
 
 test('typeahead: onSearching fires when the request goes out, not on each keystroke', async () => {
@@ -684,7 +691,7 @@ test('atproto.js: every restore goes through restoreSaved, and each sign-in step
   assert.match(src, /restoreSaved\(\{ initRestore: \(\) => client\.initRestore\(false\), restore: \(sub\) => client\.restore\(sub, false\)/);
   assert.match(src, /noteSignIn\(storage\(\), 'started'\)/);
   assert.match(src, /did = session\.did;[^]*?noteSignIn\(storage\(\), 'restored', \{ sub: did \}\)/, 'a page showing the account keeps the report fresh');
-  assert.match(src, /export async function logout\(\) \{\s*clearSignIn\(storage\(\)\)/, 'a sign-out is not undone by the next load');
+  assert.match(src, /export async function signOut\(\) \{\s*clearSignIn\(storage\(\)\)/, 'a sign-out is not undone by the next load');
   assert.match(src, /report: \(step, extra\) => noteSignIn\(storage\(\), step, extra\)/);
   assert.match(src, /failure = signInLost\(out\.report, out\.error\)/);
   assert.match(src, /export function initNote/);
@@ -703,52 +710,66 @@ test('main.js: a signed-out start page takes a session another page saved, so a 
   assert.match(js, /page\.watchSaved\(\{\s*restore: \(\) => auth\.adoptSaved\(\)/);
 });
 
-test('index.html: three equal choices, one handle box, the old guest and Discover wording is gone, nothing needs JS to paint', () => {
+test('index.html: three ways to play and the help, one handle box, no second handle input and no guest or Discover button, nothing needs JS to paint', () => {
   const html = readFileSync(new URL('../../src/FeedRaider.Web/wwwroot/index.html', import.meta.url), 'utf8');
   assert.equal((html.match(/id="start-handle"/g) || []).length, 1);
   assert.doesNotMatch(html, /start-input|start-discover|Just the Discover feed|Start as guest|Play as guest|public Discover feed/);
-  assert.equal((html.match(/<section class="choice"/g) || []).length, 3);
+  assert.equal((html.match(/<section class="choice"/g) || []).length, 4);
   assert.match(html, /<h2 id="start-h-signin">Sign in with Bluesky<\/h2>/);
   assert.match(html, /<h2 id="start-h-guest">Play as someone<\/h2>/);
   assert.match(html, /<h2 id="start-h-random">Random<\/h2>/);
-  for (const id of ['start-login', 'start-guest', 'start-random']) assert.match(html, new RegExp(`id="${id}" class="primary"`), `${id} is a full-weight button`);
+  // one solid first choice (sign in, or Play once signed in); the other ways in are as big, in the quieter fill
+  for (const id of ['start-signin', 'start-play']) assert.match(html, new RegExp(`id="${id}" class="primary big"`), `${id} is the first choice`);
+  for (const id of ['start-guest', 'start-random']) assert.match(html, new RegExp(`id="${id}" class="ghost big"`), `${id} is a full-size button`);
   assert.match(html, /role="combobox"/);
   assert.match(html, /inputmode="email"/);
   assert.doesNotMatch(html, /<input[^>]*\bautofocus\b/, 'no keyboard on load');
   assert.match(html, /href="\?mode=spectator"/);
 });
 
-test('main.js: Random is ?feed=random with no handle and skips the panel on reload; Play as someone needs a handle', () => {
+test('main.js: Random is ?feed=random with no handle and skips the start page on reload; Play as someone needs a handle', () => {
   const js = readFileSync(new URL('../../src/FeedRaider.Web/wwwroot/main.js', import.meta.url), 'utf8');
-  assert.match(js, /pick\('', 'random', 'random'\)/);
+  assert.match(js, /commitPick\('', 'random', 'random'\)/);
   assert.match(js, /needsStart = !spectatorMode && !handle && !randomFromUrl/);
   assert.match(js, /page\.guestTarget\(startHandle\.value\)/);
-  assert.doesNotMatch(js, /pick\('', 'guest'\)/, 'an empty box is no longer Discover');
+  assert.doesNotMatch(js, /commitPick\('', 'guest'\)/, 'an empty box is not a Discover pick');
+});
+
+test('index.html: an inline script at the top of the body sets game and debug before the terminal element, so the header never paints on the start page; main.js sets neither', () => {
+  const html = readFileSync(new URL('../../src/FeedRaider.Web/wwwroot/index.html', import.meta.url), 'utf8');
+  const js = readFileSync(new URL('../../src/FeedRaider.Web/wwwroot/main.js', import.meta.url), 'utf8');
+  const inline = html.match(/<body>\s*<script>([^<]*)<\/script>/);
+  assert.ok(inline, 'the body opens with an inline script');
+  assert.ok(html.indexOf(inline[0]) < html.indexOf('<main id="term"'), 'the script comes before the terminal element');
+  assert.match(inline[1], /if \(!document\.documentElement\.classList\.contains\('spectator'\)\) document\.body\.classList\.add\('game'\)/, 'every view but the spectator view is the game');
+  assert.match(inline[1], /\.get\('debug'\) === 'feed'\) document\.body\.classList\.add\('debug'\)/, '?debug=feed keeps its header');
+  assert.match(html.slice(html.indexOf('<head>'), html.indexOf('</head>')), /document\.documentElement\.className = 'spectator'/, 'the spectator class is set earlier, in the head');
+  assert.doesNotMatch(js, /classList\.add\('(game|debug)'\)/);
 });
 
 test('busy handle check: Play as someone reads "checking…", the form is aria-busy and the note says so', () => {
-  const view = startView({ loginAvailable: true, handle: null, busy: 'check' });
+  const view = startView({ signInAvailable: true, handle: null, busy: 'check' });
   const els = fakeEls();
   renderStart(els, view);
   assert.equal(els.guest.textContent, 'checking…');
   assert.equal(els.signIn.textContent, 'Sign in with Bluesky');
   assert.equal(els.form.attrs['aria-busy'], 'true');
   assert.equal(view.busyNote, 'Checking the handle…');
-  assert.equal(startView({ loginAvailable: true, handle: null, busy: true }).guestLabel, 'checking…');
+  assert.equal(startView({ signInAvailable: true, handle: null, busy: true }).guestLabel, 'checking…');
 });
 
 test('busy sign-in: the button reads "signing in…" and the note waits for Bluesky; idle shows the plain labels', () => {
-  const view = startView({ loginAvailable: true, handle: null, busy: 'signin' });
+  const view = startView({ signInAvailable: true, handle: null, busy: 'signin' });
   const els = fakeEls();
   renderStart(els, view);
   assert.equal(els.signIn.textContent, 'signing in…');
   assert.equal(els.guest.textContent, 'Play as someone');
   assert.equal(els.form.attrs['aria-busy'], 'true');
   assert.equal(view.busyNote, 'Waiting for Bluesky…');
-  const idle = draw({ loginAvailable: true, handle: null });
+  const idle = draw({ signInAvailable: true, handle: null });
   assert.equal(idle.signIn.textContent, 'Sign in with Bluesky');
   assert.equal(idle.form.attrs['aria-busy'], 'false');
-  assert.equal(startView({ loginAvailable: true, handle: null }).busyNote, '');
+  assert.equal(startView({ signInAvailable: true, handle: null }).busyNote, '');
 });
 
 test('typeahead: an empty answer is marked as answered, a cleared box and a failure are not', async () => {
@@ -765,4 +786,15 @@ test('typeahead: an empty answer is marked as answered, a cleared box and a fail
   c.tick(200);
   await flush();
   assert.deepEqual(failed, [['results', false], ['error']]);
+});
+
+// An element whose stylesheet rule sets `display` ignores the `hidden` attribute unless a rule says otherwise, so it stays on screen.
+test('every element the page hides with the hidden attribute really leaves the screen', () => {
+  const html = readFileSync(new URL('../../src/FeedRaider.Web/wwwroot/index.html', import.meta.url), 'utf8');
+  const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
+  for (const id of ['start', 'gear', 'side', 'mute', 'vol', 'menu-sound', 'menu-signout']) {
+    const setsDisplay = new RegExp(String.raw`(^|[,}\s])#${id}\s*\{[^}]*\bdisplay:\s*(?!none)`, 'm').test(css);
+    const honoursHidden = new RegExp(String.raw`#${id}\[hidden\][^{]*\{[^}]*display:\s*none`).test(css);
+    assert.ok(!setsDisplay || honoursHidden, `#${id} sets display, so it needs a #${id}[hidden] { display: none } rule`);
+  }
 });

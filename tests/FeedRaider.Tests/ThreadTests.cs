@@ -1,35 +1,55 @@
 using FeedRaider.Engine;
 using FeedRaider.Engine.Raider;
+using FeedRaider.Tests.Enemies;
 
 namespace FeedRaider.Tests;
 
-// Following an author's self-thread: picking the next post from a getPostThread body, and the game opening it under the liked one.
+// Following an author's self-thread: a finished like asks for the author's next reply, the reply is picked from a
+// getPostThread body, and the game brings it in as the next card with the thread note.
 public class ThreadTests
 {
-    private const string Ann = "did:plc:ann111";
+    private const string Ann = "did:plc:ann111", AnnHandle = "ann.example.com";
+    /// <summary>The author's own first reply in the self-thread fixture: the post a lookup brings in next.</summary>
+    private const string AnnsReply = $"{AnnsPosts}p2";
+    /// <summary>The start of the address of every post of Ann's.</summary>
+    private const string AnnsPosts = $"at://{Ann}/app.bsky.feed.post/";
+    /// <summary>Fixtures: a thread the author replies to, one with a picture reply, one only another account answers.</summary>
+    private const string SelfThread = "thread-self.json", EmbedThread = "thread-embed.json", OtherAuthorsThread = "thread-none.json";
+    private const PostAction Like = PostAction.Like, Repost = PostAction.Repost;
+    private const int ShortTimeoutMs = 40;
+    /// <summary>The numbers of the thread's first post, of the author's reply to it, and of a post already waiting in the queue.</summary>
+    private const int FirstPost = 1, ReplyPost = 2, WaitingPost = 7;
 
     private static string Fixture(string name) => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", name));
 
     private static FeedPost Root() =>
-        new($"at://{Ann}/app.bsky.feed.post/p1", "cidp1", Ann, "ann.example.com", "first post of a small example thread about gardens and tomatoes", 3, 0, 4, null, null);
+        new($"{AnnsPosts}p1", "cidp1", Ann, AnnHandle, "first post of a small example thread about gardens and tomatoes", 3, 0, 4, null, null);
 
     // ---------------------------------------------------------------- picking the next post
 
     [Fact]
     public void The_next_post_is_the_earliest_direct_reply_by_the_same_author()
     {
-        var next = ThreadMapper.Next(Fixture("thread-self.json"), Root());
+        var next = ThreadMapper.Next(Fixture(SelfThread), Root());
         Assert.NotNull(next);
-        Assert.Equal($"at://{Ann}/app.bsky.feed.post/p2", next!.Uri);   // p3 is later, the other account's reply is not the author's
+        Assert.Equal(AnnsReply, next.Uri);   // p3 is later, the other account's reply is not the author's
         Assert.Equal(Root().Uri, next.ReplyParent!.Uri);
     }
 
     [Fact]
-    public void The_thread_ends_on_an_embed_a_short_reply_no_reply_or_a_bad_body()
+    public void A_short_reply_still_continues_the_thread()
     {
-        Assert.Null(ThreadMapper.Next(Fixture("thread-embed.json"), Root()));   // the first reply has a picture; a later plain one does not rescue it
-        Assert.Null(ThreadMapper.Next(Fixture("thread-short.json"), Root()));
-        Assert.Null(ThreadMapper.Next(Fixture("thread-none.json"), Root()));
+        var next = ThreadMapper.Next(Fixture("thread-short.json"), Root());
+        Assert.Equal("too short", next?.Text);
+    }
+
+    [Fact]
+    public void The_thread_ends_on_an_embed_no_reply_or_a_bad_body()
+    {
+        Assert.Single(ThreadMapper.Next(Fixture(EmbedThread), Root())!.Pictures!);   // a reply with a picture follows: the picture is drawn on its card
+        string video = Fixture(EmbedThread).Replace("app.bsky.embed.images#view", "app.bsky.embed.video#view");
+        Assert.Null(ThreadMapper.Next(video, Root()));   // the first reply has a video; a later plain one does not rescue it
+        Assert.Null(ThreadMapper.Next(Fixture(OtherAuthorsThread), Root()));
         Assert.Null(ThreadMapper.Next("""{"thread":{"$type":"app.bsky.feed.defs#notFoundPost","notFound":true}}""", Root()));
         Assert.ThrowsAny<System.Text.Json.JsonException>(() => ThreadMapper.Next("not json at all", Root()));   // a failure, not a thread's end
     }
@@ -37,36 +57,31 @@ public class ThreadTests
     [Fact]
     public async Task A_failed_or_slow_lookup_ends_the_thread_without_a_word()
     {
-        var g = Game(signedIn: true);
-        g.Queue.Offer(Root());
-        var w = Arrived(g);
-        await RaiderFeeds.ThreadAsync(g, new ThrowingSource(), w.Post);
-        Assert.True(w.Followed);
-        Assert.Null(g.Toast);
-        Assert.Empty(w.Earlier);
+        var failed = Game(signedIn: true);
+        await RaiderFeeds.ThreadAsync(failed, new ThrowingSource(), Root());
+        Assert.Null(failed.Toast);
+        Assert.Equal(0, failed.Posts.Count);
 
-        var g2 = Game(signedIn: true);
-        g2.Queue.Offer(Root());
-        var w2 = Arrived(g2);
-        await RaiderFeeds.ThreadAsync(g2, new HangingSource(), w2.Post, timeoutMs: 40);
-        Assert.True(w2.Followed);
-        Assert.Null(g2.Toast);
+        var slow = Game(signedIn: true);
+        await RaiderFeeds.ThreadAsync(slow, new HangingSource(), Root(), timeoutMs: ShortTimeoutMs);
+        Assert.Null(slow.Toast);
+        Assert.Equal(0, slow.Posts.Count);
     }
 
     [Fact]
-    public async Task A_lookup_through_the_source_opens_the_post_from_the_fixture()
+    public async Task A_lookup_through_the_source_queues_the_post_from_the_fixture_at_the_front()
     {
         var g = Game(signedIn: true);
-        g.Queue.Offer(Root());
-        var w = Arrived(g);
+        g.Posts.Offer(ThreadPost(WaitingPost));
         var src = new JsThreadSource((uri, depth, parents) =>
         {
             Assert.Equal((Root().Uri, 1, 0), (uri, depth, parents));
-            return Task.FromResult(Fixture("thread-self.json"));
+            return Task.FromResult(Fixture(SelfThread));
         });
-        await RaiderFeeds.ThreadAsync(g, src, w.Post);
-        Assert.EndsWith("/p2", w.Post.Uri);
-        Assert.Single(w.Earlier);
+        await RaiderFeeds.ThreadAsync(g, src, Root());
+        Assert.True(g.Posts.TryDequeue(out var first, out _));
+        Assert.Equal(AnnsReply, first.Uri);
+        Assert.Equal(1, g.Posts.Count);                         // the one already waiting stays behind it
     }
 
     // ---------------------------------------------------------------- the game
@@ -81,260 +96,266 @@ public class ThreadTests
         public async Task<FeedPost?> NextAsync(FeedPost post, CancellationToken ct) { await Task.Delay(Timeout.Infinite, ct); return null; }
     }
 
-    private static RaiderGame Game(bool signedIn, int cols = 120, int rows = 46)
+    private static RaiderGame Game(bool signedIn)
     {
-        var g = new RaiderGame(5) { LoggedIn = signedIn };
-        g.SetLayout(FieldLayout.Compute(cols, rows));
+        var g = new RaiderGame(EnemyKit.PlainSeed) { SignedIn = signedIn };
+        g.SetLayout(FieldLayout.Compute(EnemyKit.BigCols, EnemyKit.BigRows));
         return g;
     }
 
-    private static FeedPost Chain(int n, bool liked = false, int replies = 1, string? text = null) =>
-        new($"at://{Ann}/app.bsky.feed.post/c{n}", $"cidc{n}", Ann, "ann.example.com", text ?? $"post number {n} of a long thread, with plenty of words in it to read", 2, 0, replies,
-            null, n == 1 ? null : new PostRef($"at://{Ann}/app.bsky.feed.post/c{n - 1}", $"cidc{n - 1}"), AlreadyLiked: liked);
+    /// <summary>Post <paramref name="number"/> of a long thread of Ann's, a reply to the one numbered before it.</summary>
+    private static FeedPost ThreadPost(int number, string? text = null) =>
+        new($"{AnnsPosts}c{number}", $"cidc{number}", Ann, AnnHandle, text ?? $"post number {number} of a long thread, with plenty of words in it to read", 2, 0, 1,
+            null, number == FirstPost ? null : new PostRef($"{AnnsPosts}c{number - 1}", $"cidc{number - 1}"));
 
-    private static int Number(FeedPost p) => int.Parse(p.Uri[(p.Uri.LastIndexOf('c') + 1)..]);
-
-    private static Wingman Arrived(RaiderGame g)
+    [Fact]
+    public void A_reply_the_host_found_goes_to_the_front_of_the_queue()
     {
-        for (int i = 0; i < 400 && !g.Wings.Any(w => w.Age > Tuning.WingEnterFrames); i++) g.Step();
-        return g.Wings.First(x => x.Age > Tuning.WingEnterFrames);
+        var g = Game(signedIn: true);
+        g.Posts.Offer(ThreadPost(WaitingPost));
+        g.ThreadOpened(ThreadPost(ReplyPost));
+        Assert.True(g.Posts.TryDequeue(out var first, out _));
+        Assert.Equal(ThreadPost(ReplyPost).Uri, first.Uri);
     }
 
-    /// <summary>Steers the ship onto the wingman, lets go of every key, and presses like.</summary>
-    private static void SteerOntoAndLike(RaiderGame g, Wingman w)
+    [Fact]
+    public void A_reply_found_twice_is_queued_once()
     {
-        for (int i = 0; i < 200 && (Math.Abs(g.PX - w.X) > 3 || Math.Abs(g.PY - w.Y) > 3); i++)
-        {
-            g.Input.Key(GameKey.Left, g.PX > w.X + 1); g.Input.Key(GameKey.Right, g.PX < w.X - 1);
-            g.Input.Key(GameKey.Up, g.PY > w.Y + 1); g.Input.Key(GameKey.Down, g.PY < w.Y - 1);
-            g.Step();
-        }
-        foreach (var k in Enum.GetValues<GameKey>()) g.Input.Key(k, false);
-        g.Input.Like(); g.Step();
+        var g = Game(signedIn: true);
+        g.ThreadOpened(ThreadPost(ReplyPost));
+        g.ThreadOpened(ThreadPost(ReplyPost));
+        Assert.Equal(1, g.Posts.Count);
     }
 
-    /// <summary>A game whose host answers each lookup at once with the next post of the chain, up to <paramref name="length"/> posts.</summary>
-    private static (RaiderGame G, List<string> Liked, List<string> Asked) Chained(bool signedIn, int length, bool firstLiked = false)
+    [Fact]
+    public void A_reply_that_is_only_a_link_or_has_no_text_is_not_queued()
+    {
+        var g = Game(signedIn: true);
+        g.ThreadOpened(ThreadPost(ReplyPost) with { LinkText = true });
+        g.ThreadOpened(ThreadPost(ReplyPost + 1, text: "   "));
+        Assert.Equal(0, g.Posts.Count);
+    }
+
+    [Fact]
+    public void In_Random_a_labelled_self_reply_is_not_queued()
+    {
+        var g = Game(signedIn: false);
+        g.PlainOnly = true;
+        g.ThreadOpened(ThreadPost(ReplyPost) with { Labelled = true });   // e.g. a !warn label
+        Assert.Equal(0, g.Posts.Count);
+    }
+
+    [Fact]
+    public void In_Random_an_unlabelled_self_reply_is_queued()
+    {
+        var g = Game(signedIn: false);
+        g.PlainOnly = true;
+        g.ThreadOpened(ThreadPost(ReplyPost));
+        Assert.Equal(1, g.Posts.Count);
+    }
+
+    [Fact]
+    public void Outside_Random_a_labelled_self_reply_is_queued()
+    {
+        var g = Game(signedIn: true);
+        g.ThreadOpened(ThreadPost(ReplyPost) with { Labelled = true });
+        Assert.Equal(1, g.Posts.Count);
+    }
+
+    [Fact]
+    public void An_adult_reply_or_one_with_a_video_is_dropped()
+    {
+        var g = Game(signedIn: true);
+        g.ThreadOpened(ThreadPost(ReplyPost) with { Adult = true });
+        g.ThreadOpened(ThreadPost(ReplyPost + 1) with { HasEmbed = true, Attachment = AttachmentKind.Video });
+        Assert.Equal(0, g.Posts.Count);
+    }
+
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(true, 1)]
+    public void A_reply_by_an_author_who_opted_out_of_signed_out_viewers_is_queued_only_for_a_signed_in_player(bool signedIn, int queued)
     {
         var g = Game(signedIn);
-        var liked = new List<string>();
+        g.ThreadOpened(ThreadPost(ReplyPost) with { AuthorOptOut = true });
+        Assert.Equal(queued, g.Posts.Count);
+    }
+
+    // ---------------------------------------------------------------- the like that asks
+
+    /// <summary>A game with the first post of a thread as its one card, and the addresses of the posts whose next reply it asked for.</summary>
+    private static (RaiderGame G, Card C, List<string> Asked) LikeScene(bool signedIn, FeedPost? first = null)
+    {
+        var (g, c, _) = HoldRig.Scene(signedIn, first ?? ThreadPost(FirstPost));
         var asked = new List<string>();
-        g.OnLike = p => liked.Add(p.Uri);
+        g.ThreadWanted = p => asked.Add(p.Uri);
+        return (g, c, asked);
+    }
+
+    /// <summary>Lets the feed scroll until a second card has entered, and returns it.</summary>
+    private static Card ScrollToNextCard(RaiderGame g, Card first)
+    {
+        HoldRig.Until(g, () => g.Cards.Cards.Count > 1);
+        return g.Cards.Cards.Single(k => k != first);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_finished_like_asks_once_for_the_authors_next_reply_signed_in_or_out(bool signedIn)
+    {
+        var (g, c, asked) = LikeScene(signedIn);
+        HoldRig.Hold(g, c, Like, LikeHoldTests.LastTickBeforeDone);
+        Assert.Empty(asked);
+        HoldRig.Hold(g, c, Like, LikeHoldTests.FinishingTicks);
+        HoldRig.Rest(g, Tuning.Fps);
+        Assert.Equal([ThreadPost(FirstPost).Uri], asked);
+    }
+
+    [Fact]
+    public void A_like_made_again_after_its_write_failed_does_not_ask_again()
+    {
+        var (g, c, asked) = LikeScene(signedIn: true);
+        g.OnLike = _ => { };
+        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        g.WriteFailed(c.Post.Uri, Like);
+        Assert.Equal(ButtonState.Off, c.Marks.Like);
+        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        Assert.Equal(ButtonState.Pending, c.Marks.Like);
+        Assert.Single(asked);
+    }
+
+    [Fact]
+    public void A_finished_repost_asks_for_no_reply()
+    {
+        var (g, c, asked) = LikeScene(signedIn: true);
+        HoldRig.Hold(g, c, Repost, Tuning.HoldFrames);
+        Assert.Equal(ButtonState.Marked, c.Marks.Repost);
+        Assert.Empty(asked);
+    }
+
+    [Fact]
+    public void A_like_toggled_in_the_feed_log_asks_for_no_reply()
+    {
+        var (g, c, asked) = LikeScene(signedIn: true);
+        g.OnLike = _ => { };
+        g.Log.Add(new LogEntry(c.Post, c.Marks));
+        g.Toggle(c.Post.Uri, Like);
+        Assert.Equal(ButtonState.Pending, c.Marks.Like);
+        Assert.Empty(asked);
+    }
+
+    [Fact]
+    public void The_reply_a_like_brings_is_the_next_card_to_enter_ahead_of_every_waiting_post_and_carries_the_thread_note()
+    {
+        var (g, c, _) = LikeScene(signedIn: false);
+        g.ThreadWanted = _ =>
+        {
+            g.Posts.Offer(HoldRig.Post(WaitingPost));
+            g.Posts.Offer(HoldRig.Post(WaitingPost + 1));
+            g.ThreadOpened(ThreadPost(ReplyPost));
+        };
+        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        var next = ScrollToNextCard(g, c);
+        Assert.Equal(ThreadPost(ReplyPost).Uri, next.Post.Uri);
+        Assert.True(next.Thread);
+        Assert.Equal(CardLayout.ThreadNote, next.Shape.Note!.Value.Text);
+        Assert.False(c.Thread);
+
+        string waitingUri = HoldRig.Post(WaitingPost).Uri;
+        HoldRig.Until(g, () => g.Cards.Cards.Any(k => k.Post.Uri == waitingUri));
+        var waiting = g.Cards.Cards.Single(k => k.Post.Uri == waitingUri);
+        Assert.False(waiting.Thread);
+        Assert.Null(waiting.Shape.Note);
+    }
+
+    [Fact]
+    public void The_thread_note_is_drawn_in_its_own_colour_under_the_words_and_above_a_picture()
+    {
+        var withPicture = ThreadPost(ReplyPost) with { HasEmbed = true, Attachment = AttachmentKind.Picture, AttachmentText = "a described picture", Pictures = [new PostPicture("https://cdn.example/p.jpg", 400, 300)] };
+        var (g, c, _) = LikeScene(signedIn: false);
+        int firstTop = c.Top;
+        g.ThreadWanted = _ => g.ThreadOpened(withPicture);
+        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        var next = ScrollToNextCard(g, c);
+        var s = next.Shape;
+        var note = s.Note!.Value;
+        Assert.Equal(CardLayout.ThreadNote, note.Text);
+        Assert.Equal(s.Lines[^1].Row + 1, note.Row);
+        Assert.Equal(note.Row + 1, Assert.Single(s.Pictures).Y);
+
+        c.Top = HoldRig.ScrRows;
+        next.Top = firstTop;
+        HoldRig.Away(g);
+        HoldRig.Sweep(g);
+        g.Particles.Clear(); g.Rings.Clear();
+        var scr = new Screen(HoldRig.ScrCols, HoldRig.ScrRows);
+        new RaiderView().FitAndRender(g, scr);
+        int col = g.Layout.Col0 + g.Cards.CardLeft + note.Col, row = next.Top + note.Row;
+        Assert.Equal(CardLayout.ThreadNote[0], scr.CharAt(col, row));
+        Assert.Equal(CardColours.ThreadText, scr.Fg[row * scr.Cols + col]);
+        Assert.NotEqual(CardColours.DimText, CardColours.ThreadText);
+    }
+
+    [Fact]
+    public void Liking_the_thread_card_asks_for_the_reply_after_it()
+    {
+        var (g, c, asked) = LikeScene(signedIn: false);
+        int firstTop = c.Top;
         g.ThreadWanted = p =>
         {
             asked.Add(p.Uri);
-            int n = Number(p);
-            if (n < length) g.ThreadOpened(p.Uri, Chain(n + 1, replies: n + 1 < length ? 1 : 0)); else g.ThreadEnded(p.Uri);
+            if (p.Uri == ThreadPost(FirstPost).Uri) g.ThreadOpened(ThreadPost(ReplyPost));
         };
-        g.Queue.Offer(Chain(1, liked: firstLiked));
-        return (g, liked, asked);
+        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        var next = ScrollToNextCard(g, c);
+        c.Top = HoldRig.ScrRows;
+        next.Top = firstTop;
+        HoldRig.Hold(g, next, Like, Tuning.HoldFrames);
+        Assert.Equal([ThreadPost(FirstPost).Uri, ThreadPost(ReplyPost).Uri], asked);
+    }
+
+    /// <summary>Likes the thread's first post in a game whose lookups go to <paramref name="src"/>, waits for the lookup the like
+    /// started, and returns the game and how many lookups there were.</summary>
+    private static async Task<(RaiderGame G, int Lookups)> LikeAndLookUp(IThreadSource src)
+    {
+        var (g, c, _) = LikeScene(signedIn: false, Root());
+        var lookups = new List<Task>();
+        g.ThreadWanted = p => lookups.Add(RaiderFeeds.ThreadAsync(g, src, p, timeoutMs: ShortTimeoutMs));
+        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        await Task.WhenAll(lookups);
+        return (g, lookups.Count);
     }
 
     [Fact]
-    public void Signed_out_the_first_press_says_sign_in_and_later_ones_stay_quiet()
+    public async Task A_like_whose_only_reply_is_by_another_author_brings_no_card()
     {
-        var (g, liked, asked) = Chained(signedIn: false, length: 3);
-        var w = Arrived(g);
-        var sounds = new List<string>();
-        g.Sfx = new SfxBus((name, _, _, _) => sounds.Add(name));
-        SteerOntoAndLike(g, w);
-        Assert.Equal(RaiderGame.SignInHint, g.Toast);
-        Assert.Contains("like", sounds);
-        Assert.Single(w.Earlier);                                 // the reply opened all the same
-        for (int i = 0; i < 100; i++) g.Step();
-        Assert.Null(g.Toast);
-        g.Input.Like(); g.Step();                                 // the second press, on the reply
-        Assert.Null(g.Toast);
-        Assert.Equal(2, w.Earlier.Count);
-        Assert.Empty(liked);                                      // nothing was ever written
-        Assert.Equal(2, asked.Count);
+        var (g, lookups) = await LikeAndLookUp(new JsThreadSource((_, _, _) => Task.FromResult(Fixture(OtherAuthorsThread))));
+        Assert.Equal(1, lookups);
+        Assert.Equal(0, g.Posts.Count);
     }
 
     [Fact]
-    public void Like_targets_the_newest_open_post_and_each_like_opens_the_next()
+    public async Task A_like_whose_lookup_fails_or_runs_out_of_time_changes_nothing_the_player_sees()
     {
-        var (g, liked, asked) = Chained(signedIn: true, length: 3);
-        var w = Arrived(g);
-        SteerOntoAndLike(g, w);
-        Assert.Equal([Chain(1).Uri], liked);
-        Assert.Equal(Chain(2).Uri, w.Post.Uri);
-        Assert.False(w.Liked);                                    // the reply itself is not liked yet
-        g.Input.Like(); g.Step();
-        Assert.Equal([Chain(1).Uri, Chain(2).Uri], liked);
-        Assert.Equal(Chain(3).Uri, w.Post.Uri);
-        g.Input.Like(); g.Step();
-        Assert.Equal([Chain(1).Uri, Chain(2).Uri, Chain(3).Uri], liked);
-        Assert.Equal(Chain(3).Uri, w.Post.Uri);                   // the thread ended there
-        Assert.Equal(3, asked.Count);
-        g.Input.Like(); g.Step();
-        Assert.Equal(3, liked.Count);                             // and the last post is not liked twice
-        Assert.Equal(2, w.Earlier.Count);
+        foreach (IThreadSource src in new IThreadSource[] { new ThrowingSource(), new HangingSource() })
+        {
+            var (g, lookups) = await LikeAndLookUp(src);
+            Assert.Equal(1, lookups);
+            Assert.Equal(0, g.Posts.Count);
+            Assert.Equal(LikeHoldTests.SignedOutLikeToast, g.Toast);
+            HoldRig.Rest(g, Tuning.Fps);
+            Assert.Single(g.Cards.Cards);
+        }
     }
 
     [Fact]
-    public void A_post_already_liked_still_opens_the_next_without_a_second_like()
+    public async Task A_like_whose_lookup_finds_the_authors_reply_brings_it_in_as_the_thread_card()
     {
-        var (g, liked, asked) = Chained(signedIn: true, length: 3, firstLiked: true);
-        var w = Arrived(g);
-        Assert.True(w.Liked);
-        SteerOntoAndLike(g, w);
-        Assert.Empty(liked);
-        Assert.Single(asked);
-        Assert.Equal(Chain(2).Uri, w.Post.Uri);
-        g.Input.Like(); g.Step();
-        Assert.Equal([Chain(2).Uri], liked);                      // the reply was not liked before: that one is written
-    }
-
-    [Fact]
-    public void An_already_liked_post_with_no_replies_is_not_offered()
-    {
-        var g = Game(signedIn: true);
-        g.Queue.Offer(Chain(1, liked: true, replies: 0));
-        var w = Arrived(g);
-        Assert.True(w.Followed);
-        Assert.Null(g.Prompt);
-    }
-
-    [Fact]
-    public void A_reply_that_comes_back_after_the_wingman_moved_on_or_left_is_ignored()
-    {
-        var g = Game(signedIn: true);
-        g.Queue.Offer(Chain(1));
-        var w = Arrived(g);
-        g.ThreadOpened("at://someone/else", Chain(2));
-        Assert.Empty(w.Earlier);
-        for (int i = 0; i < w.TotalFrames; i++) g.Step();
-        Assert.Empty(g.Wings);
-        g.ThreadOpened(Chain(1).Uri, Chain(2));                   // nobody is there to show it
-        Assert.Empty(g.Wings);
-    }
-
-    [Fact]
-    public void An_ineligible_reply_handed_to_the_game_ends_the_thread()
-    {
-        var g = Game(signedIn: true);
-        g.Queue.Offer(Chain(1));
-        var w = Arrived(g);
-        g.ThreadOpened(w.Post.Uri, Chain(2, text: "short"));
-        Assert.Empty(w.Earlier);
-        Assert.True(w.Followed);
-    }
-
-    [Fact]
-    public void In_Random_a_labelled_self_reply_does_not_open()
-    {
-        var g = Game(signedIn: false);
-        g.PlainOnly = true;
-        g.Queue.Offer(Chain(1));
-        var w = Arrived(g);
-        g.ThreadOpened(w.Post.Uri, Chain(2) with { Labelled = true });   // e.g. a !warn label
-        Assert.Empty(w.Earlier);
-        Assert.True(w.Followed);
-    }
-
-    [Fact]
-    public void In_Random_an_unlabelled_self_reply_still_opens()
-    {
-        var g = Game(signedIn: false);
-        g.PlainOnly = true;
-        g.Queue.Offer(Chain(1));
-        var w = Arrived(g);
-        g.ThreadOpened(w.Post.Uri, Chain(2));
-        Assert.Single(w.Earlier);
-    }
-
-    [Fact]
-    public void Outside_Random_a_labelled_self_reply_still_opens()
-    {
-        var g = Game(signedIn: true);
-        g.Queue.Offer(Chain(1));
-        var w = Arrived(g);
-        g.ThreadOpened(w.Post.Uri, Chain(2) with { Labelled = true });
-        Assert.Single(w.Earlier);
-    }
-
-    [Fact]
-    public void A_wingman_stays_while_its_thread_is_read_but_only_up_to_a_bound()
-    {
-        var (g, liked, _) = Chained(signedIn: true, length: 60);
-        var w = Arrived(g);
-        int usual = w.TotalFrames;
-        SteerOntoAndLike(g, w);
-        Assert.True(w.TotalFrames - w.Age >= Tuning.ThreadReadFrames);
-        for (int i = 0; i < 40; i++) { g.Input.Like(); g.Step(); }
-        Assert.True(w.Age < w.TotalFrames);
-        Assert.True(w.FightExtra <= Tuning.ThreadMaxExtraFrames);
-        Assert.Equal(usual + w.FightExtra, w.TotalFrames);
-        for (int i = 0; i < w.TotalFrames + 10; i++) g.Step();
-        Assert.DoesNotContain(w, g.Wings);
-        Assert.True(w.Age <= usual + Tuning.ThreadMaxExtraFrames);
-        Assert.NotEmpty(liked);
-    }
-
-    [Fact]
-    public void An_open_thread_holds_its_comm_open_until_the_newest_post_is_liked()
-    {
-        var (g, _, _) = Chained(signedIn: true, length: 3);
-        var w = Arrived(g);
-        SteerOntoAndLike(g, w);
-        Assert.Same(w, g.Comms.Speaker);
-        for (int i = 0; i < WingComms.TotalFrames(w) + 10; i++) g.Step();
-        Assert.NotEqual(WingPhase.Leave, w.Phase);
-        Assert.Same(w, g.Comms.Speaker);                          // past the post's own time, still open
-        Assert.True(w.CommAge < WingComms.TotalFrames(w) - Tuning.CommCollapseFrames);   // and short of handing the mic over
-    }
-
-    [Fact]
-    public void The_bubble_stacks_at_most_a_few_rows_and_stubs_the_oldest_posts()
-    {
-        var (g, _, _) = Chained(signedIn: true, length: 8);
-        var w = Arrived(g);
-        SteerOntoAndLike(g, w);
-        for (int i = 0; i < 4; i++) { g.Input.Like(); g.Step(); }
-        Assert.Equal(5, w.Earlier.Count);
-        Assert.Equal(WingComms.MaxStubs, WingComms.StubRows(w));
-        Assert.True(w.PrevLines.Length <= WingComms.PrevLinesMax);
-        Assert.StartsWith("+", WingComms.Stubs(w, w.CommTextW)[0]);
-        Assert.True(WingComms.CommH(w) <= g.Layout.Rows / 2, $"{WingComms.CommH(w)} rows of {g.Layout.Rows}");
-
-        string wordy = string.Concat(Enumerable.Repeat("word ", 40)) + "end";
-        var phone = Game(signedIn: true, 48, 60);
-        phone.ThreadWanted = p => phone.ThreadOpened(p.Uri, Chain(Number(p) + 1, text: wordy));
-        phone.Queue.Offer(Chain(1));
-        var pw = Arrived(phone);
-        SteerOntoAndLike(phone, pw);
-        for (int i = 0; i < 5; i++) { phone.Input.Like(); phone.Step(); }
-        Assert.True(WingComms.CommH(pw) <= phone.Layout.Rows / 2, $"{WingComms.CommH(pw)} rows of {phone.Layout.Rows}");
-    }
-
-    [Fact]
-    public void The_wide_panel_shows_the_whole_post_and_the_whole_open_thread()
-    {
-        string tail = "and this is the very last word zebra";
-        string longText = string.Join(' ', Enumerable.Repeat("tomatoes ripen slowly in cool spring weather", 6)) + " " + tail;
-        var g = Game(signedIn: true, 130, 46);
-        g.Queue.Offer(Chain(1, text: longText));
-        var w = Arrived(g);
-        for (int i = 0; i < 240; i++) g.Step();                    // typed out in full
-        var view = new RaiderView();
-        var scr = new Screen(130, 46);
-        view.Render(g, scr);
-        Assert.Contains("zebra", Panel(scr, g));
-        // a reply opens: both posts are in the panel
-        g.ThreadOpened(w.Post.Uri, Chain(2, text: "second post says the harvest was big this year, ending in giraffe"));
-        for (int i = 0; i < 120; i++) g.Step();
-        view.Render(g, scr);
-        string panel = Panel(scr, g);
-        Assert.Contains("zebra", panel);
-        Assert.Contains("giraffe", panel);
-    }
-
-    /// <summary>The panel column's text, rows joined with the spaces dropped (a wrapped line ends where a word does).</summary>
-    private static string Panel(Screen s, RaiderGame g)
-    {
-        int c0 = g.Layout.Col0 - 2 - g.Layout.PanelCols;
-        var sb = new System.Text.StringBuilder();
-        for (int r = 0; r < s.Rows; r++) for (int c = c0; c < c0 + g.Layout.PanelCols; c++) if (s.CharAt(c, r) != ' ') sb.Append(s.CharAt(c, r));
-        return sb.ToString();
+        var (g, lookups) = await LikeAndLookUp(new JsThreadSource((_, _, _) => Task.FromResult(Fixture(SelfThread))));
+        Assert.Equal(1, lookups);
+        var next = ScrollToNextCard(g, g.Cards.Cards[0]);
+        Assert.Equal(AnnsReply, next.Post.Uri);
+        Assert.True(next.Thread);
     }
 }

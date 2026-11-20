@@ -78,14 +78,17 @@ public class ScreenTests
     }
 
     [Fact]
-    public void A_glyph_xterm_would_draw_wide_or_zero_wide_is_put_as_a_question_mark()
+    public void A_glyph_xterm_draws_wide_takes_two_cells_and_one_it_draws_zero_wide_is_dropped()
     {
         var s = new Screen(5, 1);
+        s.Clear(Bg);
         s.Put(0, 0, '中', 1);               // a wide CJK glyph
         s.Put(1, 0, '́', 1);               // a combining accent
         s.Put(2, 0, '█', 1);                    // a single-width block is fine
         s.Put(3, 0, 'é', 1);               // below U+0300 nothing is checked
-        Assert.Equal("??█é", new string(s.Ch, 0, 4));
+        s.Put(1, 0, 'x', 1);                 // lands on the wide glyph's second cell, which blanks the glyph
+        Assert.Equal(" x█é", new string(s.Ch, 0, 4));
+        Assert.DoesNotContain('?', s.Ch);
     }
 
     [Fact]

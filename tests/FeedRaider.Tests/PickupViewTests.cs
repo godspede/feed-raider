@@ -26,7 +26,7 @@ public class PickupViewTests
     /// <summary>The 6x6 body as letters: d dark rim, c colour, l light mark, . untouched.</summary>
     private static string Body(Surface f, PickupKind kind)
     {
-        uint c = RaiderGame.PickupColor(kind), dark = Surface.Mix(c, Palette.SkyTop, 0.55), light = Surface.Mix(c, 0xffffff, 0.6);
+        uint c = RaiderGame.PickupColour(kind), dark = Surface.Mix(c, Palette.SkyTop, 0.55), light = Surface.Mix(c, 0xffffff, 0.6);
         var rows = new List<string>();
         for (int y = Cy - 3; y < Cy + 3; y++)
         {
@@ -49,10 +49,10 @@ public class PickupViewTests
 
     [Theory]
     [InlineData(PickupKind.Shield)]
-    [InlineData(PickupKind.Power)]
-    public void A_shield_and_a_power_pickup_carry_their_marks(PickupKind kind)
+    [InlineData(PickupKind.Weapon)]
+    public void A_shield_and_a_weapon_pickup_carry_their_marks(PickupKind kind)
     {
-        // the shield's cross and the power arrow share a shape at this size
+        // the shield's cross and the weapon's arrow share a shape at this size
         Assert.Equal(".dddd./dcllcd/dlllld/dcllcd/dcllcd/.dddd.", Body(Drawn(kind, 3), kind));
     }
 
@@ -60,7 +60,7 @@ public class PickupViewTests
     public void The_body_stays_inside_its_six_pixel_box()
     {
         var f = Drawn(PickupKind.Bomb, 3);
-        uint c = RaiderGame.PickupColor(PickupKind.Bomb), dark = Surface.Mix(c, Palette.SkyTop, 0.55);
+        uint c = RaiderGame.PickupColour(PickupKind.Bomb), dark = Surface.Mix(c, Palette.SkyTop, 0.55);
         for (int y = 0; y < f.H; y++)
             for (int x = 0; x < f.W; x++)
                 if ((f.Get(x, y) == c && (x < Cx - 2 || x > Cx + 1 || y < Cy - 2 || y > Cy + 1)) || (f.Get(x, y) == dark && (x < Cx - 3 || x > Cx + 2 || y < Cy - 3 || y > Cy + 2))) Assert.Fail($"body pixel outside the body at {x},{y}");
@@ -100,10 +100,10 @@ public class PickupViewTests
         g.Enemies.Clear(); g.Bullets.Clear(); g.Particles.Clear(); g.Rings.Clear();
         var view = new RaiderView();
         var empty = new Screen(120, 46);
-        view.Render(g, empty);
+        view.FitAndRender(g, empty);
         g.SpawnPickup(PickupKind.Bomb, g.PW / 2.0, g.PH / 3.0);
         var withPickup = new Screen(120, 46);
-        view.Render(g, withPickup);
+        view.FitAndRender(g, withPickup);
         Assert.False(empty.Ch.SequenceEqual(withPickup.Ch) && empty.Fg.SequenceEqual(withPickup.Fg) && empty.Bg.SequenceEqual(withPickup.Bg));
     }
 }

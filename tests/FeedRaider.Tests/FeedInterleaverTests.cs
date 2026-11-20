@@ -62,22 +62,22 @@ public class FeedInterleaverTests
     public void Duplicates_and_ineligible_posts_are_dropped()
     {
         var m = new FeedInterleaver();
-        m.Add([P("a", "1"), P("a", "1"), P("b", "x") with { Text = "hi" }]);
+        m.Add([P("a", "1"), P("a", "1"), P("b", "x") with { Adult = true }]);
         Assert.Equal(1, m.Count);
     }
 
     [Fact]
-    public async Task Wingmen_serve_an_alternating_queue()
+    public async Task Posts_are_queued_alternating()
     {
         var posts = Enumerable.Range(1, 5).Select(i => P("a", "a" + i)).Concat(Enumerable.Range(1, 5).Select(i => P("b", "b" + i))).ToArray();
         var game = new RaiderGame(1);
         using var cts = new CancellationTokenSource();
-        var run = RaiderFeeds.WingmenAsync(game, new Once(posts), null, "", cts.Token);
-        await Wait.UntilAsync(() => { lock (game) return game.Queue.Count >= 10; }, "ten wingmen in the queue");
+        var run = RaiderFeeds.PostsAsync(game, new Once(posts), null, "", cts.Token);
+        await Wait.UntilAsync(() => { lock (game) return game.Posts.Count >= 10; }, "ten posts in the queue");
         cts.Cancel();
         await run.WaitAsync(TimeSpan.FromSeconds(10));
         var served = new List<FeedPost>();
-        lock (game) while (game.Queue.TryDequeue(out var p)) served.Add(p);
+        lock (game) while (game.Posts.TryDequeue(out var p, out _)) served.Add(p);
         Assert.Equal(10, served.Count);
         for (int i = 1; i < served.Count; i++) Assert.NotEqual(served[i - 1].AuthorDid, served[i].AuthorDid);
     }

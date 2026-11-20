@@ -19,7 +19,7 @@ public class WanderTests
         var two = new Room(follows.Reverse());
         foreach (var f in follows)
             Assert.Equal(one.IdlePosition(f.Did, 98_765), two.IdlePosition(f.Did, 98_765));
-        Assert.Equal(one.Render(80, 24, 98_765), two.Render(80, 24, 98_765));
+        Assert.Equal(one.AdvanceAndRender(80, 24, 98_765), two.AdvanceAndRender(80, 24, 98_765));
     }
 
     [Fact]

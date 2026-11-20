@@ -9,7 +9,7 @@
      "handle": "a1.test"
     },
     "record": {
-     "text": "a long enough post to be a wingman"
+     "text": "a long enough post to be shown"
     },
     "likeCount": 1
    }
@@ -23,7 +23,7 @@
      "handle": "a2.test"
     },
     "record": {
-     "text": "a long enough post to be a wingman"
+     "text": "a long enough post to be shown"
     },
     "likeCount": 1,
     "embed": {
@@ -46,7 +46,7 @@
      "handle": "a3.test"
     },
     "record": {
-     "text": "a long enough post to be a wingman"
+     "text": "a long enough post to be shown"
     },
     "likeCount": 1,
     "embed": {
@@ -64,7 +64,7 @@
      "handle": "a4.test"
     },
     "record": {
-     "text": "a long enough post to be a wingman"
+     "text": "a long enough post to be shown"
     },
     "likeCount": 1,
     "embed": {
@@ -85,7 +85,7 @@
      "handle": "a5.test"
     },
     "record": {
-     "text": "a long enough post to be a wingman"
+     "text": "a long enough post to be shown"
     },
     "likeCount": 1,
     "embed": {
@@ -106,7 +106,7 @@
      "handle": "a6.test"
     },
     "record": {
-     "text": "a long enough post to be a wingman"
+     "text": "a long enough post to be shown"
     },
     "likeCount": 1,
     "embed": {
@@ -131,7 +131,7 @@
      "handle": "a7.test"
     },
     "record": {
-     "text": "a long enough post to be a wingman"
+     "text": "a long enough post to be shown"
     },
     "likeCount": 1,
     "embed": {
@@ -156,7 +156,7 @@
      "handle": "a8.test"
     },
     "record": {
-     "text": "a long enough post to be a wingman"
+     "text": "a long enough post to be shown"
     },
     "likeCount": 1
    }

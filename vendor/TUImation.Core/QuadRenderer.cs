@@ -1,5 +1,6 @@
-// Vendored from TUImation (vaettir) Core/QuadRenderer.cs @ d2f6ae2. Local addition: Block(), a public per-cell entry
-// point for the diff renderer. Local removal: the whole-canvas Render and its Sgr helper, which nothing here calls.
+// Vendored from TUImation, Core/QuadRenderer.cs @ d2f6ae2. This copy differs from that file: it has Block(), a public
+// per-cell entry point for the diff renderer, and it has no whole-canvas Render, no Sgr helper for it and no choice in
+// Reduce of which group is the foreground, since nothing here draws a whole canvas.
 
 namespace TUImation;
 
@@ -26,15 +27,14 @@ public static class QuadRenderer
     /// described above. A fully transparent block comes back as a space.</summary>
     public static (char Glyph, Rgb? Fg, Rgb? Bg) Block(Rgb?[] px)
     {
-        var (fg, bg, mask) = Reduce(px, null, null);
+        var (fg, bg, mask) = Reduce(px);
         return (Glyphs[mask], fg, bg);
     }
 
     /// <summary>The glyph for a quadrant mask (bit0 TL, bit1 TR, bit2 BL, bit3 BR).</summary>
     public static char GlyphFor(int mask) => Glyphs[mask & FullMask];
 
-    // Splits four pixels into foreground/background colours plus the foreground mask.
-    internal static (Rgb? Fg, Rgb? Bg, int Mask) Reduce(Rgb?[] px, Rgb? lastFg, Rgb? lastBg)
+    internal static (Rgb? Fg, Rgb? Bg, int Mask) Reduce(Rgb?[] px)
     {
         Rgb? a = px[0];
         Rgb? b = null;
@@ -47,9 +47,8 @@ public static class QuadRenderer
         }
         if (!many)
         {
-            // <= 2 distinct colours: exact.
             if (!haveB) return (a, a, 0);
-            return Pick(a, b, MaskOf(px, a), lastFg, lastBg);
+            return (a, b, MaskOf(px, a));
         }
 
         int si = 0, sj = 1;
@@ -64,7 +63,7 @@ public static class QuadRenderer
         for (int i = 0; i < BlockPixels; i++)
             if (Dist(px[i], px[si]) <= Dist(px[i], px[sj])) mask |= 1 << i;
         Rgb? ga = Average(px, mask), gb = Average(px, ~mask & FullMask);
-        return Pick(ga, gb, mask, lastFg, lastBg);
+        return (ga, gb, mask);
     }
 
     private static int MaskOf(Rgb?[] px, Rgb? c)
@@ -72,14 +71,6 @@ public static class QuadRenderer
         int m = 0;
         for (int i = 0; i < BlockPixels; i++) if (px[i] == c) m |= 1 << i;
         return m;
-    }
-
-    // Choose which of the two groups is the foreground so fewer SGR codes change.
-    private static (Rgb? Fg, Rgb? Bg, int Mask) Pick(Rgb? ga, Rgb? gb, int maskA, Rgb? lastFg, Rgb? lastBg)
-    {
-        int costAFg = (ga != lastFg ? 1 : 0) + (gb != lastBg ? 1 : 0);
-        int costBFg = (gb != lastFg ? 1 : 0) + (ga != lastBg ? 1 : 0);
-        return costBFg < costAFg ? (gb, ga, ~maskA & FullMask) : (ga, gb, maskA);
     }
 
     private static double Dist(Rgb? p, Rgb? q)

@@ -10,12 +10,20 @@ public sealed class JsFeedSource(Func<string, string?, int, Task<string>> fetch)
         FeedMapper.ParsePage(await fetch(feedUri, cursor, limit));
 }
 
-/// <summary>The like call through a JS function (uri, cid) that answers the new like record as JSON {uri, cid}.</summary>
-public sealed class JsActions(Func<string, string, Task<string>> like) : IActions
+/// <summary>The write calls through JS functions: like and repost take (uri, cid) and answer the new record as JSON {uri, cid};
+/// delete takes the record's address. A host that gives no repost or delete function cannot make those writes.</summary>
+public sealed class JsActions(Func<string, string, Task<string>> like, Func<string, string, Task<string>>? repost = null, Func<string, Task>? delete = null) : IPostActions
 {
     public async Task<PostRef> LikeAsync(PostRef post, CancellationToken ct) =>
         JsonSerializer.Deserialize(await like(post.Uri, post.Cid), EngineJson.Default.PostRef)
         ?? throw new InvalidOperationException("Bluesky answered the like with nothing");
+
+    public async Task<PostRef> RepostAsync(PostRef post, CancellationToken ct) =>
+        JsonSerializer.Deserialize(await (repost ?? throw new NotSupportedException("this page cannot repost"))(post.Uri, post.Cid), EngineJson.Default.PostRef)
+        ?? throw new InvalidOperationException("Bluesky answered the repost with nothing");
+
+    public Task DeleteAsync(string recordUri, CancellationToken ct) =>
+        (delete ?? throw new NotSupportedException("this page cannot delete"))(recordUri);
 }
 
 /// <summary>Source-generated JSON for the Engine's own calls, so the like answer is read without reflection when trimmed.</summary>
@@ -23,7 +31,7 @@ public sealed class JsActions(Func<string, string, Task<string>> like) : IAction
 [JsonSerializable(typeof(PostRef))]
 internal partial class EngineJson : JsonSerializerContext { }
 
-/// <summary>Where the wingmen come from this run.</summary>
+/// <summary>Where the posts come from this run.</summary>
 public sealed record FeedPlan(IFeedSource Primary, IFeedSource? Fallback, string FeedUri, string Name)
 {
     /// <summary>Signed in, the default is the player's Following timeline; <c>?feed=discover</c>, <c>foryou</c> or a generator URI
@@ -51,25 +59,34 @@ public static class Plain
     public static bool IsAuthProblem(Exception ex)
     {
         var m = ex.Message;
-        return Has(m, "scope") || Has(m, "insufficient") || Has(m, "not logged in") || Has(m, "sign-in unavailable")
+        return Has(m, "scope") || Has(m, "insufficient") || Has(m, "sign in again") || IsSignedOut(m) || Has(m, "sign-in unavailable")
             || Has(m, "401") || Has(m, "403") || Has(m, "unauthorized") || Has(m, "invalidtoken") || Has(m, "authmissing")
             || Has(m, "token") && (Has(m, "expired") || Has(m, "invalid") || Has(m, "revoked"));
     }
 
-    public static string Like(Exception ex)
+    /// <summary>The reason a like, repost or undo failed, in words a player can act on.</summary>
+    public static string WriteFailureText(Exception ex, PostAction action, bool undo)
     {
-        if (IsAuthProblem(ex)) return Has(ex.Message, "not logged in") ? "you are signed out" : "your sign-in does not allow likes, sign out and sign in again";
-        if (Has(ex.Message, "rate limit") || Has(ex.Message, "ratelimit") || Has(ex.Message, "429")) return "too many likes, wait a moment";
+        string noun = action == PostAction.Like ? "likes" : "reposts";
+        if (IsAuthProblem(ex)) return IsSignedOut(ex.Message) ? "you are signed out" : $"your sign-in does not allow {(undo ? "undoing " : "")}{noun}; sign in again";
+        if (RateLimited(ex.Message)) return $"too many {noun}; wait a moment";
         if (Network(ex.Message)) return "could not reach Bluesky";
         return Short(ex.Message);
     }
 
-    public static string Feed(Exception ex, string name)
+    public static string FeedFailureText(Exception ex, string name)
     {
-        if (IsAuthProblem(ex)) return Has(ex.Message, "not logged in") ? $"you are signed out, so {name} is not available" : $"your sign-in is not allowed to read {name}, sign out and sign in again";
+        if (IsAuthProblem(ex)) return IsSignedOut(ex.Message) ? $"you are signed out, so {name} is not available" : $"your sign-in is not allowed to read {name}; sign out and sign in again";
         if (Network(ex.Message)) return $"could not reach Bluesky for {name}";
-        return $"could not load {name}: {Short(ex.Message)}";
+        return $"could not load {name}";
     }
+
+    /// <summary>The words @atproto/api's agent throws when it holds no session; atproto.js throws the same words, so one match covers both.</summary>
+    private const string NotSignedIn = "not logged in";
+
+    private static bool IsSignedOut(string m) => Has(m, NotSignedIn);
+
+    private static bool RateLimited(string m) => Has(m, "rate limit") || Has(m, "ratelimit") || Has(m, "429");
 
     private static bool Network(string m) => Has(m, "failed to fetch") || Has(m, "network") || Has(m, "timed out") || Has(m, "timeout");
 
@@ -99,6 +116,9 @@ public static class HostKeys
             case "KeyF" when down: inp.ToggleAutoFire(); break;
             case "KeyB" when down: inp.Bomb(); break;
             case "KeyE" when down: inp.Like(); break;
+            case "KeyR" when down: inp.Repost(); break;
+            case "BracketLeft" when down: inp.MarkUp(); break;
+            case "BracketRight" when down: inp.MarkDown(); break;
         }
     }
 }

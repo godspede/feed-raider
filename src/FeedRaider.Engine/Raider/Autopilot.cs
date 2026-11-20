@@ -1,0 +1,205 @@
+namespace FeedRaider.Engine.Raider;
+
+/// <summary>
+/// The start page's tour of the game: a script and the pilot that flies it. The script is a fixed list of times, the same on
+/// every loop: a first wave, a heart held until the like lands, a mini-boss, then three of the ten bosses with a later stage's
+/// waves after each. The pilot goes where the scene needs it, steps out of the way of what it can, and fires all the while.
+/// It only ever presses the movement, fire and bomb keys, and the like it lands is the signed-out kind: a mark on a built-in
+/// post, with nothing sent and no account. The tour's game is <see cref="RaiderGame.Charmed"/>, so the ship never dies
+/// and the tour always reaches its end. The same seed against the same game gives the same tour, tick for tick.
+/// </summary>
+public sealed class Autopilot(ulong seed)
+{
+    /// <summary>One boss scene: when its warning starts, which stage's boss it is, and when it is cut short if still up.</summary>
+    public readonly record struct Scene(int At, int Stage, int Until);
+
+    private const int TicksPerSecond = Tuning.Fps;
+
+    /// <summary>The length of one loop of the tour, in ticks.</summary>
+    public const int MaxRunTicks = 84 * TicksPerSecond;
+    /// <summary>The opening wave: a line of the plainest enemy, so the first seconds are a fight.</summary>
+    public const int FirstWaveAt = TicksPerSecond / 2;
+    /// <summary>From here the pilot looks for a heart to hold, and gives up at <see cref="LikeUntil"/> if no post came by.</summary>
+    public const int LikeFrom = 4 * TicksPerSecond, LikeUntil = 20 * TicksPerSecond;
+    /// <summary>The tick of the tour loop the mini-boss comes on at.</summary>
+    public const int MiniBossAt = 13 * TicksPerSecond;
+    /// <summary>The three boss scenes. A boss killed early leaves the next stage's waves on the field until the next scene.</summary>
+    public static readonly Scene[] Scenes =
+    [
+        new(22 * TicksPerSecond, 2, 38 * TicksPerSecond),
+        new(41 * TicksPerSecond, 4, 57 * TicksPerSecond),
+        new(60 * TicksPerSecond, 7, 76 * TicksPerSecond),
+    ];
+    /// <summary>Weapon pickups the script drops in the pilot's path, so the bosses come apart in the time they have.</summary>
+    private static readonly int[] WeaponAt = [15 * TicksPerSecond, 19 * TicksPerSecond, 23 * TicksPerSecond, 43 * TicksPerSecond, 62 * TicksPerSecond];
+    /// <summary>How far into a boss scene the pilot bombs, if the boss is still up.</summary>
+    private static readonly int[] BombAfter = [8 * TicksPerSecond, 12 * TicksPerSecond];
+
+    /// <summary>How many ticks ahead a falling bullet is followed to where it will cross the ship's row.</summary>
+    private const int DodgeLookaheadTicks = 22;
+    /// <summary>How near a falling bullet's landing point must be to the ship for the pilot to step aside, in pixels.</summary>
+    private const double BoltBandPx = 5;
+    /// <summary>How near a gunning hull must be sideways to the ship for the pilot to step aside, in pixels.</summary>
+    private const double HullBandPx = 8;
+    /// <summary>How close to a side wall, or to the HUD rows, the pilot goes before it turns inward, in pixels.</summary>
+    private const int EdgeMarginPx = 8;
+    /// <summary>How far to the side of the ship a scripted weapon pickup drops, and how far it keeps from the walls, in pixels.</summary>
+    private const int PickupOffsetPx = 14, PickupMarginPx = 10;
+    /// <summary>The pilot's home row as a fraction of the field height, and the sweep's half width and period (in ticks per radian) when nothing needs it.</summary>
+    private const double HomeRow = 0.82, SweepAmp = 0.34, SweepTicksPerRadian = 38.0;
+
+    /// <summary>How many distinct starting phases the sweep has across one full turn.</summary>
+    private const int PhaseSteps = 628;
+    /// <summary>The opening line of grunts: how many, where the first stands and the gap between them, as fractions of the field width.</summary>
+    private const int FirstWaveGrunts = 5;
+    private const double FirstWaveLeft = 0.18, FirstWaveGap = 0.16;
+    /// <summary>The height a scripted weapon pickup drops from, as a fraction of the field height.</summary>
+    private const double PickupDropRow = 0.35;
+    /// <summary>How far above the ship an enemy may be and still count as a clear target to line up on, in pixels.</summary>
+    private const int TargetClearancePx = 6;
+    /// <summary>The highest row a heart's button may sit on for the pilot to go for it, as a fraction of the field height.</summary>
+    private const double HeartReachRow = 0.6;
+    /// <summary>A falling bullet slower than this, in pixels per tick, is not tracked.</summary>
+    private const double MinBoltFallSpeed = 0.1;
+    /// <summary>The band of rows around the ship, above and below, in which a gunning hull makes the pilot step aside, in pixels.</summary>
+    private const int HullBandAbovePx = 16, HullBandBelowPx = 4;
+    /// <summary>How far the ship may be from where the pilot wants it before a key is pressed, in pixels.</summary>
+    private const double AlignDeadZonePx = 1;
+
+    private readonly double _phase = Hashing.Mix(seed) % PhaseSteps * (2 * Math.PI / PhaseSteps);
+    private int _t;
+    private Card? _heart;
+
+    /// <summary>Ticks flown so far.</summary>
+    public int Ticks => _t;
+    /// <summary>True once the held heart has become a like.</summary>
+    public bool Liked { get; private set; }
+    /// <summary>Bosses the tour has brought on so far.</summary>
+    public int BossesMet { get; private set; }
+
+    /// <summary>Plays the script's part for the coming tick and sets the keys. Call it once before each <see cref="RaiderGame.Step"/>.</summary>
+    public void Drive(RaiderGame g)
+    {
+        if (g.PW <= 0 || g.PH <= 0) return;
+        Script(g);
+        PressKeysToward(g, Target(g, TrackHeart(g)));
+        _t++;
+    }
+
+    /// <summary>Sets the keys for the coming tick the way <see cref="Drive"/> does, without the tour: it plays none of the script
+    /// (no wave, mini-boss or weapon pickup arrives, no scene is cut to and no bomb is dropped) and holds no heart. It goes for
+    /// a pickup on the field, lines up on the boss or the lowest enemy, sweeps when nothing needs it, steps aside and fires. Its
+    /// ticks count in <see cref="Ticks"/> and <see cref="Finished"/> as <see cref="Drive"/>'s do. Call it once before each
+    /// <see cref="RaiderGame.Step"/>, on a pilot that is never also given <see cref="Drive"/>.</summary>
+    public void Fly(RaiderGame g)
+    {
+        if (g.PW <= 0 || g.PH <= 0) return;
+        PressKeysToward(g, Target(g, heart: null));
+        _t++;
+    }
+
+    /// <summary>Presses the keys that move the ship toward <paramref name="target"/>, or aside when a bullet or a hull is about
+    /// to reach it, and holds fire.</summary>
+    private void PressKeysToward(RaiderGame g, (double X, double Y) target)
+    {
+        var (tx, ty) = target;
+        int dodge = Dodge(g);
+        var inp = g.Input;
+        inp.Key(GameKey.Left, dodge < 0 || dodge == 0 && g.PX > tx + AlignDeadZonePx);
+        inp.Key(GameKey.Right, dodge > 0 || dodge == 0 && g.PX < tx - AlignDeadZonePx);
+        inp.Key(GameKey.Up, g.PY > ty + AlignDeadZonePx);
+        inp.Key(GameKey.Down, g.PY < ty - AlignDeadZonePx);
+        inp.Key(GameKey.Fire, true);
+    }
+
+    /// <summary>True when the loop is over and a fresh one should begin.</summary>
+    public bool Finished() => _t >= MaxRunTicks;
+
+    private void Script(RaiderGame g)
+    {
+        if (_t == FirstWaveAt)
+            for (int i = 0; i < FirstWaveGrunts; i++) g.SpawnKind(EnemyKind.Grunt, FirstWaveLeft + FirstWaveGap * i);
+        if (_t == MiniBossAt) g.SpawnKind(EnemyKind.Warden, 0.5);
+        foreach (int at in WeaponAt)
+            if (_t == at) g.SpawnPickup(PickupKind.Weapon, Math.Clamp(g.PX + (at / TicksPerSecond % 2 == 0 ? PickupOffsetPx : -PickupOffsetPx), PickupMarginPx, g.PW - PickupMarginPx), g.PH * PickupDropRow);
+        foreach (var scene in Scenes)
+        {
+            if (_t == scene.At) { g.TourCut(scene.Stage, boss: true); BossesMet++; }
+            if (_t == scene.Until && g.Gate != GateState.None) g.TourCut(scene.Stage + 1, boss: false);
+            if (g.Gate == GateState.Fighting && g.Bombs > 0)
+                foreach (int after in BombAfter)
+                    if (_t == scene.At + after) g.Input.Bomb();
+        }
+    }
+
+    /// <summary>Where the pilot wants to be this tick: on <paramref name="heart"/> when it holds one.</summary>
+    private (double X, double Y) Target(RaiderGame g, PixelRect? heart)
+    {
+        double home = g.PH * HomeRow;
+        if (heart is { } button) return (button.X + button.W / 2.0, button.Y + button.H / 2.0);
+        foreach (var p in g.Pickups)
+            if (p.Y > 0 && p.Y < g.PH) return (p.X, p.Y);
+        if (g.Boss is { Leaving: false } boss)
+        {
+            double x = boss.X;
+            if (boss.Parts is { } parts)
+            {
+                var part = parts.Find(p => p.State == PartState.Open) ?? parts.Find(p => p.State != PartState.Dead);
+                if (part is not null) x += part.OX;
+            }
+            return (x, home);
+        }
+        Enemy? low = null;
+        foreach (var e in g.Enemies)
+            if (!e.Leaving && e.Y > 0 && e.Y < g.PY - TargetClearancePx && (low is null || e.Y > low.Y)) low = e;
+        if (low is not null) return (low.X, home);
+        return (g.PW * (0.5 + SweepAmp * Math.Sin(_t / SweepTicksPerRadian + _phase)), home);
+    }
+
+    /// <summary>Follows the like button the pilot is holding or flying to, marking the like once it lands. Gives the button while the script wants a like and one is in reach.</summary>
+    private PixelRect? TrackHeart(RaiderGame g)
+    {
+        if (Liked || _t < LikeFrom || _t >= LikeUntil) return null;
+        if (_heart is not null && _heart.Marks.Like == ButtonState.Marked) { Liked = true; _heart = null; return null; }
+        if (_heart is null || !Reachable(g, _heart))
+        {
+            _heart = null;
+            foreach (var c in g.Cards.Cards)
+                if (Reachable(g, c) && g.Cards.ButtonBox(c, PostAction.Like).Y < g.PH * HeartReachRow) { _heart = c; break; }
+        }
+        return _heart is null ? null : g.Cards.ButtonBox(_heart, PostAction.Like);
+    }
+
+    private static bool Reachable(RaiderGame g, Card c)
+    {
+        if (!g.CanHold(c, PostAction.Like)) return false;
+        var button = g.Cards.ButtonBox(c, PostAction.Like);
+        return button.Y >= CardPainter.HudPixelRows + EdgeMarginPx && button.Y + button.H < g.PH - EdgeMarginPx;
+    }
+
+    /// <summary>-1 or 1 to step left or right out of the way of a bullet or a hull about to reach the ship; 0 when nothing is. The
+    /// pilot holds still for a heart: the charm takes the hit.</summary>
+    private int Dodge(RaiderGame g)
+    {
+        if (_heart is not null) return 0;
+        foreach (var b in g.Bullets)
+        {
+            if (b.Friendly || b.VY <= MinBoltFallSpeed) continue;
+            double dt = (g.PY - b.Y) / b.VY;
+            if (dt < 0 || dt > DodgeLookaheadTicks) continue;
+            double at = b.X + b.VX * dt;
+            if (Math.Abs(at - g.PX) < BoltBandPx) return Away(g, at);
+        }
+        foreach (var e in g.Enemies)
+            if (e.Armed && Math.Abs(e.X - g.PX) < HullBandPx && e.Y > g.PY - HullBandAbovePx && e.Y < g.PY + HullBandBelowPx) return Away(g, e.X);
+        return 0;
+    }
+
+    /// <summary>The side to step to: away from <paramref name="x"/>, and inward when the ship is at an edge.</summary>
+    private static int Away(RaiderGame g, double x)
+    {
+        if (g.PX < EdgeMarginPx) return 1;
+        if (g.PX > g.PW - EdgeMarginPx) return -1;
+        return g.PX >= x ? 1 : -1;
+    }
+}

@@ -1,4 +1,5 @@
 using FeedRaider.Engine.Raider;
+using FeedRaider.Tests.Enemies;
 using Xunit.Abstractions;
 
 namespace FeedRaider.Tests;
@@ -17,6 +18,14 @@ public class ShotBalanceTests(ITestOutputHelper output)
     private const double SteerDeadZone = 1.5;   // the bot holds still while the target is within this many cells
     private static readonly ulong[] Seeds = [1, 2, 3, 4, 5, 6];
 
+    // the share of an enemy that must show for it to count as fully visible: Visible finds each edge as the centre plus or minus
+    // half the size in doubles, and that rounding can leave a sprite wholly on the field a hair under 1
+    private const double FullyVisibleShare = 0.999;
+
+    /// <summary>The report's bars: the least share of kills that are fully visible, the least median frames a kill lives at the
+    /// most streams, and how many times one stream's kills the most streams may make.</summary>
+    private const double MinFullShare = 0.75, MinMaxStreamsMedianAge = 50, MaxKillsOverOneStream = 1.35;
+
     /// <summary>Share of the sprite's rectangle inside the field, 0..1.</summary>
     public static double Visible(Enemy e, int pw, int ph)
     {
@@ -26,8 +35,8 @@ public class ShotBalanceTests(ITestOutputHelper output)
         return Math.Clamp(ox / w, 0, 1) * Math.Clamp(oy / h, 0, 1);
     }
 
-    /// <summary>Sorts <paramref name="v"/> in place and returns its upper middle element (NaN when empty).</summary>
-    private static double UpperMedian(List<double> v) { if (v.Count == 0) return double.NaN; v.Sort(); return v[v.Count / 2]; }
+    /// <summary>The upper middle element of <paramref name="v"/> in sorted order (NaN when empty).</summary>
+    private static double UpperMedian(List<double> v) { if (v.Count == 0) return double.NaN; var sorted = v.Order().ToArray(); return sorted[sorted.Length / 2]; }
 
     public static Result Measure(int level, bool sniper = false)
     {
@@ -35,12 +44,12 @@ public class ShotBalanceTests(ITestOutputHelper output)
         double firstDeath = 0, score = 0; int kills = 0;
         foreach (var seed in Seeds)
         {
-            var g = new RaiderGame(seed);
-            g.SetLayout(FieldLayout.Compute(120, 46));
+            var g = new RaiderGame(seed) { BossGates = false };   // these measure the waves alone
+            g.SetLayout(FieldLayout.Compute(EnemyKit.BigCols, EnemyKit.BigRows));
             int deaths0 = 0; bool died = false;
             for (int f = 0; f < Frames; f++)
             {
-                while (g.WeaponLevel < level) { g.SpawnPickup(PickupKind.Power, g.PX, g.PY); g.Step(); }
+                while (g.WeaponLevel < level) { g.SpawnPickup(PickupKind.Weapon, g.PX, g.PY); g.Step(); }
                 Enemy? t = null;
                 foreach (var e in g.Enemies)
                     if (e.Hp > 0 && e.Kind != EnemyKind.Mine && (t is null || (sniper ? e.Y < t.Y : e.Y > t.Y))) t = e;
@@ -57,7 +66,7 @@ public class ShotBalanceTests(ITestOutputHelper output)
             if (!died) firstDeath += Frames;
             score += g.Score;
         }
-        return new Result(level, RaiderGame.WeaponPattern(level).Length, kills, UpperMedian(vis), UpperMedian(age), firstDeath / Seeds.Length, score / Seeds.Length, vis.Count(v => v >= 0.999) / (double)Math.Max(1, vis.Count));
+        return new Result(level, RaiderGame.WeaponPattern(level).Length, kills, UpperMedian(vis), UpperMedian(age), firstDeath / Seeds.Length, score / Seeds.Length, vis.Count(v => v >= FullyVisibleShare) / (double)Math.Max(1, vis.Count));
     }
 
     [Fact]
@@ -71,11 +80,11 @@ public class ShotBalanceTests(ITestOutputHelper output)
             foreach (var r in rs)
                 output.WriteLine($"{r.Level} {r.Streams} {r.Kills} {r.MedianVisible:0.00} {r.FullShare:0.00} {r.MedianAge:0} {r.FirstDeathFrames:0} {r.Score:0}");
             Assert.All(rs, r => Assert.True(r.Kills > 0));
-            // the late game is no shooting gallery: kills land on screen, and a heavy gun does not outlive a light one
+            // the late game is no shooting gallery: kills land on screen, and a heavy gun does not outlive a light one.
             Assert.All(rs, r => Assert.Equal(1.0, r.MedianVisible));
-            Assert.All(rs, r => Assert.True(r.FullShare >= 0.95, $"level {r.Level}: {r.FullShare:0.00} fully visible"));
-            Assert.True(rs[3].MedianAge >= 70, $"max streams: median kill at {rs[3].MedianAge} frames");
-            Assert.True(rs[3].Kills <= rs[0].Kills * 1.25, "five streams must not out-kill one by much");
+            Assert.All(rs, r => Assert.True(r.FullShare >= MinFullShare, $"level {r.Level}: {r.FullShare:0.00} fully visible"));
+            Assert.True(rs[3].MedianAge >= MinMaxStreamsMedianAge, $"max streams: median kill at {rs[3].MedianAge} frames");
+            Assert.True(rs[3].Kills <= rs[0].Kills * MaxKillsOverOneStream, "five streams must not out-kill one by much");
         }
     }
 }

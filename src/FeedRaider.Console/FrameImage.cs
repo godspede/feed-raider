@@ -10,8 +10,21 @@ using TUImation;
 /// </summary>
 static class FrameImage
 {
-    const int CW = 8, CH = 16;
+    const int CellWidth = 8, CellHeight = 16;
+    const int BytesPerPixel = 3;
+    const byte PngBitDepth = 8;      // bits per channel
+    const byte PngColourTypeRgb = 2;  // truecolour, no alpha
     const int GlyphCols = 5;   // columns in one font glyph
+    const int GlyphLeftPad = 1;    // blank pixel columns left of a glyph in its 8-pixel cell
+    const int GlyphRowScale = 2;   // each of the font's 8 rows is drawn two pixels tall to fill the 16-pixel cell
+    const int FirstGlyph = 32, LastGlyph = 126;   // the printable ASCII range the font covers
+    const int RedShift = 16, GreenShift = 8;   // a colour is 0xRRGGBB
+    static readonly byte[] PngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    const int IhdrLength = 13, IhdrHeightAt = 4, IhdrBitDepthAt = 8, IhdrColourTypeAt = 9;   // width at 0; compression, filter and interlace stay 0
+    const byte ScanlineFilterNone = 0;   // each scanline starts with its filter type
+    const int ChunkFieldBytes = 4;   // a chunk's length, type and CRC are 4 bytes each
+    const int BitsPerByte = 8;
+    const uint Crc32Init = 0xFFFFFFFF, Crc32ReflectedPoly = 0xEDB88320;
 
     // classic 5x7 column-major font, ASCII 32..126 (bit0 = top row)
     static readonly byte[] Font =
@@ -46,6 +59,8 @@ static class FrameImage
     static readonly Dictionary<char, string[]> Symbols = new()
     {
         ['\u2665'] = [".#.#.", "#####", "#####", "#####", ".###.", "..#..", ".....", "....."],   // \u2665 heart suit
+        ['\u2661'] = [".#.#.", "#.#.#", "#...#", "#...#", ".#.#.", "..#..", ".....", "....."],   // \u2661 heart outline
+        ['\u21bb'] = ["...#.", ".####", "#..#.", "#...#", "#...#", ".###.", ".....", "....."],   // \u21bb clockwise loop
         ['▲'] = [".....", "..#..", ".###.", "#####", ".....", ".....", ".....", "....."],
         ['▼'] = [".....", "#####", ".###.", "..#..", ".....", ".....", ".....", "....."],
         ['●'] = [".....", ".###.", "#####", "#####", "#####", ".###.", ".....", "....."],
@@ -57,6 +72,8 @@ static class FrameImage
         ['│'] = ["..#..", "..#..", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."],
         ['─'] = [".....", ".....", ".....", "#####", ".....", ".....", ".....", "....."],
         ['\u2726'] = [".....", "..#..", ".###.", "#####", ".###.", "..#..", ".....", "....."],   // \u2726 four-pointed star
+        ['\u2605'] = ["..#..", "..#..", "#####", ".###.", ".###.", "#...#", ".....", "....."],   // \u2605 the five-pointed star of a gold card
+        ['\u21B3'] = [".....", "#....", "#..#.", "#####", "...#.", ".....", ".....", "....."],   // \u21B3 the arrow of the thread note
         ['▸'] = [".....", "#....", "###..", "####.", "###..", "#....", ".....", "....."],
         ['×'] = [".....", ".....", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "....."],
         ['\u26A0'] = ["..#..", "..#..", ".#.#.", ".#.#.", "#.#.#", "#####", ".....", "....."],   // \u26A0 warning sign
@@ -66,8 +83,8 @@ static class FrameImage
 
     public static void Write(Screen s, string path)
     {
-        int w = s.Cols * CW, h = s.Rows * CH;
-        var px = new byte[w * h * 3];
+        int w = s.Cols * CellWidth, h = s.Rows * CellHeight;
+        var px = new byte[w * h * BytesPerPixel];
         for (int r = 0; r < s.Rows; r++)
             for (int c = 0; c < s.Cols; c++)
                 DrawCell(px, w, c, r, s.Ch[r * s.Cols + c], s.Fg[r * s.Cols + c], s.Bg[r * s.Cols + c]);
@@ -76,62 +93,62 @@ static class FrameImage
 
     internal static void DrawCell(byte[] px, int w, int c, int r, char ch, uint fg, uint bg)
     {
-        int quad = ch == ' ' ? 0 : Array.IndexOf(Quads, ch);
-        for (int y = 0; y < CH; y++)
-            for (int x = 0; x < CW; x++)
+        int quad = Array.IndexOf(Quads, ch);
+        for (int y = 0; y < CellHeight; y++)
+            for (int x = 0; x < CellWidth; x++)
             {
                 bool on;
                 if (ch == ' ') on = false;
-                else if (quad > 0) on = (quad >> ((y / (CH / 2)) * 2 + x / (CW / 2)) & 1) != 0;
+                else if (quad > 0) on = (quad >> ((y / (CellHeight / 2)) * 2 + x / (CellWidth / 2)) & 1) != 0;
                 else on = TextPixel(ch, x, y);
                 uint col = on ? fg : bg;
-                int o = ((r * CH + y) * w + c * CW + x) * 3;
-                px[o] = (byte)(col >> 16); px[o + 1] = (byte)(col >> 8); px[o + 2] = (byte)col;
+                int o = ((r * CellHeight + y) * w + c * CellWidth + x) * BytesPerPixel;
+                px[o] = (byte)(col >> RedShift); px[o + 1] = (byte)(col >> GreenShift); px[o + 2] = (byte)col;
             }
     }
 
     static bool TextPixel(char ch, int x, int y)
     {
-        int gx = x - 1, gy = y / 2;
+        int gx = x - GlyphLeftPad, gy = y / GlyphRowScale;
         if (gx < 0 || gx >= GlyphCols) return false;
         if (Symbols.TryGetValue(ch, out var rows)) return rows[gy][gx] == '#';
-        if (ch < 32 || ch > 126) ch = '?';
-        return (Font[(ch - 32) * GlyphCols + gx] >> gy & 1) != 0;
+        if (ch < FirstGlyph || ch > LastGlyph) ch = '?';
+        return (Font[(ch - FirstGlyph) * GlyphCols + gx] >> gy & 1) != 0;
     }
 
     static void WritePng(string path, int w, int h, byte[] rgb)
     {
         using var fs = File.Create(path);
-        fs.Write([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-        var ihdr = new byte[13];
-        BinaryPrimitives.WriteInt32BigEndian(ihdr, w); BinaryPrimitives.WriteInt32BigEndian(ihdr.AsSpan(4), h); ihdr[8] = 8; ihdr[9] = 2;
-        Chunk(fs, "IHDR", ihdr);
+        fs.Write(PngSignature);
+        var ihdr = new byte[IhdrLength];
+        BinaryPrimitives.WriteInt32BigEndian(ihdr, w); BinaryPrimitives.WriteInt32BigEndian(ihdr.AsSpan(IhdrHeightAt), h); ihdr[IhdrBitDepthAt] = PngBitDepth; ihdr[IhdrColourTypeAt] = PngColourTypeRgb;
+        WriteChunk(fs, "IHDR", ihdr);
         using var raw = new MemoryStream();
         using (var z = new ZLibStream(raw, CompressionLevel.Fastest, true))
             for (int y = 0; y < h; y++)
             {
-                z.WriteByte(0);
-                z.Write(rgb, y * w * 3, w * 3);
+                z.WriteByte(ScanlineFilterNone);
+                z.Write(rgb, y * w * BytesPerPixel, w * BytesPerPixel);
             }
-        Chunk(fs, "IDAT", raw.ToArray());
-        Chunk(fs, "IEND", []);
+        WriteChunk(fs, "IDAT", raw.ToArray());
+        WriteChunk(fs, "IEND", []);
     }
 
-    static void Chunk(Stream fs, string type, byte[] data)
+    static void WriteChunk(Stream fs, string type, byte[] data)
     {
-        var len = new byte[4]; BinaryPrimitives.WriteInt32BigEndian(len, data.Length);
+        var len = new byte[ChunkFieldBytes]; BinaryPrimitives.WriteInt32BigEndian(len, data.Length);
         fs.Write(len);
-        var body = new byte[4 + data.Length];
-        for (int i = 0; i < 4; i++) body[i] = (byte)type[i];
-        data.CopyTo(body, 4);
+        var body = new byte[ChunkFieldBytes + data.Length];
+        for (int i = 0; i < ChunkFieldBytes; i++) body[i] = (byte)type[i];
+        data.CopyTo(body, ChunkFieldBytes);
         fs.Write(body);
-        uint crc = 0xFFFFFFFF;
+        uint crc = Crc32Init;
         foreach (byte b in body)
         {
             crc ^= b;
-            for (int k = 0; k < 8; k++) crc = (crc & 1) != 0 ? crc >> 1 ^ 0xEDB88320 : crc >> 1;
+            for (int bit = 0; bit < BitsPerByte; bit++) crc = (crc & 1) != 0 ? crc >> 1 ^ Crc32ReflectedPoly : crc >> 1;
         }
-        var c = new byte[4]; BinaryPrimitives.WriteInt32BigEndian(c, (int)~crc);
+        var c = new byte[ChunkFieldBytes]; BinaryPrimitives.WriteInt32BigEndian(c, (int)~crc);
         fs.Write(c);
     }
 }

@@ -1,173 +1,240 @@
 using TUImation;
 using FeedRaider.Engine;
 using FeedRaider.Engine.Raider;
+using FeedRaider.Tests.Enemies;
 
 namespace FeedRaider.Tests;
 
-// The wide screen's left column is a feed log: every wingman's post stays, the newest at the bottom pushing the older
-// ones up and off the top. It moves only when a post comes in (never on a timer), and a post dims once its wingman has gone.
+// On a wide screen the side panel on the left is the feed log: a heading, then the posts that have left the field, the newest at the bottom
+// pushing the older ones up and off the top. Each entry shows the display name, handle, likes, whole text and attachment note.
 public class FeedLogTests
 {
     private const int Cols = 130, Rows = 46;
+    internal const string Heading = "FEED LOG";
+    private const string FullName = "Ada Lovelace", ShortName = "Ada";
+    private const string PlainText = "plain words only";
+    internal const string HandleMark = "@";
+    /// <summary>What a clipped line ends in.</summary>
+    private const string Ellipsis = "…";
 
-    private static string Words(int n) =>
-        $"post number {n} opens here and keeps going with plenty of ordinary words so that it wraps over several rows and ends with tail{n}word";
+    private static string Words(int id) =>
+        $"post number {id} opens here and keeps going with plenty of ordinary words so that it wraps over several rows and ends with {Tail(id)}";
 
-    private static FeedPost Post(int n, string? text = null) =>
-        new($"at://did:plc:b{n}/app.bsky.feed.post/{n}", $"cid{n}", $"did:plc:b{n}", $"b{n}.test", text ?? Words(n), 10, 0, 0, null, null);
+    /// <summary>The last word of <see cref="Words"/>, found only at the end of the post.</summary>
+    private static string Tail(int id) => $"tail{id}word";
 
-    private static void RunUntil(RaiderGame g, Func<bool> done, int max = 8000) { for (int i = 0; i < max && !done(); i++) g.Step(); Assert.True(done()); }
+    private static FeedPost Post(int id, string? text = null, int likes = 10, string? name = null, AttachmentKind kind = AttachmentKind.None, string? note = null) =>
+        new($"at://did:plc:b{id}/app.bsky.feed.post/{id}", $"cid{id}", $"did:plc:b{id}", Handle(id), text ?? Words(id), likes, 0, 0, null, null,
+            DisplayName: name, Attachment: kind, AttachmentText: note);
 
-    private static RaiderGame Game(int posts)
+    private static string Handle(int id) => $"b{id}.test";
+
+    /// <summary>The handle with the log's `@` mark in front (<see cref="HandleMark"/>).</summary>
+    private static string ShownHandle(int id) => HandleMark + Handle(id);
+
+    private static void AddToLog(RaiderGame game, FeedPost post) => game.Log.Add(new LogEntry(post, game.Book.For(post)));
+
+    private static RaiderGame GameWithPosts(int posts)
     {
-        var g = new RaiderGame(5) { LoggedIn = true };
-        g.SetLayout(FieldLayout.Compute(Cols, Rows));
-        for (int i = 1; i <= posts; i++) g.Queue.Offer(Post(i));
-        return g;
+        var game = new RaiderGame(EnemyKit.PlainSeed) { SignedIn = true };
+        game.SetLayout(FieldLayout.Compute(Cols, Rows));
+        for (int i = 1; i <= posts; i++) AddToLog(game, Post(i));
+        return game;
     }
 
-    private static int C0(RaiderGame g) => g.Layout.Col0 - Tuning.SideGapCols - g.Layout.PanelCols;
+    private static int LogCol0(RaiderGame game) => game.Layout.Col0 - Tuning.SideGapCols - game.Layout.PanelCols;
 
-    private static string ColRow(Screen s, RaiderGame g, int r) => new(Enumerable.Range(C0(g), g.Layout.PanelCols).Select(c => s.CharAt(c, r)).ToArray());
+    /// <summary>The characters of the feed log's side panel on <paramref name="row"/>.</summary>
+    private static string PanelRow(Screen screen, RaiderGame game, int row) => new(Enumerable.Range(LogCol0(game), game.Layout.PanelCols).Select(c => screen.CharAt(c, row)).ToArray());
 
-    /// <summary>The row of the log column showing <paramref name="text"/>, or -1.</summary>
-    private static int RowOf(Screen s, RaiderGame g, string text) => Enumerable.Range(0, s.Rows).FirstOrDefault(r => ColRow(s, g, r).Contains(text), -1);
+    /// <summary>The row of the feed log's side panel showing <paramref name="text"/>, or -1.</summary>
+    private static int RowOf(Screen screen, RaiderGame game, string text) => Enumerable.Range(0, screen.Rows).FirstOrDefault(r => PanelRow(screen, game, r).Contains(text), -1);
 
-    /// <summary>The foreground of the first cell of <paramref name="text"/> in the log column.</summary>
-    private static uint FgOf(Screen s, RaiderGame g, string text)
-    {
-        int r = RowOf(s, g, text);
-        Assert.True(r >= 0, $"\"{text}\" is in the log");
-        int c = C0(g) + ColRow(s, g, r).IndexOf(text, StringComparison.Ordinal);
-        return s.Fg[r * s.Cols + c];
-    }
-
-    private static int Luma(uint c) => (int)((c >> 16 & 0xff) * 3 + (c >> 8 & 0xff) * 6 + (c & 0xff));
-
-    private static Screen Render(RaiderView view, RaiderGame g)
+    private static Screen Render(RaiderView view, RaiderGame game)
     {
         var scr = new Screen(Cols, Rows);
-        view.Render(g, scr);
+        view.FitAndRender(game, scr);
         return scr;
     }
 
-    private static void Settle(RaiderGame g) { for (int i = 0; i < 30; i++) g.Step(); }
+    [Fact]
+    public void The_log_keeps_the_newest_posts_oldest_first_and_drops_the_oldest_past_the_cap()
+    {
+        const int PastTheCap = 5;
+        var log = new FeedLog();
+        for (int i = 1; i <= FeedLog.MaxEntries + PastTheCap; i++) log.Add(new LogEntry(Post(i), new PostMarks(Post(i))));
+        Assert.Equal(FeedLog.MaxEntries, log.Entries.Count);
+        Assert.Equal(Handle(PastTheCap + 1), log.Entries[0].Post.AuthorHandle);
+        Assert.Equal(Handle(FeedLog.MaxEntries + PastTheCap), log.Entries[^1].Post.AuthorHandle);
+    }
+
+    [Fact]
+    public void A_fresh_game_shows_the_heading_and_no_entries_until_a_card_has_left()
+    {
+        var game = new RaiderGame(EnemyKit.PlainSeed) { SignedIn = true, BossGates = false };
+        game.SetLayout(FieldLayout.Compute(Cols, Rows));
+        const int PostId = 1;
+        game.Posts.Offer(Post(PostId));
+        var scr = Render(new RaiderView(), game);
+        Assert.True(RowOf(scr, game, Heading) >= 0);
+        Assert.Equal(-1, RowOf(scr, game, HandleMark));
+        Assert.Equal(-1, RowOf(scr, game, CardLayout.HeartOn.ToString()));
+        const int MaxFramesToLeave = 60 * Tuning.Fps;   // a minute, so a post that never leaves fails below
+        game.FeedSpeed = FeedSpeed.Max;
+        for (int i = 0; i < MaxFramesToLeave && game.Log.Entries.Count == 0; i++) game.Step();
+        scr = Render(new RaiderView(), game);
+        Assert.True(RowOf(scr, game, ShownHandle(PostId)) >= 0, "the post that left is in the side panel");
+        Assert.True(RowOf(scr, game, Tail(PostId)) >= 0);
+    }
+
+    [Fact]
+    public void An_entry_shows_the_display_name_above_the_handle_and_none_when_there_is_none()
+    {
+        var game = GameWithPosts(0);
+        AddToLog(game, Post(1, name: FullName));
+        AddToLog(game, Post(2));
+        var scr = Render(new RaiderView(), game);
+        int name = RowOf(scr, game, FullName), handle = RowOf(scr, game, ShownHandle(1));
+        Assert.True(name >= 0 && handle == name + 1, $"name {name}, handle {handle}");
+        Assert.True(RowOf(scr, game, ShownHandle(2)) > handle);
+        Assert.Equal(-1, RowOf(scr, game, "Display Name"));
+    }
+
+    [Fact]
+    public void An_entry_with_an_attachment_ends_with_its_one_line_note()
+    {
+        const string PostText = "a cat sat down", Note = "a cat on a keyboard";
+        var game = GameWithPosts(0);
+        AddToLog(game, Post(1, PostText, name: ShortName, kind: AttachmentKind.Picture, note: Note));
+        AddToLog(game, Post(2, PlainText));
+        var scr = Render(new RaiderView(), game);
+        int text = RowOf(scr, game, PostText), note = RowOf(scr, game, "[image: " + Note + "]");
+        Assert.True(text >= 0 && note == text + 1, $"text {text}, note {note}");
+        Assert.True(RowOf(scr, game, ShownHandle(2)) > note);
+    }
 
     [Fact]
     public void New_posts_enter_at_the_bottom_and_push_the_old_ones_up_and_off_the_top()
     {
-        var g = Game(8);
+        var game = GameWithPosts(3);
         var view = new RaiderView();
-        RunUntil(g, () => g.Log.Entries.Count == 3);
-        Settle(g);
-        var scr = Render(view, g);
-        int r1 = RowOf(scr, g, "@b1.test"), r2 = RowOf(scr, g, "@b2.test"), r3 = RowOf(scr, g, "@b3.test");
-        Assert.True(r1 >= 0 && r1 < r2 && r2 < r3, $"oldest on top: {r1} {r2} {r3}");
-        Assert.True(RowOf(scr, g, "tail3word") > r3, "the newest post ends at the bottom");
+        var scr = Render(view, game);
+        int firstRow = RowOf(scr, game, ShownHandle(1)), secondRow = RowOf(scr, game, ShownHandle(2)), thirdRow = RowOf(scr, game, ShownHandle(3));
+        Assert.True(firstRow >= 0 && firstRow < secondRow && secondRow < thirdRow, $"oldest on top: {firstRow} {secondRow} {thirdRow}");
+        Assert.True(RowOf(scr, game, Tail(3)) > thirdRow, "the newest post ends at the bottom");
 
-        RunUntil(g, () => g.Log.Entries.Count == 4);
-        Settle(g);
-        scr = Render(view, g);
-        Assert.True(RowOf(scr, g, "@b2.test") < r2, "an arrival pushes the earlier posts up");
-        Assert.True(RowOf(scr, g, "@b4.test") > RowOf(scr, g, "@b3.test"));
+        AddToLog(game, Post(4));
+        scr = Render(view, game);
+        Assert.True(RowOf(scr, game, ShownHandle(2)) < secondRow, "an arrival pushes the earlier posts up");
+        Assert.True(RowOf(scr, game, ShownHandle(4)) > RowOf(scr, game, ShownHandle(3)));
 
-        RunUntil(g, () => g.Log.Entries.Count == 8);
-        Settle(g);
-        scr = Render(view, g);
-        Assert.Equal(-1, RowOf(scr, g, "@b1.test"));     // scrolled off the top
-        Assert.True(RowOf(scr, g, "@b8.test") > RowOf(scr, g, "@b7.test"));
-        Assert.True(RowOf(scr, g, "@b7.test") > RowOf(scr, g, "@b6.test"));
+        for (int i = 5; i <= 8; i++) AddToLog(game, Post(i));
+        scr = Render(view, game);
+        Assert.Equal(-1, RowOf(scr, game, ShownHandle(1)));
+        Assert.True(RowOf(scr, game, ShownHandle(8)) > RowOf(scr, game, ShownHandle(7)));
+        Assert.True(RowOf(scr, game, ShownHandle(7)) > RowOf(scr, game, ShownHandle(6)));
+        Assert.True(RowOf(scr, game, Heading) >= 0, "the heading stays");
     }
 
     [Fact]
     public void Nothing_moves_while_no_new_post_comes_in()
     {
-        var g = Game(2);
+        var game = GameWithPosts(2);
         var view = new RaiderView();
-        RunUntil(g, () => g.Log.Entries.Count == 2);
-        Settle(g);
-        var before = Render(view, g);
-        var rows = Enumerable.Range(0, Rows).Select(r => ColRow(before, g, r)).ToArray();
-        // the second wingman fights, leaves and is gone; no third post arrives
-        for (int i = 0; i < 600; i++) { g.Step(); Render(view, g); }
-        Assert.Empty(g.Wings);
-        var after = Render(view, g);
-        Assert.Equal(rows, Enumerable.Range(0, Rows).Select(r => ColRow(after, g, r)).ToArray());
-    }
-
-    [Fact]
-    public void A_post_dims_once_its_wingman_has_left_and_the_speaker_is_brightest()
-    {
-        var g = Game(2);
-        var view = new RaiderView();
-        RunUntil(g, () => g.Log.Entries.Count == 1 && g.Comms.Speaker is not null);
-        var w1 = g.Wings.Single();
-        uint speaking = FgOf(Render(view, g), g, "tail1word");
-        RunUntil(g, () => !g.Wings.Contains(w1));
-        RunUntil(g, () => g.Log.Entries.Count == 2 && g.Comms.Speaker is not null);
-        Settle(g);
-        var scr = Render(view, g);
-        uint gone = FgOf(scr, g, "tail1word"), now = FgOf(scr, g, "tail2word");
-        Assert.True(Luma(gone) < Luma(speaking), "the post of a wingman that has gone dims");
-        Assert.True(Luma(now) > Luma(gone), "the current speaker is brighter than a gone wingman's post");
-        Assert.True(Luma(FgOf(scr, g, "@b2.test")) > Luma(FgOf(scr, g, "@b1.test")), "and so is its handle");
-    }
-
-    [Fact]
-    public void A_post_dims_as_soon_as_its_wingman_flies_off_the_top()
-    {
-        var g = Game(1);
-        var view = new RaiderView();
-        RunUntil(g, () => g.Wings.Count == 1);
-        var w = g.Wings.Single();
-        uint on = FgOf(Render(view, g), g, "tail1word");
-        RunUntil(g, () => w.Y + w.Plane.H / 2.0 < 0 || !g.Wings.Contains(w));
-        Assert.True(Luma(FgOf(Render(view, g), g, "tail1word")) < Luma(on));
+        var before = Render(view, game);
+        var rows = Enumerable.Range(0, Rows).Select(r => PanelRow(before, game, r)).ToArray();
+        const int FramesWatched = 300;
+        for (int i = 0; i < FramesWatched; i++) { game.Step(); Render(view, game); }
+        var after = Render(view, game);
+        Assert.Equal(rows, Enumerable.Range(0, Rows).Select(r => PanelRow(after, game, r)).ToArray());
     }
 
     [Fact]
     public void Each_entry_shows_its_handle_likes_and_whole_post()
     {
-        string text = string.Join(' ', Enumerable.Repeat("tomatoes ripen slowly in cool spring weather", 5)) + " and the very last word zebra";
-        var g = new RaiderGame(5) { LoggedIn = true };
-        g.SetLayout(FieldLayout.Compute(Cols, Rows));
-        g.Queue.Offer(Post(1, text));
-        RunUntil(g, () => g.Wings.Count == 1);
-        var w = g.Wings.Single();
-        var scr = Render(new RaiderView(), g);
-        Assert.True(RowOf(scr, g, "@b1.test") >= 0);
-        Assert.True(RowOf(scr, g, w.LikesTag) >= 0);
-        var lines = BubbleText.Format(text, g.Layout.PanelCols - 2, 200);
-        Assert.True(lines.Length > 5);
-        foreach (var l in lines) Assert.True(RowOf(scr, g, l) >= 0, $"\"{l}\" is shown");
-        Assert.DoesNotContain(Enumerable.Range(0, Rows), r => ColRow(scr, g, r).Contains('…'));
+        const int Sentences = 5;
+        const int SideCols = 2, AnyLines = 200;   // a column clear on each side of the text, and no cap on its lines
+        string text = string.Join(' ', Enumerable.Repeat("tomatoes ripen slowly in cool spring weather", Sentences)) + " and the very last word zebra";
+        const int PostId = 1;
+        var game = new RaiderGame(EnemyKit.PlainSeed) { SignedIn = true };
+        game.SetLayout(FieldLayout.Compute(Cols, Rows));
+        AddToLog(game, Post(PostId, text, likes: 1234));
+        var scr = Render(new RaiderView(), game);
+        Assert.True(RowOf(scr, game, ShownHandle(PostId)) >= 0);
+        Assert.True(RowOf(scr, game, $"{CardLayout.HeartOff} 1.2K") >= 0);
+        var lines = ShortLines.Format(text, game.Layout.PanelCols - SideCols, AnyLines);
+        Assert.True(lines.Length > Sentences);
+        foreach (var line in lines) Assert.True(RowOf(scr, game, line) >= 0, $"\"{line}\" is shown");
+        Assert.DoesNotContain(Enumerable.Range(0, Rows), r => PanelRow(scr, game, r).Contains(Ellipsis));
     }
 
     [Fact]
-    public void A_thread_continuation_grows_its_wingmans_entry()
+    public void An_entry_has_no_bar_down_its_left_edge()
     {
-        var g = new RaiderGame(5) { LoggedIn = true };
-        g.SetLayout(FieldLayout.Compute(Cols, Rows));
-        g.Queue.Offer(Post(1));
-        RunUntil(g, () => g.Wings.Count == 1);
-        var w = g.Wings.Single();
-        g.ThreadOpened(w.Post.Uri, Post(1, "the reply in the same thread carries on and ends in giraffe") with { Uri = "at://did:plc:b1/app.bsky.feed.post/1b", Cid = "cid1b" });
-        var scr = Render(new RaiderView(), g);
-        Assert.Single(g.Log.Entries);
-        int first = RowOf(scr, g, "tail1word"), reply = RowOf(scr, g, "giraffe");
-        Assert.True(first >= 0 && reply > first, $"the reply is under the first post: {first} {reply}");
+        var game = new RaiderGame(EnemyKit.PlainSeed) { SignedIn = true };
+        game.SetLayout(FieldLayout.Compute(Cols, Rows));
+        const int PostId = 1;
+        AddToLog(game, Post(PostId, "a post with a few words in it", likes: 3));
+        var scr = Render(new RaiderView(), game);
+        Assert.True(RowOf(scr, game, ShownHandle(PostId)) >= 0);
+        Assert.DoesNotContain(Enumerable.Range(0, Rows), r => "▌█│┃".Contains(scr.CharAt(LogCol0(game), r)));
     }
 
     [Fact]
-    public void A_narrow_screen_keeps_its_one_line_panel()
+    public void A_narrow_screen_has_no_side_panel()
     {
-        var g = new RaiderGame(5) { LoggedIn = true };
-        g.SetLayout(FieldLayout.Compute(48, 60));
-        g.Queue.Offer(Post(1));
-        RunUntil(g, () => g.Wings.Count == 1 && g.Comms.Speaker is not null);
-        var scr = new Screen(48, 60);
-        new RaiderView().Render(g, scr);
-        var row2 = new string(Enumerable.Range(0, 48).Select(c => scr.CharAt(c, 2)).ToArray());
-        Assert.Contains(g.Wings[0].LikesTag, row2);
+        const int PostId = 1;
+        var game = new RaiderGame(EnemyKit.PlainSeed) { SignedIn = true };
+        game.SetLayout(FieldLayout.Compute(CardsInGameTests.NarrowCols, CardsInGameTests.NarrowRows));
+        AddToLog(game, Post(PostId));
+        var scr = new Screen(CardsInGameTests.NarrowCols, CardsInGameTests.NarrowRows);
+        new RaiderView().FitAndRender(game, scr);
+        var all = string.Join("\n", Enumerable.Range(0, CardsInGameTests.NarrowRows).Select(r => new string(Enumerable.Range(0, CardsInGameTests.NarrowCols).Select(c => scr.CharAt(c, r)).ToArray())));
+        Assert.DoesNotContain(Heading, all);
+        Assert.DoesNotContain(ShownHandle(PostId), all.Replace($"{CardLayout.HeartOff} {CardLayout.LoopMark} {ShownHandle(PostId)}", ""));   // the phone's one-line feed strip is the only place the handle shows
+    }
+
+    private const string Smile = "\U0001F600";
+    private const string Cjk = "\u65E5\u672C\u8A9E\u306E\u6295\u7A3F";
+
+    [Fact]
+    public void An_emoji_in_the_name_or_text_is_dropped_and_never_a_question_mark()
+    {
+        var game = GameWithPosts(0);
+        AddToLog(game, Post(1, "good " + Smile + " morning " + Smile + Smile + " all", name: $"{Smile} {ShortName} {Smile}"));
+        var scr = Render(new RaiderView(), game);
+        Assert.True(RowOf(scr, game, ShortName) >= 0);
+        Assert.True(RowOf(scr, game, "good morning all") >= 0);
+        Assert.DoesNotContain(Enumerable.Range(0, Rows), r => PanelRow(scr, game, r).Contains('?'));
+    }
+
+    [Fact]
+    public void A_wide_char_takes_two_cells_and_never_straddles_the_panel_edge()
+    {
+        const int CjkRuns = 5;
+        var game = GameWithPosts(0);
+        AddToLog(game, Post(1, string.Concat(Enumerable.Repeat(Cjk, CjkRuns)), name: Cjk + Cjk + Cjk + Cjk));
+        var scr = Render(new RaiderView(), game);
+        int left = LogCol0(game), right = left + game.Layout.PanelCols, wide = 0;
+        for (int row = 0; row < Rows; row++)
+            for (int col = left; col < right; col++)
+            {
+                if (CellWidth.Of(scr.CharAt(col, row)) != CellText.WideCells) continue;
+                wide++;
+                Assert.True(col + 1 < right, "the second cell is inside the panel");
+                Assert.Equal(Screen.Continue, scr.CharAt(col + 1, row));
+            }
+        Assert.True(wide >= Cjk.Length * CjkRuns, $"every char of the text is drawn: {wide}");
+    }
+
+    [Fact]
+    public void An_entry_with_no_drawable_text_shows_no_rule_and_no_handle()
+    {
+        var game = GameWithPosts(0);
+        AddToLog(game, Post(1, Smile + Smile));
+        AddToLog(game, Post(2, PlainText));
+        var scr = Render(new RaiderView(), game);
+        Assert.Equal(-1, RowOf(scr, game, ShownHandle(1)));
+        Assert.True(RowOf(scr, game, ShownHandle(2)) >= 0);
     }
 }

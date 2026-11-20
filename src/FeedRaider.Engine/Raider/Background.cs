@@ -1,210 +1,116 @@
 namespace FeedRaider.Engine.Raider;
 
 /// <summary>
-/// The scenery. A dark sky with a Bluesky-blue glow far back, and below it terrain that is a feed: giant faded
-/// post-card slabs (avatar disc, dim text dashes, a soft edge) drifting past like city blocks, on two parallax layers.
-/// The sky is baked once and each card is baked once per variant, so a frame is a handful of row copies.
+/// The scenery. A dark sky with a Bluesky-blue glow far back and a few drifting stars. The posts themselves are not here: the
+/// real cards are drawn over this by <see cref="CardPainter"/>. The sky is baked once, so a frame is a copy and a few dots.
 /// </summary>
 public sealed class Background
 {
-    private const int Variants = 14;
-    private static readonly uint SkyTop = Surface.Pack(0x0b, 0x1c, 0x44), SkyBottom = Surface.Pack(0x05, 0x07, 0x11);
-    private static readonly uint BlueskyBlue = Surface.Pack(0x00, 0x85, 0xff);
-
-    // Card width as a fraction of the field, and the vertical gap between cards (a minimum plus a hashed span), per layer.
-    private const double FarCardWidth = 0.36, NearCardWidth = 0.7;
-    private const int FarGapMin = 13, FarGapSpan = 8, NearGapMin = 10, NearGapSpan = 12;
-    // Card height: a minimum plus a hashed span, per layer.
-    private const int FarHeightMin = 20, FarHeightSpan = 14, NearHeightMin = 26, NearHeightSpan = 20;
-    // Hash strides that keep each layer's and each card's randomness apart from its neighbours'.
-    private const int LayerSeedStride = 977, CardSeedStride = 7919;
     private const int StarCount = 34;
     private const ulong StarSeedOffset = 5000;
 
-    private static readonly (uint Fill, uint Edge, uint Dash, uint Bright, uint Avatar, uint Accent) FarPalette =
-        (Surface.Pack(12, 18, 36), Surface.Pack(19, 29, 54), Surface.Pack(21, 32, 58), Surface.Pack(25, 38, 68), Surface.Pack(24, 40, 72), Surface.Pack(16, 44, 84));
-    private static readonly (uint Fill, uint Edge, uint Dash, uint Bright, uint Avatar, uint Accent) NearPalette =
-        (Surface.Pack(15, 24, 46), Surface.Pack(27, 42, 74), Surface.Pack(26, 40, 70), Surface.Pack(36, 56, 94), Surface.Pack(30, 50, 88), Surface.Pack(18, 58, 112));
+    /// <summary>The sky's fade from top to bottom: the row's depth raised to this, so the dark comes on early.</summary>
+    private const double SkyFadeCurve = 0.55;
+    /// <summary>The glow's centre across the width, its half width and half height as fractions of the sky, its top offset in rows, and its strongest mix.</summary>
+    private const double GlowCentreX = 0.62, GlowHalfWidth = 0.75, GlowHalfHeight = 0.4, GlowMaxMix = 0.34;
+    private const int GlowTopOffset = 6;
+    /// <summary>The faint cloud streaks: how many, the first one's row, centre column and length as fractions of the sky, and the step of each further one.</summary>
+    private const int StreakCount = 2;
+    private const double StreakRow = 0.1, StreakRowStep = 0.11, StreakLength = 0.5, StreakLengthStep = -0.12, StreakCol = 0.25, StreakColStep = 0.3;
+    /// <summary>The streak's strongest blend, and the strength and offset of the shadow row beneath it.</summary>
+    private const double StreakAlpha = 0.22, StreakShadowAlpha = 0.5;
+    private const int StreakShadowShiftX = 3, StreakShadowShiftY = 1;
+    /// <summary>A star's brightness range as a fraction, the chance it takes the Bluesky tint, the pale tint, and how far it is mixed from the sky.</summary>
+    private const double StarBrightnessMin = 0.25, StarBrightnessSpread = 0.5, StarBlueChance = 0.35, StarMix = 0.55;
+    private const uint StarPaleTint = 0xdfe8ff;
+    /// <summary>Hash streams a star draws its brightness, tint, column and row from.</summary>
+    private const int StarColumnStream = 1, StarRowStream = 2, StarBrightnessStream = 3, StarTintStream = 4;
 
-    private sealed class Layer
-    {
-        public required Surface?[] Cards;
-        public required int[] X, Y, Height;      // per variant: left edge, offset inside the period, card height
-        public required int Period;
-        public required double Speed;
-        public required (uint Fill, uint Edge, uint Dash, uint Bright, uint Avatar, uint Accent) Pal;
-        public required int CardW;
-    }
+    /// <summary>The colour the sky fades to at the foot of the field.</summary>
+    internal static readonly uint SkyBottom = Surface.Pack(0x05, 0x07, 0x11);
 
-    private readonly int _w, _h;
+    /// <summary>The most two neighbouring <see cref="SkySteps"/> differ on any channel: the snap's tolerance. Every colour of the
+    /// fade then lies within half the tolerance of a step, so a sky colour the snap would fold onto a card's colour is sent as a
+    /// step that lies nearer it. Wider steps leave more of the fade nearer the card than any step, and each step is one more colour
+    /// a phone's glyph atlas may be sent.</summary>
+    private const int SkyStepSpacing = ColourSnap.DefaultTolerance;
+
+    /// <summary>Colours evenly down the fade from <see cref="Palette.SkyTop"/> to <see cref="SkyBottom"/>, the fewest that keep neighbours
+    /// within <see cref="SkyStepSpacing"/> of each other: what a snapped encoder sends the sky as where it would fold onto a card
+    /// (see <see cref="ColourSnap.Divert"/>).</summary>
+    public static IReadOnlyList<uint> SkySteps { get; } = FadeSteps();
+
+    internal static readonly uint BlueskyBlue = Surface.Pack(0x00, 0x85, 0xff);
+
+    private readonly int _width, _height;
     private readonly ulong _seed;
     private readonly Surface _sky;
-    private readonly (int X, int Y, uint C)[] _stars;
-    private readonly Layer _far, _near;
+    private readonly (int X, int Y, uint Colour)[] _stars;
 
-    public Background(int w, int h, ulong seed)
+    public Background(int width, int height, ulong seed)
     {
-        _w = w; _h = h; _seed = seed;
+        _width = width; _height = height; _seed = seed;
         _sky = BakeSky();
         _stars = BakeStars();
-        _far = MakeLayer(0, (int)(w * FarCardWidth), Tuning.ScrollFar, FarGapMin, FarGapSpan, FarPalette, far: true);
-        _near = MakeLayer(1, (int)(w * NearCardWidth), Tuning.ScrollNear, NearGapMin, NearGapSpan, NearPalette, far: false);
     }
 
-    public void Draw(Surface s, double scrollFrames)
+    public void Draw(Surface target, double scrollFrames)
     {
-        Array.Copy(_sky.P, s.P, Math.Min(_sky.P.Length, s.P.Length));
-        foreach (var (x, y0, c) in _stars)
+        Array.Copy(_sky.P, target.P, Math.Min(_sky.P.Length, target.P.Length));
+        foreach (var (x, startY, colour) in _stars)
         {
-            int y = (int)((y0 + scrollFrames * Tuning.ScrollStars) % _h);
-            s.Set(x, y, c);
+            int y = (int)((startY + scrollFrames * Tuning.ScrollStars) % _height);
+            target.Set(x, y, colour);
         }
-        DrawLayer(s, _far, scrollFrames);
-        DrawLayer(s, _near, scrollFrames);
-    }
-
-    private void DrawLayer(Surface s, Layer l, double scrollFrames)
-    {
-        double shift = scrollFrames * l.Speed;
-        int t = (int)(shift % l.Period);
-        // card k sits at Y[k] within a period; the period repeats downward as the scroll advances
-        for (int n = -1; n * l.Period < _h + l.Period; n++)
-            for (int k = 0; k < Variants; k++)
-            {
-                int y = l.Y[k] + t + n * l.Period - l.Period;
-                if (y >= _h || y + l.Height[k] <= 0) continue;
-                DrawCard(s, l.Cards[k] ??= BakeCard(l, k, l.Height[k], _seed), l.X[k], y);
-            }
-    }
-
-    private static void DrawCard(Surface dst, Surface card, int x, int y)
-    {
-        int h = card.H, w = card.W;
-        // rounded corners: the first and last two rows are inset
-        for (int r = 0; r < h; r++)
-        {
-            int inset = r == 0 || r == h - 1 ? 2 : r == 1 || r == h - 2 ? 1 : 0;
-            dst.CopyFrom(card, inset, r, w - 2 * inset, 1, x + inset, y + r);
-        }
-    }
-
-    private Layer MakeLayer(int index, int cardW, double speed, int gapMin, int gapSpan, (uint Fill, uint Edge, uint Dash, uint Bright, uint Avatar, uint Accent) pal, bool far)
-    {
-        var x = new int[Variants];
-        var y = new int[Variants];
-        var h = new int[Variants];
-        int cursor = 0;
-        for (int k = 0; k < Variants; k++)
-        {
-            ulong hs = Hashing.Mix(_seed + (ulong)(index * LayerSeedStride + k));
-            h[k] = (far ? FarHeightMin : NearHeightMin) + (int)(Hashing.Unit(hs, 1) * (far ? FarHeightSpan : NearHeightSpan));
-            y[k] = cursor;
-            cursor += h[k] + gapMin + (int)(Hashing.Unit(hs, 2) * gapSpan);
-            if (far)
-            {
-                // far cards peek out beside the near column, alternating sides
-                bool left = k % 2 == 0;
-                x[k] = left ? -(int)(cardW * 0.38) + (int)(Hashing.Unit(hs, 3) * 5) : _w - (int)(cardW * 0.62) - (int)(Hashing.Unit(hs, 3) * 5);
-            }
-            else x[k] = (_w - cardW) / 2 + (int)((Hashing.Unit(hs, 3) - 0.5) * 8);
-        }
-        return new Layer { Cards = new Surface?[Variants], X = x, Y = y, Height = h, Period = cursor, Speed = speed, Pal = pal, CardW = cardW };
-    }
-
-    private static Surface BakeCard(Layer l, int slot, int h, ulong seed)
-    {
-        int w = l.CardW;
-        var (fill, edge, dash, bright, avatar, accent) = l.Pal;
-        ulong hs = Hashing.Mix(seed ^ (ulong)(slot * CardSeedStride + w));
-        var c = new Surface(w, h);
-        c.Fill(fill);
-        uint soft = Surface.Mix(fill, edge, 0.45);
-        for (int x = 0; x < w; x++) { c.Set(x, 0, soft); c.Set(x, h - 1, soft); c.Set(x, 1, edge); c.Set(x, h - 2, Surface.Mix(fill, edge, 0.7)); }
-        for (int y = 0; y < h; y++) { c.Set(0, y, soft); c.Set(w - 1, y, soft); c.Set(1, y, Surface.Mix(fill, edge, 0.7)); c.Set(w - 2, y, Surface.Mix(fill, edge, 0.7)); }
-        c.Disc(7, 7, 3, avatar);
-        Dashes(c, 13, 5, 10 + (int)(Hashing.Unit(hs, 1) * 14), 1, bright);
-        Dashes(c, 13, 8, 12 + (int)(Hashing.Unit(hs, 2) * 10), 1, dash, handle: true);
-        int y0 = 13;
-        bool image = Hashing.Unit(hs, 3) < 0.3 && h >= 34;
-        int footer = h - 6;
-        int line = 0;
-        for (int y = y0; y + 1 < footer && !(image && y > y0 + 1); y += 3, line++)
-        {
-            int right = w - 6 - (int)(Hashing.Unit(hs, 10 + line) * (line == 0 ? 3 : 14));
-            Words(c, 6, y, right, hs, line, dash);
-        }
-        if (image)
-        {
-            int iy = y0 + 5, ih = Math.Min(9, footer - iy - 2);
-            if (ih >= 4)
-            {
-                for (int yy = 0; yy < ih; yy++)
-                    c.Rect(6, iy + yy, w - 12, 1, Surface.Mix(Surface.Mix(fill, accent, 0.5), fill, yy / (double)ih));
-                c.Rect(6, iy, w - 12, 1, edge);
-                c.Rect(6, iy + ih - 1, w - 12, 1, edge);
-            }
-        }
-        for (int i = 0; i < 4; i++) c.Rect(7 + i * (w - 16) / 4, footer + 1, 2, 2, Hashing.Unit(hs, 40 + i) < 0.25 ? accent : dash);
-        return c;
-    }
-
-    private static void Words(Surface c, int x, int y, int right, ulong hs, int line, uint color)
-    {
-        int i = 0;
-        while (x < right)
-        {
-            int len = 2 + (int)(Hashing.Unit(hs, 100 + line * 17 + i) * 6);
-            len = Math.Min(len, right - x);
-            c.Rect(x, y, len, 1, color);
-            x += len + 1;
-            i++;
-        }
-    }
-
-    private static void Dashes(Surface c, int x, int y, int len, int h, uint color, bool handle = false)
-    {
-        c.Rect(x, y, len, h, color);
-        if (handle) c.Rect(x - 1, y, 1, h, color);
     }
 
     private Surface BakeSky()
     {
-        var s = new Surface(_w, _h);
-        for (int y = 0; y < _h; y++)
+        var sky = new Surface(_width, _height);
+        for (int y = 0; y < _height; y++)
         {
-            double t = Math.Pow(y / (double)_h, 0.55);
-            uint row = Surface.Mix(SkyTop, SkyBottom, t);
-            for (int x = 0; x < _w; x++)
+            double fade = Math.Pow(y / (double)_height, SkyFadeCurve);
+            uint row = Surface.Mix(Palette.SkyTop, SkyBottom, fade);
+            for (int x = 0; x < _width; x++)
             {
                 // the Bluesky-blue accent: a wide glow low on the far horizon (top of the screen), off-centre
-                double dx = (x - _w * 0.62) / (_w * 0.75), dy = (y + 6) / (_h * 0.4);
-                double g = Math.Max(0, 1 - Math.Sqrt(dx * dx + dy * dy));
-                s.P[y * _w + x] = g > 0 ? Surface.Mix(row, BlueskyBlue, g * g * 0.34) : row;
+                double glowX = (x - _width * GlowCentreX) / (_width * GlowHalfWidth), glowY = (y + GlowTopOffset) / (_height * GlowHalfHeight);
+                double glow = Math.Max(0, 1 - double.Hypot(glowX, glowY));
+                sky.P[y * _width + x] = glow > 0 ? Surface.Mix(row, BlueskyBlue, glow * glow * GlowMaxMix) : row;
             }
         }
-        // two thin cloud streaks catching the glow
-        for (int i = 0; i < 2; i++)
+        for (int streak = 0; streak < StreakCount; streak++)
         {
-            int cy = (int)(_h * (0.1 + 0.11 * i)), len = (int)(_w * (0.5 - 0.12 * i)), cx = (int)(_w * (0.25 + 0.3 * i));
-            for (int x = 0; x < len; x++)
+            int streakY = (int)(_height * (StreakRow + StreakRowStep * streak));
+            int length = (int)(_width * (StreakLength + StreakLengthStep * streak));
+            int streakX = (int)(_width * (StreakCol + StreakColStep * streak));
+            for (int x = 0; x < length; x++)
             {
-                double a = Math.Sin(x / (double)len * Math.PI) * 0.22;
-                s.Blend(cx + x, cy, BlueskyBlue, a);
-                s.Blend(cx + x + 3, cy + 1, BlueskyBlue, a * 0.5);
+                double alpha = Math.Sin(x / (double)length * Math.PI) * StreakAlpha;
+                sky.Blend(streakX + x, streakY, BlueskyBlue, alpha);
+                sky.Blend(streakX + x + StreakShadowShiftX, streakY + StreakShadowShiftY, BlueskyBlue, alpha * StreakShadowAlpha);
             }
         }
-        return s;
+        return sky;
     }
 
-    private (int, int, uint)[] BakeStars()
+    private static uint[] FadeSteps()
     {
-        var stars = new (int, int, uint)[StarCount];
-        for (int i = 0; i < stars.Length; i++)
+        var (r, g, b) = Surface.Unpack(SkyBottom);
+        int span = ColourSnap.Distance(Palette.SkyTop, r, g, b);
+        int gaps = (int)Math.Ceiling(span / (double)SkyStepSpacing);
+        return [.. Enumerable.Range(0, gaps + 1).Select(step => Surface.Mix(Palette.SkyTop, SkyBottom, step / (double)gaps))];
+    }
+
+    private (int X, int Y, uint Colour)[] BakeStars()
+    {
+        var stars = new (int X, int Y, uint Colour)[StarCount];
+        for (int star = 0; star < stars.Length; star++)
         {
-            ulong hs = Hashing.Mix(_seed + StarSeedOffset + (ulong)i);
-            double b = 0.25 + Hashing.Unit(hs, 3) * 0.5;
-            uint tint = Hashing.Unit(hs, 4) < 0.35 ? BlueskyBlue : 0xdfe8ff;
-            stars[i] = ((int)(Hashing.Unit(hs, 1) * _w), (int)(Hashing.Unit(hs, 2) * _h), Surface.Mix(SkyTop, tint, b * 0.55));
+            ulong hash = Hashing.Mix(_seed + StarSeedOffset + (ulong)star);
+            double brightness = StarBrightnessMin + Hashing.Unit(hash, StarBrightnessStream) * StarBrightnessSpread;
+            uint tint = Hashing.Unit(hash, StarTintStream) < StarBlueChance ? BlueskyBlue : StarPaleTint;
+            stars[star] = ((int)(Hashing.Unit(hash, StarColumnStream) * _width), (int)(Hashing.Unit(hash, StarRowStream) * _height), Surface.Mix(Palette.SkyTop, tint, brightness * StarMix));
         }
         return stars;
     }

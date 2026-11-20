@@ -12,5 +12,21 @@ WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 Vendored code
 
 vendor/TUImation.Core comes from TUImation, the same author's terminal
-animation project (commit c391c5f), retargeted to net10.0 and changed for this
-game. It is distributed under this repository's Apache License 2.0.
+animation project (commit c391c5f; QuadRenderer.cs from commit d2f6ae2),
+retargeted to net10.0 and changed for this game. It is distributed under this
+repository's Apache License 2.0.
+
+Bundled third-party code
+
+The browser version bundles npm packages (the AT Protocol client libraries and
+their dependencies, under the MIT, ISC and Apache-2.0 licences) into
+wwwroot/atproto.js. The web build writes each package's licence and notice
+files to wwwroot/atproto.js.LICENSES.txt, served beside the bundle. xterm.js
+(MIT) is served from wwwroot/xterm/ with its LICENSE beside it. The .NET
+runtime and its libraries (MIT, .NET Foundation and Contributors, with
+third-party parts listed in its notices), compiled to WebAssembly, are served
+from wwwroot/_framework/, as is the System.Formats.Cbor NuGet package (MIT, the
+same authors). The publish writes their licence and third-party notices beside
+them: LICENSE.txt and THIRD-PARTY-NOTICES.txt for the runtime, and
+<package>.LICENSE.txt and <package>.THIRD-PARTY-NOTICES.txt for each package.
+The single-file page holds all of these licence texts in a comment at its top.

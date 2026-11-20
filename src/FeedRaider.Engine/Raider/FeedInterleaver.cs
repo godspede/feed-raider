@@ -1,10 +1,10 @@
 namespace FeedRaider.Engine.Raider;
 
 /// <summary>The one ordering rule between a feed source and the game: the next post is never by the same author as the one
-/// just served. Replies never reach it (see <see cref="WingQueue.Eligible"/>): a thread is followed from its wingman, not read off the feed.
+/// just served. Replies never reach it (see <see cref="PostRules.Shown"/>): a thread is followed from its card, not read off the feed.
 /// When the buffer holds only the previous author's posts they are held back (a repeat is served only on <c>allowRepeat</c>), so the caller can pull
-/// more from other authors first. Only eligible posts (see <see cref="WingQueue.Eligible"/>) are buffered.</summary>
-public sealed class FeedInterleaver(int capacity = Tuning.InterleaverCapacity, bool signedOut = false)
+/// more from other authors first. Only posts that may be shown (see <see cref="PostRules.Shown"/>) are buffered.</summary>
+public sealed class FeedInterleaver(bool signedOut = false, bool textOnly = false)
 {
     private readonly List<FeedPost> _buf = [];
     private readonly HashSet<string> _seen = new(StringComparer.Ordinal);
@@ -16,8 +16,8 @@ public sealed class FeedInterleaver(int capacity = Tuning.InterleaverCapacity, b
     {
         foreach (var p in posts)
         {
-            if (_buf.Count >= capacity) break;
-            if (!WingQueue.Eligible(p, signedOut) || !_seen.Add(p.Uri)) continue;
+            if (_buf.Count >= Tuning.InterleaverCapacity) break;
+            if (!PostRules.Shown(p, signedOut, textOnly) || !_seen.Add(p.Uri)) continue;
             _buf.Add(p);
         }
         if (_seen.Count > Tuning.SeenPostsMax) { _seen.Clear(); foreach (var p in _buf) _seen.Add(p.Uri); }

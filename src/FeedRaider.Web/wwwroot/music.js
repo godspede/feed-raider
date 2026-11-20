@@ -1,36 +1,46 @@
-// Background music: four states (menu, gameplay, boss, gameover), one track at a time; a change crossfades over FADE_MS between
-// two <audio> elements. Tracks come from a manifest of {file, role}. Gameplay plays a shuffled rotation: each track once through,
+// Background music: four states (start, gameplay, boss, gameover), one track at a time; a change crossfades over FADE_MS between
+// two <audio> elements. Tracks come from a manifest of {file, role}; a boss track may add `boss`, the lower-case name of the one
+// boss it belongs to. The game cues a boss as `boss:<key>`: that boss's own track, else a shared boss track (one with no `boss`),
+// else any boss track, never a gameplay one. `ahead:boss:<key>` is a hint, no state: it fetches that pick without playing it. Gameplay plays a shuffled rotation: each track once through,
 // crossfading into the next CROSSFADE_MS before its end; a boss interrupts it and, when the boss is gone, the rotation goes on
-// with the next track. Each track is fetched whole into a Blob and played from a blob: URL (the host serves no byte ranges, and
-// Safari will not stream from such a server). Fetching is lazy, one at a time: a cue is fetched when it is wanted, and only the next gameplay track is fetched ahead
-// (never on a data-saver or slow connection). A gameplay track that has been played through is dropped and its blob URL revoked. Nothing here may break the game: any failure
+// with the next track. Each track is fetched whole into a Blob and played from a blob: URL, never streamed from its address.
+// Fetching is lazy, one at a time: no track before the first gesture or the page's
+// allowFetchAhead(), whichever comes first; then a cue is fetched when it is wanted, and only the next gameplay track is fetched ahead
+// (never on a data-saver or slow connection). A gameplay track that has been played through, and a start page, boss or game over track
+// once it has faded out and is not wanted, is dropped and its blob URL revoked. Nothing here may break the game: any failure
 // leaves the page silent and logs once.
 // With Web Audio available the elements play through a shared master GainNode (`master.node`, which sfx.js plays through too).
 // iOS ignores element.volume, so without it volume would not work there. The page can run the controls and the master with
-// the music itself off (init without tracks, or off: true) so that the sound effects keep the speaker button, M and the slider.
+// the music itself off (init without tracks) so that the sound effects keep the speaker button, M and the slider.
 
 const FADE_MS = 1500, CROSSFADE_MS = 2000, WATCH_MS = 250;
 const CUT_FADE_MS = 200;          // the quick fade-out when the music is muted or nothing is wanted
 const FADE_TICK_MS = 40;          // how often a running fade is stepped
+const MS_PER_S = 1000;            // the element clock and the Web Audio clock count seconds
 const MASTER_SMOOTH_S = 0.03;     // time constant that smooths a volume change on the master gain
 const DUCK_IN_S = 0.04, DUCK_OUT_S = 0.4;   // a duck dips this fast and recovers this slowly
+const DB_PER_TENFOLD_AMPLITUDE = 20;          // turns a duck's depth in dB into a gain factor
 const VOLUME_KEY = 'feed-raider.music.volume', MUTED_KEY = 'feed-raider.music.muted';
 // the unlock clip: 10 ms of 8 kHz 8-bit mono silence (80 samples of 0x80); a WAV with no samples will not decode in Firefox
 const SILENT = 'data:audio/wav;base64,UklGRnQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
-const ROLES = ['menu', 'gameplay', 'boss', 'gameover'];
+const DEFAULT_VOLUME = 0.5;        // the volume before the player sets one
+const SLIDER_STEPS = 100;          // the volume slider runs 0 to this
+const DUCK_HOLD_MS = 200;          // how long a duck stays down by default
+const ROLES = ['start', 'gameplay', 'boss', 'gameover'];
 
 const store = {
-  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  get(k) { try { return localStorage.getItem(k); } catch { return null; /* storage unavailable: the defaults stand */ } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode: not persisted */ } },
 };
 const storedVolume = Number.parseFloat(store.get(VOLUME_KEY));
-let volume = Number.isFinite(storedVolume) ? Math.min(1, Math.max(0, storedVolume)) : 0.5;
+let volume = Number.isFinite(storedVolume) ? Math.min(1, Math.max(0, storedVolume)) : DEFAULT_VOLUME;
 let muted = store.get(MUTED_KEY) === '1';
 
 let off = true, musicOn = false, unlocked = false, warned = false;   // off: no music and no sound effects either
 let tracks = null;       // [{id, role, url}] once the manifest is in
 let requested = null;    // the last state the game asked for, kept until the manifest arrives
-let want = null;         // the state in force
+let aheadRequested = null; // the last fetch-ahead hint, kept until the manifest arrives
+let want = null;         // the cue in force: a state, or boss:<key>
 let target = null;       // the track that should be playing
 let rot = { order: [], i: -1, last: null }; // the gameplay rotation; `last` is the track played most recently
 let advancing = false, random = Math.random;
@@ -40,8 +50,6 @@ let ctx = null, masterNode = null, musicBus = null;   // musicBus: the tracks on
 /** The volume every sound shares. `gain` is the effective 0..1 (0 when muted); `node` is the Web Audio master GainNode once
  *  the first gesture has made the context (null before, or without Web Audio). */
 export const master = {
-  get volume() { return volume; },
-  get muted() { return muted; },
   get gain() { return muted ? 0 : volume; },
   get context() { return ctx; },
   get node() { return masterNode; },
@@ -55,17 +63,18 @@ function warnOnce(what, e) {
 
 // ---------------------------------------------------------------- manifest and rotation
 
-/** Turns a manifest ([{file, role}] or {tracks: [...]}) into tracks. `file` resolves against `base`; an entry with an absolute
+/** Turns a manifest ([{file, role}]) into tracks. `file` resolves against `base`; an entry with an absolute
  *  `url` (the single-file bundle) keeps it. Entries with an unknown role or no location are dropped. */
 export function parseManifest(json, base) {
-  const list = Array.isArray(json) ? json : json?.tracks;
-  if (!Array.isArray(list)) throw new Error('manifest is not a list of tracks');
+  if (!Array.isArray(json)) throw new Error('manifest is not a list of tracks');
   const out = [];
-  for (const e of list) {
+  for (const e of json) {
     if (!e || !ROLES.includes(e.role)) continue;
     const where = typeof e.url === 'string' ? e.url : e.file;
     if (typeof where !== 'string' || !where) continue;
-    out.push({ id: typeof e.file === 'string' ? e.file : where, role: e.role, url: base ? new URL(where, base).href : where });
+    const t = { id: typeof e.file === 'string' ? e.file : where, role: e.role, url: base ? new URL(where, base).href : where };
+    if (e.role === 'boss' && typeof e.boss === 'string' && e.boss) t.boss = e.boss;   // a boss field on another role, or not a name, is ignored
+    out.push(t);
   }
   return out;
 }
@@ -95,37 +104,69 @@ function advance() {
 
 const randomTrackOfRole = (role) => { const l = ofRole(role); return l[Math.floor(random() * l.length)] ?? null; };
 
+/** A cue name as the game says it: a state (start, gameplay, boss, gameover), `boss:<key>` (the boss state, for one boss), or
+ *  `ahead:boss:<key>` (a hint, no state). Null for anything else. */
+function parseCue(name) {
+  if (ROLES.includes(name)) return { state: name, key: null, ahead: false };
+  const m = /^(ahead:)?boss:(.+)$/.exec(name);
+  return m ? { state: 'boss', key: m[2], ahead: !!m[1] } : null;
+}
+const isBossCue = (name) => typeof name === 'string' && parseCue(name)?.state === 'boss';
+
+// The track picked for a boss key, kept from the hint to the cue so that both name the same file.
+const bossPicks = new Map();
+
+/** A boss's track: its own, else a shared track (a boss track with no boss field), else any boss track; never a gameplay one. */
+function pickBoss(key) {
+  const kept = bossPicks.get(key ?? '');
+  if (kept && tracks?.includes(kept)) return kept;
+  const boss = ofRole('boss');
+  let pool = key ? boss.filter((t) => t.boss === key) : [];
+  if (!pool.length) pool = boss.filter((t) => !t.boss);
+  if (!pool.length) pool = boss;
+  const t = pool[Math.floor(random() * pool.length)] ?? null;
+  if (t) bossPicks.set(key ?? '', t);
+  return t;
+}
+
 function applyCue(name) {
-  if (!ROLES.includes(name) || name === want) return;
+  const c = parseCue(name);
+  if (!c || c.ahead || name === want) return;
   let next;
-  if (name === 'gameplay') next = want === 'boss' && rot.order.length ? advance() : newRun();
+  if (c.state === 'gameplay') next = isBossCue(want) && rot.order.length ? advance() : newRun();
+  else if (c.state === 'boss') { next = pickBoss(c.key); bossPicks.delete(c.key ?? ''); }
   else {
-    next = randomTrackOfRole(name);
-    if (next && name !== 'boss') rot = { order: [], i: -1, last: rot.last }; // menu and gameover end the rotation
+    next = randomTrackOfRole(c.state);
+    if (next) rot = { order: [], i: -1, last: rot.last }; // start and gameover end the rotation
   }
   if (!next) return; // no track for this role: the music stays as it was
   want = name;
   target = next;
   positions.delete(next.id);
   reconcile();
+  if (aheadAllowed) prefetchTarget();
   if (!muted) prefetchAround(name);
 }
 
-// Only the next gameplay track is worth fetching ahead; the menu, boss and gameover tracks are fetched when they are cued.
+/** The hint: the stage ahead ends with this boss. Fetches the track the cue will play; plays and changes nothing. */
+function applyAhead(name) {
+  const c = parseCue(name);
+  if (!c?.ahead || muted) return;
+  const t = pickBoss(c.key);
+  if (t) prefetch(t);
+}
+
+// Only the next gameplay track is worth fetching ahead; the start page, boss and game over tracks are fetched when they are cued.
 function prefetchAround(name) {
   if (name === 'gameplay') prefetch(...rot.order.slice(rot.i + 1, rot.i + 2));
 }
 
-/** True on a data-saver or slow connection (where the Network Information API exists), so nothing is fetched ahead. */
-function thinConnection() {
-  const c = globalThis.navigator?.connection;
-  return !!c && (c.saveData === true || ['slow-2g', '2g', '3g'].includes(c.effectiveType));
-}
+let isThin;   // init sets it: true on a data-saver or slow connection, where nothing is fetched ahead
 
 // ---------------------------------------------------------------- fetching
 
 const blobs = new Map(); // track id -> Promise<string | null>
-function fetchCue(track) {
+function fetchTrackBlob(track) {
   if (!blobs.has(track.id)) {
     blobs.set(track.id, (async () => {
       try {
@@ -147,21 +188,21 @@ function evict(id) {
   spent.delete(id);
   const url = blobs.get(id);
   blobs.delete(id);
-  url?.then((u) => { if (u) { try { URL.revokeObjectURL(u); } catch { /* already gone */ } } });
+  url?.then((u) => { if (u) URL.revokeObjectURL(u); });
 }
 
 // background fetching, one track at a time, never while muted
 const queue = [];
 let pumping = false;
 function prefetch(...list) {
-  if (thinConnection()) return;
+  if (isThin()) return;
   for (const t of list) if (!blobs.has(t.id) && !queue.includes(t)) queue.push(t);
   pump();
 }
 async function pump() {
   if (pumping) return;
   pumping = true;
-  while (queue.length && !muted && musicOn) await fetchCue(queue.shift());
+  while (queue.length && !muted && musicOn) await fetchTrackBlob(queue.shift());
   pumping = false;
 }
 
@@ -198,7 +239,10 @@ function tick() {
 function release(s) {
   if (s.track) positions.set(s.track.id, s.el.currentTime);
   s.el.pause();
-  if (s.track && spent.has(s.track.id)) evict(s.track.id);
+  // a start page, boss or game over track comes round again only after a whole run, so its blob is not held meanwhile; while it is
+  // still the wanted track (faded out by a mute) it is kept for the unmute
+  const unwanted = s.track && s.track.role !== 'gameplay' && s.track !== target;
+  if (s.track && (spent.has(s.track.id) || unwanted)) evict(s.track.id);
   s.track = null;
 }
 const positions = new Map(); // where a gameplay track was faded out (muted), so unmuting carries on
@@ -210,8 +254,12 @@ function createAudio() {
       s.el.preload = 'auto';
     }
   }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) {
+    console.info('music: Web Audio unavailable, using element volume');
+    return;
+  }
   try {
-    const AC = window.AudioContext || window.webkitAudioContext;
     ctx = new AC();
     masterNode = ctx.createGain();
     masterNode.gain.value = master.gain;
@@ -227,7 +275,9 @@ function createAudio() {
       }
     }
   } catch (e) {
-    // no Web Audio: the elements play on their own
+    // a browser that refuses a context or a media element source (a DOMException such as NotSupportedError) still plays the
+    // elements on their own, at element volume; any other error is a fault and goes to unlock's warning
+    if (!(e instanceof DOMException)) throw e;
     ctx = masterNode = musicBus = null;
     for (const s of slots) s.node = null;
     console.info('music: Web Audio unavailable, using element volume');
@@ -244,7 +294,7 @@ function unlock() {
     for (const s of musicOn ? slots : []) {
       if (s.track) continue;
       s.el.src = SILENT;
-      s.el.play().then(() => { if (!s.track) s.el.pause(); }, () => {});
+      s.el.play().then(() => { if (!s.track) s.el.pause(); }, () => { /* best effort: the silent clip only primes iOS, and a track's own play() reports its own failure */ });
     }
     unlocked = true;
     for (const ev of GESTURES) window.removeEventListener(ev, unlock, true);
@@ -266,7 +316,7 @@ function reconcile() {
   const active = slots.find((s) => s.target === 1);
   if (active?.track === target) return;
   const track = target;
-  fetchCue(track).then((url) => {
+  fetchTrackBlob(track).then((url) => {
     if (url && target === track && !muted && !tabHidden) startTrack(track, url);
   });
 }
@@ -301,14 +351,14 @@ function watch() {
   const a = slots.find((s) => s.target === 1);
   if (!a?.track || a.track !== target || a.el.loop) return;
   const d = a.el.duration;
-  if (!Number.isFinite(d) || d <= 0 || d - a.el.currentTime > CROSSFADE_MS / 1000) return;
+  if (!Number.isFinite(d) || d <= 0 || d - a.el.currentTime > CROSSFADE_MS / MS_PER_S) return;
   const next = advance();
   if (!next) return;
   target = next;
   positions.delete(a.track.id);
   spent.add(a.track.id);
   advancing = true;
-  fetchCue(next).then((url) => {
+  fetchTrackBlob(next).then((url) => {
     advancing = false;
     if (url && target === next && !muted && !tabHidden) startTrack(next, url, CROSSFADE_MS);
   });
@@ -329,7 +379,7 @@ function applyMasterChange() {
   syncUi();
 }
 
-export function setVolume(v) {
+function setVolume(v) {
   volume = Math.min(1, Math.max(0, v));
   store.set(VOLUME_KEY, String(volume));
   applyMasterChange();
@@ -343,18 +393,18 @@ export function setMuted(m) {
   if (!muted && want) prefetchAround(want);
 }
 
-export const toggleMute = () => setMuted(!muted);
+const toggleMute = () => setMuted(!muted);
 
-/** Dips the music (not the effects) by `db` for a big sound: 40 ms down, held `holdMs`, then 400 ms back up. */
-export function duck(db, holdMs = 200) {
+/** Dips the music (not the effects) by `db` for a big sound: DUCK_IN_S down, held `holdMs`, then DUCK_OUT_S back up. */
+export function duck(db, holdMs = DUCK_HOLD_MS) {
   if (!musicBus || !ctx) return;
   try {
-    const g = musicBus.gain, t = ctx.currentTime, low = 10 ** (Math.min(0, db) / 20);
+    const g = musicBus.gain, t = ctx.currentTime, low = 10 ** (Math.min(0, db) / DB_PER_TENFOLD_AMPLITUDE);
     g.cancelScheduledValues(t);
     g.setValueAtTime(g.value, t);
     g.linearRampToValueAtTime(low, t + DUCK_IN_S);
-    g.setValueAtTime(low, t + DUCK_IN_S + holdMs / 1000);
-    g.linearRampToValueAtTime(1, t + DUCK_IN_S + holdMs / 1000 + DUCK_OUT_S);
+    g.setValueAtTime(low, t + DUCK_IN_S + holdMs / MS_PER_S);
+    g.linearRampToValueAtTime(1, t + DUCK_IN_S + holdMs / MS_PER_S + DUCK_OUT_S);
   } catch { /* best effort: a missed duck leaves the music at full volume, which harms nothing */ }
 }
 
@@ -365,7 +415,7 @@ function syncUi() {
     button.title = muted ? 'Sound is off (M)' : 'Sound is on (M)';
     button.classList.toggle('muted', muted);
   }
-  if (slider) slider.value = String(Math.round(volume * 100));
+  if (slider) slider.value = String(Math.round(volume * SLIDER_STEPS));
 }
 
 function installControls() {
@@ -383,7 +433,7 @@ function installControls() {
     el.addEventListener('change', () => el.blur());
   }
   button?.addEventListener('click', () => { toggleMute(); if (!button.closest('dialog') && !button.closest('header')) button.blur(); });
-  slider?.addEventListener('input', () => { setVolume(Number(slider.value) / 100); if (muted && Number(slider.value) > 0) setMuted(false); });
+  slider?.addEventListener('input', () => { setVolume(Number(slider.value) / SLIDER_STEPS); if (muted && Number(slider.value) > 0) setMuted(false); });
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'KeyM' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
     if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName) && document.activeElement !== slider) return;
@@ -392,15 +442,16 @@ function installControls() {
   syncUi();
 }
 
-document.addEventListener('visibilitychange', () => { if (!document.hidden && ctx?.state === 'suspended') ctx.resume().catch(() => {}); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && ctx?.state === 'suspended') ctx.resume().catch(() => { /* best effort: a suspended context is resumed by the next gesture or the next track start */ }); });
 
 // ---------------------------------------------------------------- the page's calls
 
 /** tracks: [{role, url}] with absolute URLs (the single-file bundle), or manifestUrl: the tracks.json of {file, role}, relative
- *  to the page. Neither, or off, leaves the music off; sfx: true keeps the controls and the master gain even then.
+ *  to the page. Neither leaves the music off; thin() says whether the connection is data-saver or slow; sfx: true keeps the controls and the master gain even then.
  *  Returns whether the music is on. */
-export function init({ tracks: given, manifestUrl, off: disabled, sfx = false } = {}) {
-  musicOn = !disabled && !!(given || manifestUrl);
+export function init({ tracks: given, manifestUrl, sfx = false, thin = () => false } = {}) {
+  isThin = thin;
+  musicOn = !!(given || manifestUrl);
   off = !musicOn && !sfx;
   if (off) return false;
   installControls();
@@ -408,8 +459,8 @@ export function init({ tracks: given, manifestUrl, off: disabled, sfx = false } 
   if (!musicOn) return false;
   const ready = (list) => {
     tracks = list;
-    if (!muted) prefetch(...ofRole('menu'));
     if (requested) applyCue(requested);
+    if (aheadRequested) applyAhead(aheadRequested);
   };
   try {
     if (given) ready(parseManifest(given));
@@ -425,6 +476,19 @@ export function init({ tracks: given, manifestUrl, off: disabled, sfx = false } 
   return true;
 }
 
+// Before the first gesture no track is downloaded until the page says the game has loaded, so the music never competes with
+// the game's own download; from then the cued track is fetched ahead and starts at once on the gesture.
+let aheadAllowed = false;
+function prefetchTarget() {
+  if (target && !muted) prefetch(target);
+}
+
+/** The game has loaded: the cued track may be fetched ahead of the first gesture (never on a data-saver or slow connection). */
+export function allowFetchAhead() {
+  aheadAllowed = true;
+  if (musicOn) prefetchTarget();
+}
+
 /** Test hook: the random source for shuffling and picking. */
 export function setRandom(fn) { random = fn; }
 
@@ -437,15 +501,22 @@ export function setPaused(hidden) {
   for (const s of slots) {
     if (!s.el || !s.track) continue;
     if (hidden) s.el.pause();
-    else if (!muted) s.el.play()?.catch(() => {});
+    else if (!muted) s.el.play()?.catch(() => { /* best effort: a refused resume leaves the music paused, which harms nothing */ });
   }
   if (!hidden) reconcile();
 }
 
-/** The game says which state it is in: menu, gameplay, boss or gameover. Never throws. */
+/** The game says which state it is in: start, gameplay, boss (or boss:<key> for one boss) or gameover; `ahead:boss:<key>` is a hint
+ *  to fetch that boss's track, not a state. Never throws. */
 export function cue(name) {
   try {
     if (!musicOn || typeof name !== 'string') return;
+    if (parseCue(name)?.ahead) {
+      aheadRequested = name;
+      if (tracks) applyAhead(name);
+      return;
+    }
+    if (!parseCue(name)) return;
     requested = name;
     if (tracks) applyCue(name);
   } catch (e) {

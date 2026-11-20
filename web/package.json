@@ -6,6 +6,8 @@
   "scripts": {
     "build": "node build.mjs",
     "bench": "node bench/frame-bench.mjs",
+    "bundle:single": "node bundle-single-file.mjs",
+    "e2e:start": "node test/e2e/run-start-e2e.mjs",
     "test": "node --test \"test/*.test.mjs\""
   },
   "dependencies": {

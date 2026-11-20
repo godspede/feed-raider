@@ -6,7 +6,8 @@ public static class JetstreamParser
 {
     public const string PostCollection = "app.bsky.feed.post";
 
-    /// <summary>Parses one Jetstream message. True only for a newly created app.bsky.feed.post commit.</summary>
+    /// <summary>Parses one Jetstream message. True only for a newly created app.bsky.feed.post commit whose record
+    /// does not self-label itself with one of <see cref="FeedMapper.AdultLabels"/>.</summary>
     public static bool TryParse(string json, out PostEvent? post)
     {
         post = null;
@@ -15,11 +16,13 @@ public static class JetstreamParser
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object) return false;
-            if (!root.TryGetProperty("kind", out var kind) || kind.GetString() != "commit") return false;
+            if (GetString(root, "kind") != "commit") return false;
             if (!root.TryGetProperty("commit", out var commit)) return false;
             if (GetString(commit, "operation") != "create") return false;
             if (GetString(commit, "collection") != PostCollection) return false;
             if (!commit.TryGetProperty("record", out var record) || record.ValueKind != JsonValueKind.Object) return false;
+            // a Jetstream message carries no labeler's or author's labels, so the record's own self-labels are all there is to check
+            if (FeedMapper.IsSelfLabelledAdult(record)) return false;
 
             string? did = GetString(root, "did");
             if (string.IsNullOrEmpty(did)) return false;

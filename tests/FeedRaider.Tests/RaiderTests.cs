@@ -8,9 +8,9 @@ public class RaiderTests
 {
     private const string LongText = "this is a perfectly ordinary post with enough words in it";
 
-    private static RaiderGame NewGame(bool loggedIn = true)
+    private static RaiderGame NewGame(bool signedIn = true)
     {
-        var g = new RaiderGame(5) { LoggedIn = loggedIn };
+        var g = new RaiderGame(5) { SignedIn = signedIn };
         g.SetLayout(FieldLayout.Compute(120, 46));
         return g;
     }
@@ -20,49 +20,7 @@ public class RaiderTests
 
     private static void Run(RaiderGame g, int frames) { for (int i = 0; i < frames; i++) g.Step(); }
 
-    /// <summary>Steps until a wingman has flown in near its home and the player has been moved onto it.</summary>
-    private static Wingman WingmanInRange(RaiderGame g)
-    {
-        for (int i = 0; i < 400 && !g.Wings.Any(w => w.Age > Tuning.WingEnterFrames); i++) g.Step();
-        var w = g.Wings.First(x => x.Age > Tuning.WingEnterFrames);
-        MoveOnto(g, w);
-        return w;
-    }
-
-    private static void MoveOnto(RaiderGame g, Wingman w)
-    {
-        for (int i = 0; i < 200; i++)
-        {
-            g.Input.Key(GameKey.Left, g.PX > w.X + 1); g.Input.Key(GameKey.Right, g.PX < w.X - 1);
-            g.Input.Key(GameKey.Up, g.PY > w.Y + 1); g.Input.Key(GameKey.Down, g.PY < w.Y - 1);
-            g.Step();
-            if (Math.Abs(g.PX - w.X) < 3 && Math.Abs(g.PY - w.Y) < 3) break;
-        }
-        foreach (var k in Enum.GetValues<GameKey>()) g.Input.Key(k, false);
-    }
-
-    // ---------------------------------------------------------------- the text-only filter
-
-    [Fact]
-    public void Only_text_posts_of_enough_length_may_become_wingmen()
-    {
-        Assert.True(WingQueue.Eligible(Post(1)));
-        Assert.False(WingQueue.Eligible(Post(2, media: true)));
-        Assert.False(WingQueue.Eligible(Post(3, text: "too short")));
-        Assert.False(WingQueue.Eligible(Post(4, text: "   a   b   ")));
-    }
-
-    [Fact]
-    public void Queue_takes_each_post_once_and_stays_bounded()
-    {
-        var q = new WingQueue();
-        Assert.True(q.Offer(Post(1)));
-        Assert.False(q.Offer(Post(1)));
-        for (int i = 2; i < 100; i++) q.Offer(Post(i));
-        Assert.Equal(Tuning.WingQueueMax, q.Count);
-        Assert.True(q.TryDequeue(out var first));
-        Assert.Equal(Post(1).Uri, first.Uri);
-    }
+    // ---------------------------------------------------------------- the feed filter
 
     private static FeedPage EmbedPage() => FeedMapper.ParsePage(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "feed-embeds.json")), skipReposts: true);
 
@@ -72,7 +30,8 @@ public class RaiderTests
         var posts = EmbedPage().Posts;
         Assert.Equal(8, posts.Count);
         Assert.Equal([false, true, true, true, true, true, true, false], posts.Select(p => p.HasEmbed));
-        Assert.Equal([true, false, false, false, false, false, false, true], posts.Select(WingQueue.Eligible));
+        // text-only takes the plain posts and the one whose attachment is its own pictures, which its card draws
+        Assert.Equal([true, true, false, false, false, false, false, true], posts.Select(p => PostRules.Shown(p, false, textOnly: true)));
         const string one = """{"feed":[{"post":{"uri":"at://did:plc:a/app.bsky.feed.post/1","cid":"c","author":{"did":"did:plc:a","handle":"a.test","avatar":"https://cdn.example/a.jpg"},"record":{"text":"hello there"},"embed":null}}]}""";
         var plain = FeedMapper.ParsePage(one).Posts.Single();
         Assert.False(plain.HasEmbed);
@@ -80,227 +39,26 @@ public class RaiderTests
     }
 
     [Fact]
-    public void The_queue_and_the_interleaver_take_only_posts_without_an_embed()
+    public void The_interleaver_takes_only_posts_without_an_embed_or_with_pictures_when_text_only()
     {
         var posts = EmbedPage().Posts;
-        var q = new WingQueue();
-        foreach (var p in posts) q.Offer(p);
-        Assert.Equal(2, q.Count);
-        var mix = new FeedInterleaver();
+        var mix = new FeedInterleaver(textOnly: true);
         mix.Add(posts);
-        Assert.Equal(2, mix.Count);
-        while (mix.TryTake(out var p, allowRepeat: true)) Assert.False(p.HasEmbed);
-    }
-
-    // ---------------------------------------------------------------- wingman life cycle
-
-    [Fact]
-    public void A_wingman_flies_in_fights_and_leaves_while_the_next_one_queues()
-    {
-        var g = NewGame();
-        g.Queue.Offer(Post(1)); g.Queue.Offer(Post(2)); g.Queue.Offer(Post(3));
-        Run(g, 5);
-        Assert.Single(g.Wings);
-        Assert.Equal(WingPhase.Enter, g.Wings[0].Phase);
-        Run(g, Tuning.WingStaggerFrames);
-        Assert.Single(g.Wings);                               // one ally at a time
-        Assert.Equal(2, g.Queue.Count);                       // the others wait
-        var first = g.Wings[0];
-        for (int i = 0; i < 2000 && first.Phase != WingPhase.Fight; i++) g.Step();
-        Assert.Equal(WingPhase.Fight, first.Phase);
-        for (int i = 0; i < 2000 && first.Phase != WingPhase.Leave; i++) g.Step();
-        Assert.Equal(WingPhase.Leave, first.Phase);
-        for (int i = 0; i < 2000 && g.Wings.Contains(first); i++) g.Step();
-        Assert.DoesNotContain(first, g.Wings);
-        for (int i = 0; i < 200 && !g.Wings.Any(w => w.Post.Uri == Post(2).Uri); i++) g.Step();
-        var next = Assert.Single(g.Wings);                    // the queued one took the slot
-        Assert.Equal(Post(2).Uri, next.Post.Uri);
-        Assert.NotEqual(first.Slot, next.Slot);               // and flies on the other side
-    }
-
-    [Fact]
-    public void Firepower_grows_with_the_log_of_likes()
-    {
-        var g = NewGame();
-        g.Queue.Offer(Post(1, likes: 0)); Run(g, 60);
-        var low = g.Wings.Single(w => w.Post.LikeCount == 0).Firepower;
-        var h = NewGame();
-        h.Queue.Offer(Post(2, likes: 900)); Run(h, 60);
-        var high = h.Wings.Single(w => w.Post.LikeCount == 900).Firepower;
-        Assert.Equal(1.0, low, 6);
-        Assert.True(high > low && high < low * 3);
-    }
-
-    [Fact]
-    public void A_post_with_a_thousand_likes_drops_a_screen_clearing_bomb_with_its_text_as_banner()
-    {
-        var g = NewGame();
-        g.OfferDark(new DarkPost(DarknessKind.Spam, 3, "buy followers now cheap"));
-        Run(g, 150);
-        Assert.NotEmpty(g.Enemies);
-        g.Queue.Offer(Post(1, likes: Tuning.BombLikeThreshold));
-        for (int i = 0; i < 70 && g.Banner is null; i++) g.Step();
-        Assert.NotNull(g.Banner);
-        Assert.Contains("1,000", g.Banner);
-        Assert.Contains("ordinary post", g.Banner);
-        Assert.True(g.Shake > 0 || g.HitStop > 0);
-        Assert.DoesNotContain(g.Enemies, e => e.Hp > 0 && e.Age > 1);
-    }
-
-    // ---------------------------------------------------------------- like and power-up
-
-    [Fact]
-    public void The_prompt_shows_only_within_the_like_radius()
-    {
-        var g = NewGame();
-        g.Queue.Offer(Post(1));
-        for (int i = 0; i < 400 && !g.Wings.Any(w => w.Age > Tuning.WingEnterFrames); i++) g.Step();
-        var w = g.Wings[0];
-        Assert.Null(g.Prompt);                                 // the player starts at the bottom, far away
-        MoveOnto(g, w);
-        Assert.Same(w, g.Prompt);
-    }
-
-    [Fact]
-    public void No_like_goes_out_without_a_press_even_when_in_range()
-    {
-        var g = NewGame();
-        var liked = new List<FeedPost>();
-        g.OnLike = liked.Add;
-        g.Queue.Offer(Post(1));
-        var w = WingmanInRange(g);
-        Run(g, 60);
-        Assert.Empty(liked);
-        Assert.False(w.Liked);
-        Assert.False(g.Powered);
-    }
-
-    [Fact]
-    public void A_like_press_calls_like_exactly_once_per_post_and_starts_the_power_up()
-    {
-        var g = NewGame();
-        var liked = new List<FeedPost>();
-        g.OnLike = liked.Add;
-        g.Queue.Offer(Post(1));
-        var w = WingmanInRange(g);
-        g.Input.Like(); g.Step();
-        Assert.Single(liked);
-        Assert.True(w.Liked);
-        Assert.True(g.Powered);
-        Assert.Contains(g.Particles, p => p.Kind == ParticleKind.Heart);
-        for (int i = 0; i < 5; i++) { MoveOnto(g, w); g.Input.Like(); g.Step(); }
-        Assert.Single(liked);
-    }
-
-    [Fact]
-    public void A_stale_like_press_does_not_fire_later()
-    {
-        var g = NewGame();
-        var liked = new List<FeedPost>();
-        g.OnLike = liked.Add;
-        g.Queue.Offer(Post(1));
-        for (int i = 0; i < 400 && !g.Wings.Any(w => w.Age > Tuning.WingEnterFrames); i++) g.Step();
-        g.Input.Like();                                        // pressed while nothing is in range
-        Run(g, InputState.LikeLatchFrames + 2);
-        MoveOnto(g, g.Wings[0]);
-        Run(g, 5);
-        Assert.Empty(liked);
-    }
-
-    [Fact]
-    public void Tap_and_click_never_like()
-    {
-        var g = NewGame();
-        var liked = new List<FeedPost>();
-        g.OnLike = liked.Add;
-        g.Queue.Offer(Post(1));
-        WingmanInRange(g);
-        g.Input.Tap(g.Layout.Col0 + 2, 5);                    // nowhere near the bomb button
-        g.Step();
-        Assert.Empty(liked);
-    }
-
-    [Fact]
-    public void Logged_out_the_prompt_says_so_and_nothing_is_sent()
-    {
-        var g = NewGame(loggedIn: false);
-        var liked = new List<FeedPost>();
-        g.OnLike = liked.Add;
-        g.Queue.Offer(Post(1));
-        WingmanInRange(g);
-        g.Input.Like(); g.Step();
-        Assert.Empty(liked);
-        Assert.Equal("sign in to like", g.Toast);
-        Assert.False(g.Powered);
-    }
-
-    [Fact]
-    public void Logged_out_a_like_press_with_no_wingman_near_still_shows_the_hint()
-    {
-        var g = NewGame(loggedIn: false);
-        g.Input.Like(); g.Step();
-        Assert.Equal("sign in to like", g.Toast);
-    }
-
-    [Fact]
-    public void A_failed_like_can_be_tried_again()
-    {
-        var g = NewGame();
-        var liked = new List<FeedPost>();
-        g.OnLike = liked.Add;
-        g.Queue.Offer(Post(1));
-        var w = WingmanInRange(g);
-        g.Input.Like(); g.Step();
-        g.LikeFailed(w.Post.Uri);
-        MoveOnto(g, w); g.Input.Like(); g.Step();
-        Assert.Equal(2, liked.Count);
-    }
-
-    [Fact]
-    public void The_power_up_lasts_its_time_then_ends()
-    {
-        var g = NewGame();
-        g.Queue.Offer(Post(1));
-        WingmanInRange(g);
-        g.Input.Like(); g.Step();
-        Assert.InRange(g.PowerLeft, Tuning.PowerUpFrames - 2, Tuning.PowerUpFrames);
-        // the timer counts sim ticks, so a hit-stop pauses it; count ticks, not frames
-        long start = g.Tick;
-        while (g.Tick < start + Tuning.PowerUpFrames / 2) g.Step();
-        Assert.True(g.Powered);
-        while (g.Tick < start + Tuning.PowerUpFrames + 1) g.Step();
-        Assert.False(g.Powered);
-    }
-
-    [Fact]
-    public void Powered_fire_adds_angled_shots_and_damage()
-    {
-        var g = NewGame();
-        g.Input.Key(GameKey.Fire, true);
-        g.Step();
-        var plain = g.Bullets.Where(b => b.Friendly).ToList();
-        g.Queue.Offer(Post(1));
-        var w = WingmanInRange(g);
-        g.Input.Like(); g.Step();
-        g.Bullets.Clear();
-        g.Input.Key(GameKey.Fire, true);
-        Run(g, Tuning.FireInterval + 1);
-        var powered = g.Bullets.Where(b => b.Friendly && !b.Wing).ToList();
-        Assert.Single(plain);                                    // level 1 is a single stream
-        Assert.Contains(powered, b => b.VX != 0);
-        Assert.True(powered.Max(b => b.Dmg) > plain.Max(b => b.Dmg));
+        Assert.Equal(3, mix.Count);
+        while (mix.TryTake(out var p, allowRepeat: true)) Assert.True(!p.HasEmbed || p.Pictures is { Count: > 0 });
     }
 
     // ---------------------------------------------------------------- darkness to waves
 
     [Fact]
-    public void A_rude_event_becomes_one_gunship_with_its_text()
+    public void A_rude_event_makes_no_enemy_and_waits_for_a_speaker()
     {
         var w = WaveSpawner.FromPost(new DarkPost(DarknessKind.Rude, 9, "you are all wrong about everything"));
-        Assert.True(w.Live);
-        var e = Assert.Single(w.Enemies);
-        Assert.Equal(EnemyKind.Gunship, e.Kind);
-        Assert.False(string.IsNullOrEmpty(e.Text));
+        Assert.Empty(w.Enemies);
+        var g = NewGame();
+        g.OfferDark(new DarkPost(DarknessKind.Rude, 9, "you are all wrong about everything"));
+        Assert.Equal("you are all wrong about everything", Assert.Single(g.Rude.Waiting).Text);
+        Assert.Equal(0, g.LiveWavesSpawned);
     }
 
     [Fact]
@@ -333,9 +91,9 @@ public class RaiderTests
     public void A_darkness_event_puts_a_live_wave_on_screen_and_the_hud_tells_it_from_filler()
     {
         var g = NewGame();
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 4, "some rude words for the gunship"));
-        for (int i = 0; i < 200 && !g.Enemies.Any(e => e.Kind == EnemyKind.Gunship); i++) g.Step();
-        Assert.Contains(g.Enemies, e => e.Kind == EnemyKind.Gunship && e.Live);
+        g.OfferDark(new DarkPost(DarknessKind.Spam, 4, "some spam words for the carrier"));
+        for (int i = 0; i < 200 && !g.Enemies.Any(e => e.Live); i++) g.Step();
+        Assert.Contains(g.Enemies, e => e.Live);
         Assert.Equal(1, g.LiveWavesSpawned);
         Assert.Contains("LIVE", g.WaveLabel());
 
@@ -380,9 +138,8 @@ public class RaiderTests
     public void A_bomb_on_a_heavy_enemy_gives_hit_stop_flash_and_debris()
     {
         var g = NewGame();
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 4, "rude words for the gunship to say"));
-        for (int i = 0; i < 200 && !g.Enemies.Any(e => e.Kind == EnemyKind.Gunship && e.Y > 6); i++) g.Step();
-        var ship = g.Enemies.First(e => e.Kind == EnemyKind.Gunship);
+        var ship = g.SpawnLesser();
+        ship.Y = 40;
         g.Input.Bomb(); g.Step();                               // a bomb hits everything for 30
         Assert.True(ship.Flash > 0 || ship.Hp < ship.MaxHp);
         Assert.True(g.HitStop > 0 || g.Shake > 0);
@@ -410,7 +167,7 @@ public class RaiderTests
     public void A_console_key_press_without_release_still_fires_for_a_moment()
     {
         var g = NewGame();
-        g.Input.Press(GameKey.Fire);
+        g.Input.Press(GameKey.Fire, new KeyRepeatTiming(500, 40));
         Run(g, 3);
         Assert.Contains(g.Bullets, b => b.Friendly);
     }
@@ -440,7 +197,7 @@ public class RaiderTests
     }
 
     [Fact]
-    public void The_plane_follows_the_pointer_and_a_drag()
+    public void The_ship_follows_the_pointer_and_a_drag()
     {
         var g = NewGame();
         Run(g, 1);
@@ -474,7 +231,7 @@ public class RaiderTests
         {
             var g = NewGame();
             g.OfferDark(new DarkPost(DarknessKind.Spam, 5, "buy now cheap followers here"));
-            g.Queue.Offer(Post(1));
+            g.Posts.Offer(Post(1));
             g.Input.Key(GameKey.Fire, true);
             Run(g, 600);
             return (g.Score, g.Tick, g.Enemies.Count);

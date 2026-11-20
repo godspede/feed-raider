@@ -27,7 +27,7 @@ public class PublicFeedSourceTests
         await new PublicFeedSource(new HttpClient(h)).GetPageAsync(Feed, null, 30, CancellationToken.None);
         Assert.Equal(HttpMethod.Get, h.Requests[0].Method);
         Assert.Equal($"{BskyClient.AppView}/xrpc/app.bsky.feed.getFeed?feed={Uri.EscapeDataString(Feed)}&limit=30", Url(h));
-        Assert.Null(h.Requests[0].Headers.Authorization);     // no login
+        Assert.Null(h.Requests[0].Headers.Authorization);     // not signed in
     }
 
     [Theory]
@@ -56,7 +56,7 @@ public class PublicFeedSourceTests
     }
 
     [Fact]
-    public async Task It_reads_signed_out_so_authors_who_opted_out_of_logged_out_viewers_are_dropped()
+    public async Task It_reads_signed_out_so_authors_who_opted_out_of_signed_out_viewers_are_dropped()
     {
         var h = new Handler(HttpStatusCode.OK, JetstreamParserTests.Fixture("feed-labels.json"));
         var page = await new PublicFeedSource(new HttpClient(h)).GetPageAsync(Feed, null, 50, CancellationToken.None);

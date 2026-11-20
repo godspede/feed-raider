@@ -6,54 +6,67 @@ namespace FeedRaider.Tests;
 public class DarknessSourcesTests
 {
     private const string Owner = "did:plc:owneroowneroowneroowner1";
-    private const string Replier = "did:plc:replierreplierreplier22";
+    private const string Replier = "did:plc:replierreplierreplier222";
     private const string Spammer = "did:plc:spammerspammerspammer222";
-    private static string Reply(int n) => $"at://{Replier}/app.bsky.feed.post/3kr{n}";
+    private const int RoomW = 100, RoomRows = 40;
+    private const long FrameMs = 250, LabelWatchMs = 12000, HiddenWatchMs = 3000;
+    internal const string Spam = "spam", Rude = "rude", Porn = "porn";
+    private const string Create = "create";
+    private static string Reply(int number) => $"at://{Replier}/app.bsky.feed.post/3kr{number}";
+    private const string GateCreated = "threadgate-create.json", GateUpdated = "threadgate-update.json", AuthorFeed = "author-feed.json";
 
-    private static List<string> Feed(ThreadgateDiffer d, string fixture)
+    private static List<string> Feed(ThreadgateDiffer differ, string fixture)
     {
-        Assert.True(ThreadgateDiffer.TryParse(JetstreamParserTests.Fixture(fixture), out var did, out var rkey, out var op, out var hidden));
-        return d.Apply(did, rkey, op, hidden);
+        Assert.True(ThreadgateDiffer.TryParse(JetstreamParserTests.Fixture(fixture), out var did, out var rkey, out var operation, out var hidden));
+        return differ.Apply(did, rkey, operation, hidden);
     }
 
-    private static Room RoomOfGuys() =>
-        new(Enumerable.Range(0, 6).Select(i => new Follow($"did:plc:guy{i}aaaaaaaaaaaaaaaa", $"guy{i}.test")));
+    internal static Room RoomOfFigures() =>
+        new(Enumerable.Range(0, 6).Select(number => new Follow($"did:plc:figure{number}aaaaaaaaaaaaa", $"figure{number}.test")));
+
+    /// <summary>Everything the room draws, a frame at a time, until <paramref name="untilMs"/>.</summary>
+    internal static string Watch(Room room, long untilMs)
+    {
+        var drawn = new System.Text.StringBuilder();
+        for (long ms = 0; ms < untilMs; ms += FrameMs) drawn.Append(room.AdvanceAndRender(RoomW, RoomRows, ms));
+        return drawn.ToString();
+    }
 
     // ---- threadgate diffing ------------------------------------------------------------------
 
     [Fact]
     public void A_new_gate_reports_all_its_hidden_replies()
     {
-        var d = new ThreadgateDiffer();
-        Assert.Equal([Reply(1), Reply(2)], Feed(d, "threadgate-create.json"));
+        var differ = new ThreadgateDiffer();
+        Assert.Equal([Reply(1), Reply(2)], Feed(differ, GateCreated));
     }
 
     [Fact]
     public void An_updated_gate_reports_only_what_it_added()
     {
-        var d = new ThreadgateDiffer();
-        Feed(d, "threadgate-create.json");
-        // r1 removed (unhidden), r2 kept, r3 added
-        Assert.Equal([Reply(3)], Feed(d, "threadgate-update.json"));
-        Assert.Empty(Feed(d, "threadgate-update.json"));   // replaying the same version adds nothing
+        var differ = new ThreadgateDiffer();
+        Feed(differ, GateCreated);
+        // reply 1 removed (unhidden), reply 2 kept, reply 3 added
+        Assert.Equal([Reply(3)], Feed(differ, GateUpdated));
+        Assert.Empty(Feed(differ, GateUpdated));   // replaying the same version adds nothing
     }
 
     [Fact]
     public void A_deleted_gate_is_forgotten_so_a_recreate_is_all_new()
     {
-        var d = new ThreadgateDiffer();
-        Feed(d, "threadgate-create.json");
-        Assert.Empty(Feed(d, "threadgate-delete.json"));
-        Assert.Equal(0, d.Tracked);
-        Assert.Equal([Reply(1), Reply(2)], Feed(d, "threadgate-create.json"));
+        var differ = new ThreadgateDiffer();
+        Feed(differ, GateCreated);
+        Assert.Empty(Feed(differ, "threadgate-delete.json"));
+        Assert.Equal(0, differ.Tracked);
+        Assert.Equal([Reply(1), Reply(2)], Feed(differ, GateCreated));
     }
 
     [Fact]
     public void Gates_are_independent_and_other_messages_are_ignored()
     {
-        var d = new ThreadgateDiffer();
-        Assert.Equal([Reply(1)], d.Apply(Owner, "a", "create", [Reply(1)]));
-        Assert.Equal([Reply(1)], d.Apply(Owner, "b", "create", [Reply(1)]));
+        var differ = new ThreadgateDiffer();
+        Assert.Equal([Reply(1)], differ.Apply(Owner, "a", Create, [Reply(1)]));
+        Assert.Equal([Reply(1)], differ.Apply(Owner, "b", Create, [Reply(1)]));
         Assert.False(ThreadgateDiffer.TryParse(JetstreamParserTests.Fixture("post.json"), out _, out _, out _, out _));
         Assert.False(ThreadgateDiffer.TryParse("not json", out _, out _, out _, out _));
         Assert.False(ThreadgateDiffer.TryParse(JetstreamParserTests.Fixture("identity.json"), out _, out _, out _, out _));
@@ -68,7 +81,7 @@ public class DarknessSourcesTests
 
     private static async IAsyncEnumerable<T> Of<T>(params T[] items)
     {
-        foreach (var i in items) { yield return i; await Task.Yield(); }
+        foreach (var item in items) { yield return item; await Task.Yield(); }
     }
 
     [Fact]
@@ -83,11 +96,12 @@ public class DarknessSourcesTests
 
         Assert.Equal([Reply(1), Reply(2)], fetched);   // duplicate and non-post dropped before any fetch
         Assert.Equal((2, 2), (stats.HiddenNew, stats.HiddenFetched));
-        Assert.All(posts, p =>
+        Assert.Equal(2, posts.Count);
+        Assert.All(posts, post =>
         {
-            Assert.Equal((DarknessKind.Rude, DarkSource.Hidden), (p.Kind, p.Source));
-            Assert.Equal("go away you muppet", p.Text);
-            Assert.DoesNotContain(Replier, p.ToString());
+            Assert.Equal((DarknessKind.Rude, DarkSource.Hidden), (post.Kind, post.Source));
+            Assert.Equal("go away you muppet", post.Text);
+            Assert.DoesNotContain(Replier, post.ToString());
         });
     }
 
@@ -96,21 +110,19 @@ public class DarknessSourcesTests
     [Fact]
     public void Account_spam_passes_and_nothing_else_on_an_account_does()
     {
-        Assert.Equal(DarknessKind.Spam, DarknessFilter.AcceptAccount(new LabelEvent(Spammer, "spam", false, 1)));
-        Assert.Null(DarknessFilter.AcceptAccount(new LabelEvent(Spammer, "spam", true, 1)));   // neg
-        Assert.Null(DarknessFilter.AcceptAccount(new LabelEvent(Spammer, "rude", false, 1)));
-        Assert.Null(DarknessFilter.AcceptAccount(new LabelEvent(Spammer, "porn", false, 1)));
-        Assert.Null(DarknessFilter.AcceptAccount(new LabelEvent($"at://{Spammer}/app.bsky.feed.post/3k", "spam", false, 1)));
-        Assert.Null(DarknessFilter.AcceptAccount(new LabelEvent("did:plc:short", "spam", false, 1)));
+        Assert.Equal(DarknessKind.Spam, DarknessFilter.AcceptAccount(new LabelEvent(Spammer, Spam, false, 1)));
+        Assert.Null(DarknessFilter.AcceptAccount(new LabelEvent(Spammer, Spam, Neg: true, 1)));
+        Assert.Null(DarknessFilter.AcceptAccount(new LabelEvent(Spammer, Rude, false, 1)));
+        Assert.Null(DarknessFilter.AcceptAccount(new LabelEvent(Spammer, Porn, false, 1)));
+        Assert.Null(DarknessFilter.AcceptAccount(new LabelEvent($"at://{Spammer}/app.bsky.feed.post/3k", Spam, false, 1)));
+        Assert.Null(DarknessFilter.AcceptAccount(new LabelEvent("did:plc:short", Spam, false, 1)));
     }
 
     [Fact]
-    public void Latest_post_parsers_skip_reposts_and_take_text_only()
+    public void Latest_post_parser_skips_reposts_and_takes_text_only()
     {
-        Assert.StartsWith("win free crypto", PostTextFetcher.ParseAuthorFeed(JetstreamParserTests.Fixture("author-feed.json")));
-        Assert.Equal("fallback words from the pds", PostTextFetcher.ParseListRecords(JetstreamParserTests.Fixture("list-records.json")));
-        Assert.Null(PostTextFetcher.ParseAuthorFeed("{\"feed\":[]}"));
-        Assert.Null(PostTextFetcher.ParseListRecords("garbage"));
+        Assert.StartsWith("win free crypto", PostTextFetcher.ParseAuthorFeed(JetstreamParserTests.Fixture(AuthorFeed), signedOut: false));
+        Assert.Null(PostTextFetcher.ParseAuthorFeed("{\"feed\":[]}", signedOut: false));
     }
 
     [Fact]
@@ -120,8 +132,8 @@ public class DarknessSourcesTests
         var posts = new List<DarkPost>();
         var fetched = new List<string>();
         await DarknessFeed.RunAsync(
-            Of(new LabelEvent(Spammer, "spam", false, 1), new LabelEvent(Spammer, "spam", true, 2), new LabelEvent(Spammer, "porn", false, 3)),
-            (subject, _) => { fetched.Add(subject); return Task.FromResult(PostTextFetcher.ParseAuthorFeed(JetstreamParserTests.Fixture("author-feed.json"))); },
+            Of(new LabelEvent(Spammer, Spam, false, 1), new LabelEvent(Spammer, Spam, Neg: true, 2), new LabelEvent(Spammer, Porn, false, 3)),
+            (subject, _) => { fetched.Add(subject); return Task.FromResult(PostTextFetcher.ParseAuthorFeed(JetstreamParserTests.Fixture(AuthorFeed), signedOut: false)); },
             posts.Add, stats, CancellationToken.None, paceMs: 1);
 
         Assert.Equal([Spammer], fetched);
@@ -129,10 +141,9 @@ public class DarknessSourcesTests
         var post = Assert.Single(posts);
         Assert.Equal((DarknessKind.Spam, DarkSource.Label, "win free crypto now"), (post.Kind, post.Source, post.Text));
 
-        var room = RoomOfGuys();
+        var room = RoomOfFigures();
         room.Dark.Offer(post);
-        string everything = "";
-        for (long ms = 0; ms < 12000; ms += 250) everything += room.Render(100, 40, ms);
+        string everything = Watch(room, LabelWatchMs);
         Assert.True(room.Dark.SpawnedFromLabels > 0);
         Assert.Equal(0, room.Dark.SpawnedFromHidden);
         Assert.Contains("crypto", everything);
@@ -143,51 +154,55 @@ public class DarknessSourcesTests
     [Fact]
     public void Spawns_are_counted_by_source()
     {
-        var room = RoomOfGuys();
+        var room = RoomOfFigures();
         room.Dark.Offer(new DarkPost(DarknessKind.Rude, 1, "grr", DarkSource.Hidden));
-        for (long ms = 0; ms < 3000; ms += 250) room.Render(100, 40, ms);
+        Watch(room, HiddenWatchMs);
         Assert.Equal(1, room.Dark.SpawnedFromHidden);
         Assert.Equal(0, room.Dark.SpawnedFromLabels);
-        Assert.Equal(DarkSource.Hidden, room.Dark.Monsters[0].Source);
+        Assert.Equal(DarkSource.Hidden, room.Dark.Enemies[0].Source);
     }
 
     // ---- layers ------------------------------------------------------------------------------
 
-    private static Canvas Block(int w, int h, Rgb c)
+    private static readonly Rgb FigureRed = new(200, 10, 10), EnemyGreen = new(10, 200, 10);
+
+    private static Canvas Block(int side, Rgb colour)
     {
-        var cv = new Canvas(w, h);
-        cv.FillRect(0, 0, w, h, c);
-        return cv;
+        var canvas = new Canvas(side, side);
+        canvas.FillRect(0, 0, side, side, colour);
+        return canvas;
     }
 
     [Fact]
-    public void Monsters_draw_above_guys_whatever_the_call_order()
+    public void Enemies_draw_above_figures_whatever_the_call_order()
     {
-        var guy = Block(6, 6, new Rgb(200, 10, 10));
-        var monster = Block(6, 6, new Rgb(10, 200, 10));
-        var guyFirst = new Frame(20, 6);
-        guyFirst.Blit(guy, 4, 2); guyFirst.BlitTop(monster, 6, 4);
-        var monsterFirst = new Frame(20, 6);
-        monsterFirst.BlitTop(monster, 6, 4); monsterFirst.Blit(guy, 4, 2);
-        string a = guyFirst.ToAnsi();
-        Assert.Equal(a, monsterFirst.ToAnsi());
-        Assert.Contains("38;2;10;200;10", a);   // the monster shows where they overlap
+        const int Side = 6, FrameW = 20;
+        var figure = Block(Side, FigureRed);
+        var enemy = Block(Side, EnemyGreen);
+        var figureFirst = new Frame(FrameW, Side);
+        figureFirst.Blit(figure, 4, 2); figureFirst.BlitTop(enemy, 6, 4);
+        var enemyFirst = new Frame(FrameW, Side);
+        enemyFirst.BlitTop(enemy, 6, 4); enemyFirst.Blit(figure, 4, 2);
+        string ansi = figureFirst.ToAnsi();
+        Assert.Equal(ansi, enemyFirst.ToAnsi());
+        Assert.Contains($"38;2;{EnemyGreen.R};{EnemyGreen.G};{EnemyGreen.B}", ansi);   // the enemy shows where they overlap
     }
 
     [Fact]
-    public void Monster_text_is_never_hidden_by_a_guy_or_his_label()
+    public void Enemy_text_is_never_hidden_by_a_figure_or_his_label()
     {
-        var f = new Frame(40, 8);
-        f.Whisper("buy followers", 20, 4);
-        f.Blit(Block(12, 12, new Rgb(200, 10, 10)), 10, 0);   // a guy standing right over the text
-        f.Label("someone", 20, 3);
-        string plain = System.Text.RegularExpressions.Regex.Replace(f.ToAnsi(), "\x1b\\[[0-9;]*[A-Za-z]", "");
-        Assert.Contains("buy followers", plain);
+        const string Words = "buy followers";
+        var frame = new Frame(40, 8);
+        frame.Whisper(Words, 20, 4);
+        frame.Blit(Block(12, FigureRed), 10, 0);   // a figure standing right over the text
+        frame.Label("someone", 20, 3);
+        string plain = System.Text.RegularExpressions.Regex.Replace(frame.ToAnsi(), "\x1b\\[[0-9;]*[A-Za-z]", "");
+        Assert.Contains(Words, plain);
     }
 
     [Fact]
     public void Spam_motes_are_big_enough_to_read()
     {
-        Assert.True(MonsterSprites.MoteW >= 9 && MonsterSprites.MoteH >= 6);
+        Assert.True(DarkEnemySprites.MoteW >= 9 && DarkEnemySprites.MoteH >= 6);
     }
 }

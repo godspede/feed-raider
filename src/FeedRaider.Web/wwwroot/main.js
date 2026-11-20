@@ -1,66 +1,77 @@
 // Browser glue: xterm.js on one side, the .NET engine (via JS interop) on the other.
 // All URLs are relative so the page keeps working at a root or a subpath.
-// Single-file build seam: web/bundle-single-file.mjs sets globalThis.__frBundle to an object holding dotnetUrl, atprotoUrl and loadBootResource
-// before loading this file from memory. Without it (the normal site) everything loads from sibling files as usual.
+// Single-file build seam: web/bundle-single-file.mjs sets globalThis.__frBundle (its keys are set there, in the loader it writes into
+// the page) before loading this file from memory. It stands in for the sibling files: each `frBundle.` read below takes a module's
+// blob: URL, the music's track list or the runtime's resource loader from it. Without it (the normal site) everything loads from
+// sibling files as usual.
 const frBundle = globalThis.__frBundle;
 const page = await import(frBundle ? frBundle.pageUrl : './page.js');
 
 const params = new URLSearchParams(location.search);
 const handle = (params.get('handle') || '').trim().replace(/^@/, '');
 const debug = params.get('debug');
-// The game is the default view; ?mode=spectator keeps the crowd view.
 const spectatorMode = (params.get('mode') || '').toLowerCase() === 'spectator';
-if (!spectatorMode) document.body.classList.add('game');
-else {
+// body.game and body.debug are set before first paint, by the inline script at the top of index.html's body
+if (spectatorMode) {
   document.querySelector('header form').insertAdjacentHTML('beforeend', '<input type="hidden" name="mode" value="spectator">');
   // the game keeps the sound controls in its pause menu; the spectator view has no menu, so they go in its header
   document.getElementById('right').prepend(document.getElementById('vol'), document.getElementById('mute'));
 }
-// ?debug=feed keeps the header bar for its own sign-in
-if (debug === 'feed') document.body.classList.add('debug');
-const errorBox = document.getElementById('error');
+// ?debug=feed keeps the header bar for its own sign-in. It is a test page, not the game: the start page never shows over it
+// (CSS hides it on body.debug), nothing behind it is made inert, and no run or start page tour starts.
+const debugFeed = debug === 'feed';
+const darknessParam = (params.get('darkness') || 'on').toLowerCase();
+const errorBarEl = document.getElementById('error');
 // The game's messages (the error bar, the terminal's toasts) are drawn where a screen reader cannot read them, so each one is also
 // written to a visually hidden status element. The spectator view has no toasts and keeps its error bar as the alert.
 const announceBox = document.getElementById('announce');
+let logList = null;          // the pause menu's Feed log (page.createLogList), once the pause menu is built; declared up here because announce reads it
+const ANNOUNCE_GAP_MS = 50;   // long enough for the screen reader to see the box empty before it is filled again
 const announce = (message) => {
+  // while the pause menu is open its Feed log speaks the answer too, and rebuilds its list
+  if (logList && document.getElementById('menu')?.open) logList.said(message);
   announceBox.textContent = '';
   // an empty node first, so the same sentence twice in a row is announced twice
-  setTimeout(() => { announceBox.textContent = message; }, 50);
+  setTimeout(() => { announceBox.textContent = message; }, ANNOUNCE_GAP_MS);
 };
-if (!spectatorMode) errorBox.removeAttribute('role');
-const showError = (message) => {
-  errorBox.textContent = message;
-  errorBox.style.display = 'block';
-  if (!spectatorMode) announce(message);
-};
+if (!spectatorMode) errorBarEl.removeAttribute('role');
+const bar = page.createErrorBar({ el: errorBarEl, announce: (m) => { if (!spectatorMode) announce(m); } });
+const showError = bar.sticky;
+const showNotice = bar.notice;
 
 // The start page is plain HTML and CSS, painted before any script runs. This wires it up while the runtime still downloads:
 // the game starts once the runtime is ready and a way in is picked (a typed handle, Random, or a live sign-in session).
 let queued = null; // "play", "guest" or "random" once a start was pressed before the runtime was ready
 const savedKey = 'feed-raider.handle';
 const $ = (id) => document.getElementById(id);
-const startScreen = $('start');
+const startPage = $('start');
 const startHandle = $('start-handle');
-const randomFromUrl = (params.get('feed') || '').trim().toLowerCase() === 'random';
-const needsStart = !spectatorMode && !handle && !randomFromUrl;
+const isRandomFeed = (p) => (p.get('feed') || '').trim().toLowerCase() === 'random';
+const randomFromUrl = isRandomFeed(params);
+const needsStart = !spectatorMode && !handle && !randomFromUrl && !debugFeed;
 const finePointer = matchMedia('(pointer: fine)').matches;
-// ?handle= or ?feed=random in the URL skips the panel: only the title and the load bar show until the game starts
-if (!needsStart) startScreen.classList.add('booting');
-else startHandle.value = localStorage.getItem(savedKey) || '';
+// ?handle= or ?feed=random in the URL skips the start page's buttons: only the title and the load bar show until the game starts
+if (!needsStart) startPage.classList.add('booting');
+else startHandle.value = savedHandle();
 // The start page covers the whole window. What lies behind it (the header, the terminal and xterm's helper textarea, which
 // would take Tab and keep it) is inert until the game starts, so Tab walks the cards, the handle box and the buttons.
-const behindStart = spectatorMode ? [] : [...document.body.children].filter((n) => n !== startScreen && n.tagName !== 'SCRIPT');
+const behindStart = spectatorMode || debugFeed ? [] : [...document.body.children].filter((n) => n !== startPage && n.tagName !== 'SCRIPT');
 for (const n of behindStart) n.inert = true;
 
+const NARROW_SCREEN_PX = 600, FONT_PX_NARROW = 12, FONT_PX_WIDE = 14;   // a phone-width page gets the smaller type so the field fits
+const SPECTATOR_SCROLLBACK_LINES = 1000;   // the spectator view keeps history to scroll back through
+const TERM_BACKGROUND = '#050711', TERM_FOREGROUND = '#f1f3f5';
+// xterm control sequences: hide the cursor, clear the screen with the cursor home, a khaki hint colour, and back to plain text
+const HIDE_CURSOR = '\x1b[?25l', CLEAR_SCREEN = '\x1b[H\x1b[2J', HINT_COLOUR = '\x1b[38;2;216;203;163m', PLAIN_TEXT = '\x1b[0m';
 const term = new Terminal({
   convertEol: false,
   cursorBlink: false,
   disableStdin: true,
   fontFamily: 'ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace',
-  fontSize: !spectatorMode && window.innerWidth < 600 ? 12 : 14,
+  fontSize: !spectatorMode && window.innerWidth < NARROW_SCREEN_PX ? FONT_PX_NARROW : FONT_PX_WIDE,
   customGlyphs: true,
-  scrollback: spectatorMode ? 1000 : 0, // the game redraws in place; history is dead memory
-  theme: { background: '#181a11', foreground: '#e9ead3', selectionBackground: 'transparent' },
+  scrollback: spectatorMode ? SPECTATOR_SCROLLBACK_LINES : 0, // the game redraws in place; history is dead memory
+  theme: { background: TERM_BACKGROUND, foreground: TERM_FOREGROUND, selectionBackground: 'transparent' },
 });
 const fit = new FitAddon.FitAddon();
 term.loadAddon(fit);
@@ -70,7 +81,7 @@ term.open(document.getElementById('term'));
 // from the page to the gear and the side panel's link without stopping there. The spectator view keeps it a normal stop.
 term.attachCustomKeyEventHandler((e) => e.key !== 'Tab');
 const helperTextarea = term.textarea;
-term.write('\x1b[?25l');
+term.write(HIDE_CURSOR);
 fit.fit();
 
 // The default DOM renderer rebuilds spans for every changed cell, which is the slow part on a weak phone or old laptop. The
@@ -84,11 +95,14 @@ const loadWebgl = () => {
   try {
     const gl = new WebglAddon.WebglAddon();
     gl.onContextLoss(() => gl.dispose());
+    // The addon raises its atlas events from inside a draw, while it is placing a glyph on a page, and xterm drops the atlas the
+    // moment the option changes: the timer lets that draw finish first.
     page.watchAtlas(gl, () => setTimeout(() => {
       term.options.drawBoldTextInBrightColors = !term.options.drawBoldTextInBrightColors;
     }));
     term.loadAddon(gl);
   } catch (e) {
+    // a browser without WebGL2 throws here; the DOM renderer already draws every cell, so the game carries on unchanged
     console.warn('webgl renderer unavailable, using the DOM renderer: ' + (e.message || e));
   }
 };
@@ -163,7 +177,7 @@ const audioReady = (async () => {
   try {
     const opts = !musicWanted ? {} : frBundle ? { tracks: frBundle.music } : { manifestUrl: 'music/tracks.json' };
     const mod = await import(frBundle ? frBundle.musicUrl : './music.js');
-    if (mod.init({ ...opts, sfx: sfxWanted })) music = mod;
+    if (mod.init({ ...opts, sfx: sfxWanted, thin: page.thinConnection })) music = mod;
     if (sfxWanted) {
       const s = await import(frBundle ? frBundle.sfxUrl : './sfx.js');
       if (s.init({ master: mod.master, duck: mod.duck })) sfx = s;
@@ -175,65 +189,67 @@ const audioReady = (async () => {
 const musicCue = (name) => { try { music?.cue(name); } catch { /* audio is best effort: a failed cue must not stop the game */ } };
 const sfxPlay = (name, pan, step, size) => { try { sfx?.play(name, pan, step, size); } catch { /* audio is best effort: a failed effect must not stop the game */ } };
 const bestKey = 'feed-raider.best';
-const bestScore = () => { try { return Number.parseInt(localStorage.getItem(bestKey), 10) || 0; } catch { return 0; /* storage unavailable: no best score kept */ } };
-const saveBestScore = (n) => { try { localStorage.setItem(bestKey, String(n)); } catch { /* storage unavailable: the score is just not kept */ } };
-if (needsStart) audioReady.then(() => musicCue('menu'));
+// localStorage throws a DOMException where the browser blocks it (or, on a save, where it is full)
+const bestScore = () => {
+  try { return Number.parseInt(localStorage.getItem(bestKey), 10) || 0; }
+  catch (e) { if (!(e instanceof DOMException)) throw e; return 0; /* storage unavailable: no best score kept */ }
+};
+const saveBestScore = (n) => {
+  try { localStorage.setItem(bestKey, String(n)); }
+  catch (e) { if (!(e instanceof DOMException)) throw e; /* storage unavailable: the score is just not kept */ }
+};
+// Function declarations, not consts: the start page reads the saved handle at load, above this line
+function savedHandle() {
+  try { return localStorage.getItem(savedKey) || ''; }
+  catch (e) { if (!(e instanceof DOMException)) throw e; return ''; /* storage unavailable: no handle kept, the box starts empty */ }
+}
+function saveHandle(h) {
+  try { localStorage.setItem(savedKey, h); }
+  catch (e) { if (!(e instanceof DOMException)) throw e; /* storage unavailable: the handle is just not kept */ }
+}
+if (needsStart) audioReady.then(() => musicCue('start'));
 
 // Frames the terminal has not drawn yet; the game skips drawing while the terminal is behind.
 let pendingWrites = 0;
-const avatarCache = new Map();
+// one frame may be drawing while the game builds the next; any more and the terminal is falling behind
+const MAX_PENDING_WRITES = 1;
+// The settings the page keeps in localStorage, which throws a DOMException where the browser blocks it.
+const pageStorage = { get: (k) => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) };
 
-// Fetches an author's avatar and downsamples it to 8x8 as 64 comma-joined 0xRRGGBB values. The avatar URL is on Bluesky's CDN,
-// which sends no CORS headers (reading it only logs an error), so the blob comes from the author's own PDS: getBlob with the
-// CID the URL names, or with the one getRecord finds in the profile. If that fails too the answer is null and the game keeps
-// its tinted placeholder. One lookup per author, shared by every post of theirs.
-function fetchAvatar(did, url) {
-  if (!avatarCache.has(did)) avatarCache.set(did, loadAvatar(did, url));
-  return avatarCache.get(did);
-}
-const AVATAR_SIZE = 8, AVATAR_PIXELS = AVATAR_SIZE * AVATAR_SIZE, RGBA_BYTES = 4;
-async function loadAvatar(did, url) {
-  const tryBlob = async (get) => {
-    try {
-      const r = await get();
-      if (!r.ok) return null;
-      const bmp = await createImageBitmap(await r.blob());
-      const c = new OffscreenCanvas(AVATAR_SIZE, AVATAR_SIZE);
-      const x = c.getContext('2d', { willReadFrequently: true });
-      x.drawImage(bmp, 0, 0, AVATAR_SIZE, AVATAR_SIZE);
-      const px = x.getImageData(0, 0, AVATAR_SIZE, AVATAR_SIZE).data;
-      const out = [];
-      for (let i = 0; i < AVATAR_PIXELS; i++) out.push((px[i * RGBA_BYTES] << 16) | (px[i * RGBA_BYTES + 1] << 8) | px[i * RGBA_BYTES + 2]);
-      return out.join(',');
-    } catch { return null; /* the blob is blocked, gone or not an image: no avatar */ }
-  };
-  const docUrl = page.didDocUrl(did);
-  if (!docUrl) return null;
-  try {
-    const doc = await (await fetch(docUrl)).json();
-    const pds = (doc.service || []).find((s) => s.id === '#atproto_pds' || s.id === did + '#atproto_pds')?.serviceEndpoint;
-    if (!pds) return null;
-    const blob = (cid) => tryBlob(() => fetch(`${pds}/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${cid}`));
-    const named = page.avatarCid(url);
-    let res = named ? await blob(named) : null;
-    if (!res) {
-      // no CID in the URL, or the profile has a new avatar since the post was fetched
-      const rec = await (await fetch(`${pds}/xrpc/com.atproto.repo.getRecord?repo=${did}&collection=app.bsky.actor.profile&rkey=self`)).json();
-      const cid = rec?.value?.avatar?.ref?.$link;
-      if (cid && cid !== named) res = await blob(cid);
-    }
-    return res;
-  } catch { return null; /* blocked or gone: no avatar */ }
-}
+// Avatars and a post's pictures, from the author's own PDS (Bluesky's CDN sends no CORS headers, so a page cannot read its
+// pixels), a few at a time, with a size and a time limit, and only while the Pictures setting is on; see page.pictureReader. A
+// picture that is not fetched leaves the game's tinted placeholder or its empty box.
+const RGBA_BYTES = 4, RED_SHIFT = 16, GREEN_SHIFT = 8;
+const packPixels = (px, n) => { const out = []; for (let i = 0; i < n; i++) out.push((px[i * RGBA_BYTES] << RED_SHIFT) | (px[i * RGBA_BYTES + 1] << GREEN_SHIFT) | px[i * RGBA_BYTES + 2]); return out; };
+let syncPicturesSwitch = () => {};   // shows the setting on the pause menu's Pictures switch; installMenu fills it in
+const pictures = page.createPictures({ storage: pageStorage, thin: page.thinConnection(), switchedOff: () => pictureReader.switchedOff() });
+const pictureReader = page.pictureReader({
+  fetch,
+  pdsOf: page.pdsFinder({ fetch }),
+  decode: async (blob, w, h) => {
+    // decoded straight to the size asked for, so a large photo is never held at full size
+    const bmp = await createImageBitmap(blob, { resizeWidth: w, resizeHeight: h, resizeQuality: 'medium' });
+    const x = new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true });
+    x.drawImage(bmp, 0, 0);
+    bmp.close();
+    return packPixels(x.getImageData(0, 0, w, h).data, w * h);
+  },
+  wanted: () => pictures.on,
+  tooSlow: () => {
+    pictures.offForVisit();
+    syncPicturesSwitch();
+    showNotice('Pictures are off because the connection is too slow for them. The Pictures switch in the pause menu turns them back on.');
+  },
+});
 
 // --- start page: sign in, play as someone (a typed handle) or play Random; a start pressed before the runtime is ready is queued ---
-// resolves { handle, feed }; armed again for each run, so the start page can pick anew after Back to main menu
+// resolves { handle, feed }; armed again for each run, so the start page can pick anew after Back to start page
 let pickHandle, handlePicked;
 const armPick = () => { handlePicked = new Promise((resolve) => { pickHandle = resolve; }); };
 armPick();
 let busy = false;
 const startError = $('start-error');
-// the handle box's suggestion list; it opens under the box and would cover the error line
+// the handle box's suggestion list; it opens under the box and would cover the error bar
 let closeSuggestions = () => {};
 const startFail = (message) => {
   closeSuggestions();
@@ -254,10 +270,35 @@ const showSuggestNote = (message) => { suggestNote = message; drawNote(); };
 if (oauthCallback && needsStart) showNote(page.CALLBACK_WAIT_NOTE);
 const startEls = {
   form: $('start-handle-form'), load: $('start-load'), loadText: $('start-load-text'), retry: $('start-retry'), bar: $('start-bar'), barFill: $('start-bar').firstElementChild,
-  cardSignIn: $('start-card-signin'), signIn: $('start-login'), guest: $('start-guest'), random: $('start-random'), hint: $('start-hint'),
+  cardSignIn: $('start-card-signin'), signIn: $('start-signin'), guest: $('start-guest'), random: $('start-random'), hint: $('start-hint'),
   signed: $('start-signed'), play: $('start-play'), signOut: $('start-signout'),
 };
+// "Play as someone" is a big button like the others: the first press opens the handle box, the next one (or Enter in the box) plays.
+// Closed again whenever the start page comes back.
+const guestCombo = $('start-combo');
+const setGuestOpen = (open) => {
+  guestCombo.hidden = !open;
+  startEls.guest.setAttribute('aria-expanded', String(open));
+};
+startEls.guest.setAttribute('aria-controls', 'start-combo');
+setGuestOpen(false);
+if (!spectatorMode) {
+  $('howto-info').append($('info').content.cloneNode(true));
+  $('start-howto').addEventListener('click', () => $('howto').showModal());
+  $('howto-close').addEventListener('click', () => $('howto').close());
+}
 const currentSession = () => (auth ? JSON.parse(auth.session() || 'null') : null);
+// Bluesky's CDN serves an avatar full size under /img/avatar/ and small under /img/avatar_thumbnail/; the start page's avatar boxes
+// are 32px at most, so they take the small one. Any other address is used as it is.
+const CDN_AVATAR = 'https://cdn.bsky.app/img/avatar/', CDN_AVATAR_THUMBNAIL = 'https://cdn.bsky.app/img/avatar_thumbnail/';
+const avatarThumbnail = (url) => (url.startsWith(CDN_AVATAR) ? CDN_AVATAR_THUMBNAIL + url.slice(CDN_AVATAR.length) : url);
+// a CDN that stops serving the small avatar must not leave an empty box, so a failed thumbnail loads the full-size one
+function loadAvatar(img, url) {
+  const small = avatarThumbnail(url);
+  if (small !== url) img.addEventListener('error', () => { img.src = url; }, { once: true });
+  img.decoding = 'async';
+  img.src = small;
+}
 let avatarFor = null;
 // The signed-in player's face; best effort, the name shows without it.
 async function showAvatar(s) {
@@ -272,15 +313,18 @@ async function showAvatar(s) {
       const img = document.createElement('img');
       img.id = 'start-avatar';
       img.alt = '';
-      img.src = url;
+      loadAvatar(img, url);
       $('start-who').prepend(img);
     }
-  } catch { /* no avatar */ }
+  } catch (e) {
+    // fetch fails with a TypeError when offline, and a broken answer fails to parse: either way the name shows without the face
+    if (!(e instanceof TypeError || e instanceof SyntaxError)) throw e;
+  }
 }
 renderStartPage = () => {
   if (spectatorMode) return;
   const s = currentSession();
-  const view = page.startView({ loginAvailable: authPending || !!auth, handle: s?.handle ?? null, load: loadState, queued, busy, authPending });
+  const view = page.startView({ signInAvailable: authPending || !!auth, handle: s?.handle ?? null, load: loadState, queued, busy, authPending });
   page.renderStart(startEls, view);
   busyNote = view.busyNote;
   drawNote();
@@ -289,17 +333,17 @@ renderStartPage = () => {
 };
 renderStartPage();
 // Saves the handle and writes the choice into the URL, so a reload or shared link skips this screen. Random is ?feed=random with
-// no handle and is not remembered. The page stays up until the game starts; before the runtime is ready the button counts.
-function pick(h, kind, feed = '') {
+// no handle and is not remembered. The pick is marked queued on the start page, which stays up until the game starts.
+function commitPick(h, kind, feed = '') {
   const p = new URLSearchParams(location.search);
-  if (h) { localStorage.setItem(savedKey, h); p.set('handle', h); } else p.delete('handle');
-  if (feed) p.set('feed', feed); else if ((p.get('feed') || '').toLowerCase() === 'random') p.delete('feed');
+  if (h) { saveHandle(h); p.set('handle', h); } else p.delete('handle');
+  if (feed) p.set('feed', feed); else if (isRandomFeed(p)) p.delete('feed');
   history.replaceState(null, '', location.pathname + '?' + p + location.hash);
   queued = kind;
   renderStartPage();
   pickHandle({ handle: h, feed });
 }
-// wired with ?handle= in the URL too: Back to main menu brings the start page up later
+// wired with ?handle= in the URL too: Back to start page brings the start page up later
 if (!spectatorMode) {
   startEls.retry.addEventListener('click', () => location.reload());
   // sign in: popup, or redirect where a popup cannot work; Bluesky's own page asks which account. Once the popup shows Bluesky
@@ -333,10 +377,10 @@ if (!spectatorMode) {
       }
     }
   });
-  // play as someone (also what Enter in the handle box does): wingmen from the follows of the typed handle
   $('start-handle-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     if (busy || queued) return;
+    if (guestCombo.hidden) { setGuestOpen(true); startHandle.focus(); return; }
     // a search still in flight must not open the list over the answer
     closeSuggestions();
     const t = page.guestTarget(startHandle.value);
@@ -348,26 +392,25 @@ if (!spectatorMode) {
     const r = await fetch(`${page.PUBLIC_API}/xrpc/com.atproto.identity.resolveHandle?handle=` + encodeURIComponent(t.handle)).catch(() => null);
     busy = false;
     renderStartPage();
-    if (!r) return startFail('could not reach Bluesky, check your connection');
-    if (r.status === 400 || r.status === 404) return startFail(`no Bluesky account is called @${t.handle}`);
-    if (!r.ok) return startFail(`Bluesky did not answer (${r.status}), try again`);
-    pick(t.handle, 'guest');
+    if (!r) return startFail('Could not reach Bluesky. Check your connection.');
+    if (r.status === 400 || r.status === 404) return startFail(`Could not find @${t.handle} on Bluesky.`);
+    if (!r.ok) return startFail(`Bluesky answered with an error (${r.status}). Try again.`);
+    commitPick(t.handle, 'guest');
   });
-  // random: posts from public comedy feeds, one click
   startEls.random.addEventListener('click', () => {
     if (busy || queued) return;
     startError.style.display = 'none';
-    pick('', 'random', 'random');
+    commitPick('', 'random', 'random');
   });
   startEls.play.addEventListener('click', () => {
     const s = currentSession();
-    if (s && !queued) pick(s.handle, 'play');
+    if (s && !queued) commitPick(s.handle, 'play');
   });
   startEls.signOut.addEventListener('click', async () => {
-    await auth.logout();
+    await auth.signOut();
     renderSession();
     renderStartPage();
-    if (finePointer) startHandle.focus();
+    if (finePointer) startEls.guest.focus();
   });
 
   // typeahead: accounts matching what is typed, with avatars; Up/Down move, Enter takes the highlighted one, Esc closes
@@ -387,7 +430,7 @@ if (!spectatorMode) {
       const img = document.createElement('img');
       img.alt = '';
       img.referrerPolicy = 'no-referrer';
-      if (a.avatar) img.src = a.avatar;
+      if (a.avatar) loadAvatar(img, a.avatar);
       const text = document.createElement('span');
       const name = document.createElement('span');
       name.className = 'name';
@@ -412,7 +455,7 @@ if (!spectatorMode) {
       showSuggestions(found);
       showSuggestNote(!found.length && info?.answered ? 'No matching accounts' : '');
     },
-    onError: () => showSuggestNote('Suggestions unavailable, type the full handle'),
+    onError: () => showSuggestNote('Suggestions unavailable; type the full handle'),
   });
   const choose = (i) => {
     startHandle.value = actors[i].handle;
@@ -422,13 +465,16 @@ if (!spectatorMode) {
   closeSuggestions = () => { typeahead.cancel(); showSuggestions([]); showSuggestNote(''); };
   startHandle.addEventListener('input', () => { showSuggestNote(''); typeahead.input(startHandle.value); });
   startHandle.addEventListener('blur', closeSuggestions);
+  // a mouse press on the button leaves the focus in the box: a blur would clear the status line, the button would move, and the release would miss it
+  startEls.guest.addEventListener('mousedown', (ev) => { if (!guestCombo.hidden) ev.preventDefault(); });
   startHandle.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape' && actors.length) { ev.preventDefault(); showSuggestions([]); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); setGuestOpen(false); startEls.guest.focus(); }
     else if ((ev.key === 'ArrowDown' || ev.key === 'ArrowUp') && actors.length) { ev.preventDefault(); setActive(page.stepActive(active, actors.length, ev.key)); }
     else if (ev.key === 'Enter' && active >= 0) { ev.preventDefault(); choose(active); }
   });
 }
-// a restored session (or the one back from the redirect) turns the panel into "Play as @handle"
+// a restored session (or the one back from the redirect) turns the first button into Play, with the handle in the small print
 authReady.then(() => {
   authPending = false;
   const why = auth?.initError();
@@ -442,7 +488,7 @@ authReady.then(() => {
   if (needsStart && auth) {
     page.watchSaved({
       restore: () => auth.adoptSaved(),
-      signedIn: () => !!currentSession() || startScreen.hidden || !!queued,
+      signedIn: () => !!currentSession() || startPage.hidden || !!queued,
       onSession: () => {
         startError.style.display = 'none';
         renderStartPage();
@@ -453,11 +499,15 @@ authReady.then(() => {
 });
 
 const { setModuleImports, getAssemblyExports, getConfig } = await runtimeReady;
+// the game's download is done, so the start page's track may be fetched ahead of the first click
+audioReady.then(() => music?.allowFetchAhead());
 setModuleImports('main.js', {
   writeFrame: (frame) => { pendingWrites++; term.write(frame, () => { pendingWrites--; }); },
-  termBusy: () => pendingWrites > 1,
-  fetchAvatar,
+  termBusy: () => pendingWrites > MAX_PENDING_WRITES,
+  fetchAvatar: pictureReader.avatar,
+  fetchPicture: pictureReader.picture,
   showError,
+  showNotice,
   announce,
   musicCue,
   sfxPlay,
@@ -468,6 +518,8 @@ setModuleImports('main.js', {
   authGetTimeline: async (cursor, limit) => liveAuth().getTimeline(cursor, limit),
   authGetPostThread: async (uri, depth, parentHeight) => liveAuth().getPostThread(uri, depth, parentHeight),
   authLike: async (uri, cid) => liveAuth().like(uri, cid),
+  authRepost: async (uri, cid) => liveAuth().repost(uri, cid),
+  authDelete: async (recordUri) => liveAuth().remove(recordUri),
 });
 
 const exports = await getAssemblyExports(getConfig().mainAssemblyName);
@@ -480,27 +532,27 @@ window.addEventListener('resize', resize);
 
 // --- sign-in (ATProto OAuth): the header's Sign in / Sign out, for the spectator view and ?debug=feed; the start page has its own ---
 await authReady;
-const loginForm = document.getElementById('login');
+const signInForm = document.getElementById('signin');
 const whoBox = document.getElementById('who');
 const renderSession = () => {
   const s = currentSession();
-  loginForm.style.display = s || !auth ? 'none' : '';
+  signInForm.style.display = s || !auth ? 'none' : '';
   whoBox.style.display = s ? '' : 'none';
   whoBox.querySelector('span').textContent = s ? '@' + s.handle : '';
   return s;
 };
 renderSession();
 if (auth) {
-  loginForm.addEventListener('submit', async (ev) => {
+  signInForm.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     try {
-      await auth.login(new FormData(loginForm).get('login-handle'));
+      await auth.signInRedirect(new FormData(signInForm).get('signin-handle'));
     } catch (e) {
-      showError('sign in: ' + (e.message || e));
+      showError(page.signInFailed(e));
     }
   });
-  document.getElementById('logout').addEventListener('click', async () => {
-    await auth.logout();
+  document.getElementById('signout').addEventListener('click', async () => {
+    await auth.signOut();
     renderSession();
     if (debug === 'feed') renderDebug();
   });
@@ -519,70 +571,118 @@ async function renderDebug() {
   panel.replaceChildren(el('h2', { textContent: 'feed debug' }));
   const me = renderSession();
   if (!me) {
-    panel.append(el('p', { textContent: auth ? 'Sign in with Bluesky (top right) to read the feed.' : 'Sign-in is unavailable on this page (it needs HTTPS or localhost).' }));
+    panel.append(el('p', { textContent: auth ? 'Sign in with Bluesky (top right) to read the feed.' : 'Sign-in is not available on this page (it needs HTTPS or localhost).' }));
     return;
   }
   const feed = params.get('feed') || 'discover';
   const status = el('p', { textContent: 'loading ' + feed + '...' });
   panel.append(status);
-  let page;
+  let feedPage;
   try {
-    page = JSON.parse(await exports.Bridge.FeedPage(feed, null, DEBUG_POSTS));
+    feedPage = JSON.parse(await exports.Bridge.FeedPage(feed, null, DEBUG_POSTS));
   } catch (e) {
     status.textContent = 'feed failed: ' + (e.message || e);
     return;
   }
-  status.textContent = `${page.posts.length} posts from ${feed} (as @${me.handle})`;
-  for (const p of page.posts.slice(0, DEBUG_POSTS)) panel.append(postRow(p));
+  status.textContent = `${feedPage.posts.length} posts from ${feed} (as @${me.handle})`;
+  for (const p of feedPage.posts.slice(0, DEBUG_POSTS)) panel.append(postRow(p));
 }
 function postRow(p) {
   const result = el('span', { className: 'result' });
-  const like = el('button', { textContent: 'like' });
-  like.onclick = async () => {
-    like.disabled = true;
-    try { result.textContent = 'liked: ' + JSON.parse(await exports.Bridge.Like(p.uri)).uri; }
-    catch (e) { result.textContent = 'like failed: ' + (e.message || e); like.disabled = false; }
+  const made = []; // the records this row has written, newest last: undo deletes the newest
+  const wireWriteButton = (button, name, done, send) => {
+    button.onclick = async () => {
+      button.disabled = true;
+      try {
+        const uri = await send();
+        if (uri) made.push(uri);
+        result.textContent = `${done}: ${uri}`;
+      } catch (e) { result.textContent = `${name} failed: ` + (e.message || e); button.disabled = false; }
+    };
+    return button;
+  };
+  const like = wireWriteButton(el('button', { textContent: 'like' }), 'like', 'liked', async () => JSON.parse(await exports.Bridge.Like(p.uri)).uri);
+  const repost = wireWriteButton(el('button', { textContent: 'repost' }), 'repost', 'reposted', async () => JSON.parse(await exports.Bridge.Repost(p.uri)).uri);
+  const undo = el('button', { textContent: 'undo' });
+  undo.onclick = async () => {
+    const uri = made.at(-1);
+    if (!uri) { result.textContent = 'nothing to undo'; return; }
+    undo.disabled = true;
+    try {
+      await exports.Bridge.Delete(uri);
+      made.pop();
+      result.textContent = 'undone: ' + uri;
+      // the written button may be pressed again once its record is gone
+      (uri.includes('/app.bsky.feed.repost/') ? repost : like).disabled = false;
+    } catch (e) { result.textContent = 'undo failed: ' + (e.message || e); }
+    undo.disabled = false;
   };
   return el('div', { className: 'post' },
     el('div', { className: 'meta', textContent: `@${p.authorHandle}${p.replyRoot ? ' (a reply)' : ''}  likes ${p.likeCount}  reposts ${p.repostCount}  replies ${p.replyCount}` }),
     el('div', { className: 'text', textContent: p.text }),
-    el('div', {}, like, result));
+    el('div', {}, like, repost, undo, result));
 }
 if (debug === 'feed') renderDebug();
 
 // --- the game ---
 const gear = $('gear'), side = $('side');
 let menu = null;              // the pause menu (page.createMenu), once the game is up
+let runsStarted = 0;          // counts startRun's runs, so a run that ends late knows whether a newer one is under way
 let releaseKeys = () => {};   // lets go of the held game keys and presses; installGameInput fills it in
+// The feed speed (1 to 5): ?feed-speed= for this visit, else the step kept in localStorage. The game hears of a change from a key at once,
+// from the pause menu's slider when the pause menu closes; Host.SetFeedSpeed is a no-op while no run is on.
+const feedSpeed = page.createFeedSpeed({
+  search: location.search,
+  storage: pageStorage,
+  // the step is already kept on the page; a game that did not take it must not stop the run starting or the pause menu closing
+  tell: (step, say) => { try { exports.Host.SetFeedSpeed(step, say); } catch (e) { console.warn('feed speed not passed on: ' + (e?.message || e)); } },
+});
 // A hidden tab pauses the engine's loop, feed paging and both live sockets, and the music; coming back resumes all of it.
-function pauseForTab() {
+function followTabVisibility() {
   const hidden = document.hidden;
-  try { exports.Host.SetHidden(hidden); } catch { /* the engine is not up yet */ }
+  exports.Host.SetHidden(hidden);
   try { music?.setPaused(hidden); } catch { /* audio is best effort: a failed pause must not stop the game */ }
 }
-document.addEventListener('visibilitychange', pauseForTab);
-// the runtime is up: a start queued on the start page goes now, and the page lets go of its "loading" label
+document.addEventListener('visibilitychange', followTabVisibility);
+// a tab opened in the background is hidden from the start, before the tour or a run sees a frame
+followTabVisibility();
+// The start page's backdrop: the game plays itself under the start page (Host.StartTour), on built-in posts, with no sound effects and
+// nothing saved. It runs only while the start page shows. Reduced motion gets it at a quarter speed.
+const tour = page.createTour({
+  // the tour is only a backdrop: one that stops leaves the start page over a still field, and the start page still works
+  start: (seed, slow) => { exports.Host.StartTour(seed, slow).catch((e) => console.warn('start page tour stopped: ' + (e?.message || e))); },
+  stop: () => exports.Host.StopTour(),
+  sleep: () => { exports.Host.SetTourAsleep(true); startPage.classList.add('asleep'); },
+  wake: () => { exports.Host.SetTourAsleep(false); startPage.classList.remove('asleep'); },
+  slow: matchMedia('(prefers-reduced-motion: reduce)').matches,
+});
+// Anything the visitor does anywhere on the page keeps the tour awake. Capture, so a handler that stops an event still counts it.
+for (const type of ['keydown', 'pointermove', 'pointerdown', 'touchstart', 'wheel']) {
+  window.addEventListener(type, () => tour.visitorActed(), { capture: true, passive: true });
+}
+tour.ready();
+if (needsStart && !queued) tour.show();
 setLoad('ready');
 if (spectatorMode) {
   if (!handle) {
-    term.write('\x1b[38;2;216;203;163menter a Bluesky handle above (or add ?handle=bsky.app to the URL)\x1b[0m');
+    term.write(HINT_COLOUR + 'Enter a Bluesky handle above, or add ?handle=bsky.app to the address.' + PLAIN_TEXT);
   }
   // Main is empty; the exports are usable straight after create(), so dotnet.run() is not needed.
   if (handle) {
-    try { await exports.Host.Start(handle, (params.get('darkness') || 'on').toLowerCase()); }
+    try { await exports.Host.StartSpectator(handle, darknessParam); }
     catch (e) {
       console.warn('spectator failed: ' + (e?.message || e));
-      showError(`could not reach Bluesky for @${handle}, check your connection and try again`);
+      showError(`Could not reach Bluesky for @${handle}. Check your connection and try again.`);
     }
   }
 } else {
-  // waits here for the start screen's click (or a session) unless the URL already named a handle
-  let choice = handle || randomFromUrl ? { handle, feed: params.get('feed') || '' } : await handlePicked;
+  // waits here for the start page's click (or a session) unless the URL already named a handle
+  let choice = !debugFeed && (handle || randomFromUrl) ? { handle, feed: params.get('feed') || '' } : await handlePicked;
   await audioReady;
-  pauseForTab();
+  followTabVisibility();
   installGameInput();
   installMenu();
-  // one run per pick; Back to main menu ends it and brings the start page back for the next pick
+  // one run per pick; Back to start page ends it and brings the start page back for the next pick
   for (;;) {
     armPick();
     startRun(choice);
@@ -591,8 +691,10 @@ if (spectatorMode) {
 }
 
 function startRun(choice) {
+  tour.hide();
+  const run = ++runsStarted;
   for (const n of behindStart) n.inert = false;
-  startScreen.hidden = true;
+  startPage.hidden = true;
   // hides the header's sign-in and watch forms; StartGame runs the game, so this must come first
   document.body.classList.add('playing');
   helperTextarea.tabIndex = -1;
@@ -601,22 +703,41 @@ function startRun(choice) {
   gear.hidden = false;
   placeChrome();
   requestAnimationFrame(placeChrome);   // once the terminal has painted at its final cell size
-  // the run ends when Back to main menu cancels it; it is not waited on, so the next pick never hangs on a slow socket
-  exports.Host.StartGame(choice.handle, choice.feed || params.get('feed') || '', (params.get('darkness') || 'on').toLowerCase(), params.get('fps') === '1', params.get('quality') === 'adaptive',
+  giveGrants();
+  // the run ends when Back to start page cancels it; it is not waited on, so the next pick never hangs on a slow socket
+  exports.Host.StartGame(choice.handle, choice.feed || params.get('feed') || '', darknessParam, params.get('fps') === '1', params.get('quality') === 'adaptive',
     // development aid: ?stage=6 starts the run at stage 6, to see the later enemies without playing up to them
-    Number.parseInt(params.get('stage') || '1', 10) || 1).catch((e) => showError(e?.message || String(e)));
+    Number.parseInt(params.get('stage') || '1', 10) || 1,
+    // development aid: ?boss=4 opens the run on the warning of stage 4's boss
+    Number.parseInt(params.get('boss') || '0', 10) || 0,
+    // development aid: ?gates=off runs without boss gates, as the balance tests do
+    (params.get('gates') || 'on').toLowerCase() !== 'off').catch((e) => showError(e?.message || String(e)))
+    // pictures still waiting for a turn are for cards no longer on screen; a newer run's own asks are left alone
+    .finally(() => { if (run === runsStarted) pictureReader.drop(); });
+  // StartGame has made the game by now (nothing in it waits first), so the step goes in before the first card
+  feedSpeed.begin();
 }
 
-// --- the pause menu: the gear or Esc opens it, the game holds still behind it; Back to main menu ends the run ---
+// --- the pause menu: the gear or Esc opens it, the game holds still behind it; Back to start page ends the run ---
 function installMenu() {
-  for (const box of [$('side'), $('menu-info')]) box.append($('info').content.cloneNode(true));
+  for (const box of [side, $('menu-info')]) box.append($('info').content.cloneNode(true));
   $('menu-sound').hidden = !music && !sfx;
   const dialog = $('menu');
+  const speedSlider = page.bindFeedSlider($('feed-speed'), feedSpeed, $('feed-speed-name'));
+  const picturesSwitch = page.bindPicturesSwitch($('pictures'), pictures, $('pictures-name'));
+  syncPicturesSwitch = picturesSwitch.sync;
+  logList = page.createLogList({
+    els: { list: $('menu-log-list'), empty: $('menu-log-empty'), status: $('menu-log-status') },
+    read: () => exports.Host.FeedLog(),
+    toggle: (uri, action) => exports.Host.Toggle(uri, action),
+  });
   menu = page.createMenu({
-    show: () => dialog.showModal(),
+    refreshLog: () => { logList.clear(); logList.refresh(); },
+    show: () => { speedSlider.sync(); picturesSwitch.sync(); dialog.showModal(); },
     hide: () => { if (dialog.open) dialog.close(); },
     setPaused: (on) => exports.Host.SetMenu(on),
     releaseKeys,
+    resuming: () => feedSpeed.flush(),
     quit: () => exports.Host.Quit(),
     toStart: showStartPage,
   });
@@ -627,17 +748,44 @@ function installMenu() {
   });
   dialog.addEventListener('cancel', (e) => { e.preventDefault(); menu.close(); });
   $('menu-resume').addEventListener('click', () => menu.close());
-  $('menu-quit').addEventListener('click', () => menu.backToMenu());
+  $('menu-quit').addEventListener('click', () => menu.backToStartPage());
   $('menu-signout').addEventListener('click', async () => {
-    // a failed logout is logged, not shown: the menu still has to close, and renderSession then shows whatever session is left
-    try { await auth?.logout(); } catch (e) { console.warn('sign-out failed: ' + (e?.message || e)); }
+    // a failed sign-out is logged, not shown: the pause menu still has to close, and renderSession then shows whatever session is left
+    try { await auth?.signOut(); } catch (e) { console.warn('sign-out failed: ' + (e?.message || e)); }
     renderSession();
-    menu.backToMenu();
+    menu.backToStartPage();
+  });
+  // Sign in again: the normal sign-in for the same handle, which asks for what the game can do now. In a popup the run stays
+  // paused behind it and carries on with the repost buttons unlocked; by redirect the page leaves and the run ends.
+  let renewing = null;
+  $('menu-signin-again').addEventListener('click', async () => {
+    if (!auth) return;
+    renewing?.abort();
+    const mine = renewing = new AbortController();
+    const note = $('menu-grants');
+    try {
+      await page.signInAgain(auth, { setGrants: giveGrants, signal: mine.signal });
+      renderSession();
+      renderMenuWho();
+    } catch (e) {
+      if (e?.name === 'AccountChanged') {
+        // the run was the other account's: it ends here, and the start page shows who is signed in now
+        renderSession();
+        menu.backToStartPage();
+      } else if (e?.name !== 'SignInCancelled') {
+        console.warn('sign-in failed: ' + (e?.message || e));
+        renderMenuWho();
+        note.hidden = false;
+        note.textContent = page.signInFailed(e);
+      }
+    } finally {
+      if (renewing === mine) renewing = null;
+    }
   });
   // a press on the gear must not take focus from the game
   gear.addEventListener('mousedown', (e) => e.preventDefault());
   gear.addEventListener('click', () => menu.open());
-  // capture phase, before the game's keys: Esc opens and closes the menu during a run
+  // capture phase, before the game's keys: Esc opens and closes the pause menu during a run
   window.addEventListener('keydown', (e) => {
     const act = page.menuKey(e, { playing: menu.isPlaying(), open: menu.isOpen() });
     if (!act) return;
@@ -647,10 +795,25 @@ function installMenu() {
   window.addEventListener('resize', placeChrome);
 }
 
+// A popup cannot open in an installed iOS web app or where there is no window.open: there the sign-in leaves the page.
+// A function declaration, not a const: an address that starts a run at once (?feed=random) draws the pause menu before this line runs.
+function canPopup() { return navigator.standalone !== true && typeof window.open === 'function'; }
+// what the session may write goes to the game: before a run, and again after a fresh sign-in from the pause menu
+function giveGrants(g = page.sessionGrants(currentSession())) {
+  exports.Host.SetGrants(g.like, g.unlike, g.repost, g.unrepost);
+}
+
 function renderMenuWho() {
   const s = currentSession();
-  $('menu-who').textContent = s ? `Signed in as @${s.handle}.` : 'Not signed in, so liking is off.';
+  $('menu-who').textContent = s ? `Signed in as @${s.handle}. Holding on a heart or a repost button writes to this account.`
+    : 'Not signed in: holding on a heart or a repost button marks it here and sends nothing.';
   $('menu-signout').hidden = !s;
+  // a sign-in from before the game could repost: say so, and offer the new one
+  const short = page.menuGrants(s, { popup: canPopup() });
+  $('menu-grants').hidden = !short;
+  $('menu-grants').textContent = short?.note ?? '';
+  $('menu-signin-again').hidden = !short;
+  if (short) $('menu-signin-again').textContent = short.button;
 }
 
 // The gear in the HUD beside the Stage readout and, on a wide window, the help in the margin right of the field.
@@ -665,35 +828,38 @@ function placeChrome() {
   if (l.side) Object.assign(side.style, { left: l.side.x + 'px', top: l.side.y + 'px', width: l.side.w + 'px', height: l.side.h + 'px' });
 }
 
-// Back to main menu: the run is over (Host.Quit), so the page goes back to how it looked before the pick: the three choices,
-// the menu theme, an address with no handle in it (a reload lands here too) and nothing of the old run on screen.
+// Back to start page: the run is over (Host.Quit), so the page goes back to how it looked before the pick: the three choices,
+// the start page's theme, an address with no handle in it (a reload lands here too) and nothing of the old run on screen.
 function showStartPage() {
   document.body.classList.remove('playing');
   helperTextarea.removeAttribute('tabindex');
   placeChrome();
   const p = new URLSearchParams(location.search);
   p.delete('handle');
-  if ((p.get('feed') || '').toLowerCase() === 'random') p.delete('feed');
+  if (isRandomFeed(p)) p.delete('feed');
   const q = String(p);
   history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + location.hash);
-  term.write('\x1b[H\x1b[2J');
-  errorBox.style.display = 'none';
+  term.write(CLEAR_SCREEN);
+  // the old run's cards are gone, so its pictures still waiting for a turn are never fetched; the next run asks for its own
+  pictureReader.drop();
+  bar.hide();
   startError.style.display = 'none';
   queued = null;
   busy = false;
-  if (!startHandle.value) startHandle.value = localStorage.getItem(savedKey) || '';
-  startScreen.classList.remove('booting');
-  startScreen.hidden = false;
+  if (!startHandle.value) startHandle.value = savedHandle();
+  startPage.classList.remove('booting');
+  startPage.hidden = false;
+  setGuestOpen(false);
   for (const n of behindStart) n.inert = true;
   renderStartPage();
-  musicCue('menu');
+  musicCue('start');
+  tour.show();
   // focus moves to the start page: its first live button (a text box would pop a phone's keyboard)
   const first = [startEls.play, startEls.signIn, startEls.guest, startEls.random].find((b) => b.offsetParent !== null && !b.disabled);
   first?.focus({ preventScroll: true });
 }
 
-// Keyboard, mouse and touch become the engine's input calls. Nothing here sends a like: E latches in the game, and a held
-// press charges on a wingman there; the game likes when its own checks pass.
+// Keyboard, mouse and touch become the engine's input calls. Nothing here sends a like: E likes the marked log post.
 function installGameInput() {
   const screen = document.getElementById('term');
   const cell = () => {
@@ -701,43 +867,50 @@ function installGameInput() {
     return { left: r.left, top: r.top, w: r.width / term.cols, h: r.height / term.rows };
   };
   const toCell = (cx, cy) => { const c = cell(); return [(cx - c.left) / c.w, (cy - c.top) / c.h]; };
+  // the feed log on the left: a press on it is a click on its buttons (the game names the button), never a hold or a steering drag
+  const CELL_UNIT = 1;   // c is already in cells, so a cell is one unit wide and tall
+  const inLog = (c) => {
+    const panel = page.leftPanel(term.cols), at = page.cellAt(c[0], c[1], { left: 0, top: 0, cellW: CELL_UNIT, cellH: CELL_UNIT, cols: term.cols, rows: term.rows });
+    return !!panel && !!at && at.col >= panel.col && at.col < panel.col + panel.cols;
+  };
   const held = new Set();
   releaseKeys = () => {
     for (const c of held) exports.Host.Key(c, false);
     held.clear();
-    exports.Host.HoldEnd();
     exports.Host.PointerGone();
   };
   // Capture phase on window: nothing inside the page (xterm's helper textarea, a focused button) can swallow a game key first.
   const typing = () => page.isTextEntry(document.activeElement);
+  const isFeedSpeedKey = (code) => code === page.SLOWER_FEED_KEY || code === page.FASTER_FEED_KEY;
   window.addEventListener('keydown', (e) => {
     const code = page.gameKey(e);
-    if (!code || typing() || menu?.isOpen() || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!code || typing() || !menu?.isPlaying() || menu?.isOpen() || e.ctrlKey || e.metaKey || e.altKey) return;
     e.preventDefault();
     if (e.repeat) return;
+    // the feed speed keys are the page's: a step, not a key held in the game
+    if (isFeedSpeedKey(code)) { feedSpeed.bump(code === page.SLOWER_FEED_KEY ? -1 : 1); return; }
     held.add(code);
     exports.Host.Key(code, true);
   }, true);
   window.addEventListener('keyup', (e) => {
     const code = page.gameKey(e);
-    if (!code) return;
+    if (!code || isFeedSpeedKey(code)) return;
     held.delete(code);
     exports.Host.Key(code, false);
   }, true);
-  window.addEventListener('blur', () => { for (const c of held) exports.Host.Key(c, false); held.clear(); exports.Host.HoldEnd(); });
-  // the start screen's Play button keeps focus after the click; the game listens to the window, not to it
+  window.addEventListener('blur', () => { for (const c of held) exports.Host.Key(c, false); held.clear(); });
+  // the start page's Play button keeps focus after the click; the game listens to the window, not to it
   if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
 
   const gestures = page.createGestures({
-    holdStart: (c) => exports.Host.HoldStart(...c),
-    holdEnd: () => exports.Host.HoldEnd(),
     tap: (c) => exports.Host.Tap(...c),
     bomb: () => exports.Host.Bomb(),
+    inPanel: inLog,
+    click: (c) => exports.Host.Click(Math.floor(c[0]), Math.floor(c[1])),
   });
 
-  // mouse: the plane eases toward the pointer; right click bombs; holding the left button on a wingman likes it (a click does not)
   screen.addEventListener('mousemove', (e) => exports.Host.Pointer(...toCell(e.clientX, e.clientY)));
-  screen.addEventListener('mouseleave', () => { exports.Host.PointerGone(); gestures.mouseLeave(); });
+  screen.addEventListener('mouseleave', () => { exports.Host.PointerGone(); });
   // Capture phase, stopped here: xterm's own drag-to-select listens on an inner element and must never see the press.
   let fieldPress = false; // a press that began on the field and has not been released yet
   screen.addEventListener('mousedown', (e) => {
@@ -752,7 +925,6 @@ function installGameInput() {
   // release of a field press stops here too, wherever the pointer has got to by then.
   window.addEventListener('mouseup', (e) => {
     if (fieldPress) { fieldPress = false; e.stopPropagation(); }
-    gestures.mouseUp(e.button);
   }, true);
   screen.addEventListener('dblclick', (e) => { e.preventDefault(); e.stopPropagation(); }, true);
   // and no selection or drag may start in the field
@@ -761,7 +933,6 @@ function installGameInput() {
   term.onSelectionChange(() => { if (term.hasSelection()) term.clearSelection(); });
   screen.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  // touch: a relative drag moves, holding a finger on a wingman likes it, a tap does nothing, a two-finger tap bombs
   let last = null;
   const opt = { passive: false };
   screen.addEventListener('touchstart', (e) => {
@@ -774,8 +945,7 @@ function installGameInput() {
     e.preventDefault();
     if (e.touches.length !== 1 || !last) { gestures.touchMove(e.touches.length, 0, 0); return; }
     const t = e.touches[0], c = cell();
-    gestures.touchMove(1, t.clientX - last.x, t.clientY - last.y);
-    exports.Host.Drag((t.clientX - last.x) / c.w, (t.clientY - last.y) / c.h);
+    if (gestures.touchMove(1, t.clientX - last.x, t.clientY - last.y)) exports.Host.Drag((t.clientX - last.x) / c.w, (t.clientY - last.y) / c.h);
     last = { x: t.clientX, y: t.clientY };
   }, opt);
   screen.addEventListener('touchend', (e) => {

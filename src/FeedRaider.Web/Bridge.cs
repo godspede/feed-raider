@@ -4,7 +4,8 @@ using System.Text.Json.Serialization;
 using FeedRaider.Engine;
 
 // The engine's feed, action and session interfaces over the JS side (wwwroot/atproto.js, reached through main.js).
-// Every call crosses as a JSON string. Writes happen only when the page calls Like, which it does on a click.
+// Every call crosses as a JSON string. The writes are a like, a repost and the delete of either, each made only when the game
+// asks: the player rested the ship on a post's button until the hold finished, or toggled the post in the feed log.
 public static partial class Bridge
 {
     [JSImport("authSession", "main.js")]
@@ -22,20 +23,26 @@ public static partial class Bridge
     [JSImport("authLike", "main.js")]
     private static partial Task<string> AuthLike(string uri, string cid);
 
+    [JSImport("authRepost", "main.js")]
+    private static partial Task<string> AuthRepost(string uri, string cid);
+
+    [JSImport("authDelete", "main.js")]
+    private static partial Task AuthDelete(string recordUri);
+
     private static readonly JsFeedSource Feed = new(AuthGetFeed);
     private static readonly JsFeedSource Timeline = new((_, cursor, limit) => AuthGetTimeline(cursor, limit));
     private static readonly JsThreadSource Thread = new(AuthGetPostThread);
-    private static readonly JsActions Actions = new(AuthLike);
+    private static readonly JsActions Actions = new(AuthLike, AuthRepost, AuthDelete);
     private static readonly JsSession Session = new();
-    private static readonly Dictionary<string, FeedPost> Seen = new();
+    private static readonly PostWrites Writes = new(Actions);
 
     /// <summary>The signed-in feed, like call and session, for the game host. Same JS-backed objects the page buttons use.</summary>
     internal static IFeedSource FeedSource => Feed;
     /// <summary>The signed-in player's Following timeline (app.bsky.feed.getTimeline); the feed URI is ignored.</summary>
     internal static IFeedSource TimelineSource => Timeline;
     internal static IThreadSource ThreadSource => Thread;
-    internal static IActions LikeActions => Actions;
-    internal static ISession SessionSource => Session;
+    internal static IPostActions LikeActions => Actions;
+    internal static JsSession SessionSource => Session;
 
     /// <summary>One page of the feed as JSON {posts:[...], cursor}. Signed out, JS throws and the page shows the sign-in prompt.
     /// The posts are remembered, so <see cref="Like"/> can find them by URI; the Random mix reads as Discover here.</summary>
@@ -45,20 +52,29 @@ public static partial class Bridge
         var uri = Feeds.Resolve(feed) ?? throw new ArgumentException("not a feed generator URI");
         if (uri == Feeds.Random) uri = Feeds.Discover;
         var page = await Feed.GetPageAsync(uri, cursor, limit, default);
-        foreach (var p in page.Posts) Seen[p.Uri] = p;
+        Writes.Remember(page.Posts);
         return JsonSerializer.Serialize(page, WebJson.Default.FeedPage);
     }
 
     [JSExport]
     public static async Task<string> Like(string postUri)
     {
-        var r = await Actions.LikeAsync(Known(postUri).Ref, default);
+        var r = await Writes.LikeAsync(postUri, default);
         return JsonSerializer.Serialize(r, WebJson.Default.PostRef);
     }
 
-    private static FeedPost Known(string uri) => Seen.TryGetValue(uri, out var p) ? p : throw new ArgumentException("post not in the loaded feed");
+    [JSExport]
+    public static async Task<string> Repost(string postUri)
+    {
+        var r = await Writes.RepostAsync(postUri, default);
+        return JsonSerializer.Serialize(r, WebJson.Default.PostRef);
+    }
 
-    private sealed class JsSession : ISession
+    /// <summary>Deletes one of the player's own like or repost records by its address.</summary>
+    [JSExport]
+    public static Task Delete(string recordUri) => Actions.DeleteAsync(recordUri, default);
+
+    internal sealed class JsSession
     {
         public SessionInfo? Current => AuthSession() is { } json ? JsonSerializer.Deserialize(json, WebJson.Default.SessionInfo) : null;
     }

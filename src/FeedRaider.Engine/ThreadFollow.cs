@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace FeedRaider.Engine;
 
-/// <summary>Finds the next post of an author's self-thread: the earliest direct reply by the same author to a post, from an
+/// <summary>Finds the post a finished like brings in: the earliest direct reply to the liked post by its own author, from an
 /// <c>app.bsky.feed.getPostThread</c> body requested with depth 1 and no parents.</summary>
 public static class ThreadMapper
 {
@@ -10,8 +10,9 @@ public static class ThreadMapper
     public const int ReplyDepth = 1, ParentHeight = 0;
 
     /// <summary>The reply that follows <paramref name="liked"/> in its thread, or null when the thread ends there: no reply by the
-    /// author, or a first reply that is not fit to be a wingman (any embed, or too short to show). A body that is not JSON throws <see cref="JsonException"/>, so that case is told from a thread's
-    /// normal end.</summary>
+    /// author, or a first reply <see cref="Raider.PostRules.Followable"/> refuses (a video, link or quote attached, or nothing but
+    /// a link for text). A later reply never stands in for a refused first one. A body that is not JSON throws
+    /// <see cref="JsonException"/>, so that case is told from a thread's normal end.</summary>
     public static FeedPost? Next(string json, FeedPost liked)
     {
         using (var doc = JsonDocument.Parse(json))
@@ -27,14 +28,14 @@ public static class ThreadMapper
                 string at = CreatedAt(p);
                 if (best is null || string.CompareOrdinal(at, bestAt) < 0) { best = post; bestAt = at; }
             }
-            return best is not null && Raider.WingQueue.Allowed(best, false) && Raider.WingQueue.Plain(best) ? best : null;
+            return best is not null && Raider.PostRules.Followable(best) ? best : null;
         }
     }
 
     private static string CreatedAt(JsonElement p)
     {
-        if (p.TryGetProperty("record", out var r) && r.ValueKind == JsonValueKind.Object && r.TryGetProperty("createdAt", out var c) && c.ValueKind == JsonValueKind.String) return c.GetString() ?? "";
-        return p.TryGetProperty("indexedAt", out var i) && i.ValueKind == JsonValueKind.String ? i.GetString() ?? "" : "";
+        if (p.TryGetProperty("record", out var r) && r.ValueKind == JsonValueKind.Object && r.TryGetProperty("createdAt", out var c) && c.ValueKind == JsonValueKind.String) return c.GetString()!;
+        return p.TryGetProperty("indexedAt", out var i) && i.ValueKind == JsonValueKind.String ? i.GetString()! : "";
     }
 }
 
@@ -44,7 +45,7 @@ public interface IThreadSource
     Task<FeedPost?> NextAsync(FeedPost post, CancellationToken ct);
 }
 
-/// <summary>A thread read from the public AppView, no login. The signed-out source.</summary>
+/// <summary>A thread read from the public AppView, without signing in. The signed-out source.</summary>
 public sealed class PublicThreadSource(HttpClient http) : IThreadSource
 {
     public async Task<FeedPost?> NextAsync(FeedPost post, CancellationToken ct)

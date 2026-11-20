@@ -1,16 +1,20 @@
 // A small offline renderer for the Web Audio subset sfx.js uses (oscillators, buffer sources, gain, biquad, wave shaper, stereo
 // panner), so node can measure how loud each sound is. It is an approximation of a browser (naive oscillators, no
-// oversampling), good for a couple of dB. Usage: const m = await measure(sfxModule, 'kill', { step: 0, size: 0 }).
+// oversampling), good for a couple of dB. Usage: const m = await measure(sfxModule, 'kill', { size: 0 }).
 import assert from 'node:assert/strict';
 
-export const SR = 44100;
+const SR = 44100;
 const AUDIBLE = 0.003;   // -50 dBFS: the "audible span" runs from the first to the last sample above this
 const COEFF_INTERVAL = 16;   // samples between recomputing a filter's coefficients from its (possibly ramping) frequency
 const MAX_FILTER_HZ_FRACTION = 0.45;   // a filter's frequency is held under this share of the sample rate, short of Nyquist where the formulas blow up
+const RAMP_FLOOR = 1e-9;   // an exponential ramp cannot start or end at 0, so both ends are held at least this high
 const MIN_Q = 0.05;   // the lowest Q used, so the bandwidth term never reaches zero
+const CENTS_PER_OCTAVE = 1200;   // an oscillator's detune is in cents
+const RENDER_SECONDS = 3.2;   // the length of the buffer each sound is rendered into
+const CLOCK_START_S = 10;   // the fake clock starts above 0, as a running browser context does, so a sound that schedules from time 0 instead of the current time renders silent
 
 // a deterministic Math.random for the noise buffers
-export function seeded(seed = 1) {
+function seeded(seed = 1) {
   const LCG_MUL = 1664525, LCG_ADD = 1013904223, UINT32 = 4294967296;   // a linear congruential generator (Numerical Recipes)
   let s = seed >>> 0;
   return () => { s = (Math.imul(s, LCG_MUL) + LCG_ADD) >>> 0; return s / UINT32; };
@@ -21,7 +25,6 @@ class Param {
   setValueAtTime(v, t) { this.events.push({ k: 'set', v, t }); return this; }
   linearRampToValueAtTime(v, t) { this.events.push({ k: 'lin', v, t }); return this; }
   exponentialRampToValueAtTime(v, t) { this.events.push({ k: 'exp', v, t }); return this; }
-  setTargetAtTime() { return this; }
   cancelScheduledValues() { this.events = []; return this; }
   // the parameter's value at every sample from time t0
   render(n, t0) {
@@ -36,7 +39,7 @@ class Param {
         else {
           const p = (t - prevT) / (e.t - prevT);
           if (!Number.isFinite(p)) cur = from;
-          else cur = e.k === 'lin' ? from + (e.v - from) * p : from * Math.pow(Math.max(e.v, 1e-9) / Math.max(from, 1e-9), p);
+          else cur = e.k === 'lin' ? from + (e.v - from) * p : from * Math.pow(Math.max(e.v, RAMP_FLOOR) / Math.max(from, RAMP_FLOOR), p);
         }
       }
       out[i] = cur;
@@ -45,15 +48,14 @@ class Param {
   }
 }
 
-export function makeCtx(seconds = 3) {
-  const N = Math.ceil(seconds * SR);
-  const ctx = { currentTime: 10, sampleRate: SR, state: 'running', nodes: [], N };
+function makeCtx() {
+  const N = Math.ceil(RENDER_SECONDS * SR);
+  const ctx = { currentTime: CLOCK_START_S, sampleRate: SR, state: 'running' };
   const memo = new Map();
   const mk = (kind, extra) => {
     const n = { kind, inputs: [], ...extra };
     n.connect = (to) => { to.inputs.push(n); return to; };
     n.disconnect = () => {};
-    ctx.nodes.push(n);
     return n;
   };
   const sum = (n) => {
@@ -75,7 +77,7 @@ export function makeCtx(seconds = 3) {
       }
       case 'osc': {
         out = new Float32Array(N);
-        const [a, b] = active(n), f = n.frequency.render(N, ctx.currentTime), dt = Math.pow(2, n.detune.value / 1200);
+        const [a, b] = active(n), f = n.frequency.render(N, ctx.currentTime), dt = Math.pow(2, n.detune.value / CENTS_PER_OCTAVE);
         let ph = 0;
         for (let i = a; i < b; i++) {
           ph += f[i] * dt / SR; ph -= Math.floor(ph);
@@ -130,13 +132,13 @@ export function makeCtx(seconds = 3) {
 }
 
 /** Plays one sound through `sfx` (an imported sfx.js) into a unity master gain and measures what comes out. */
-export async function measure(sfx, name, { step = 0, size = 0, seconds = 3.2 } = {}) {
+export async function measure(sfx, name, { size = 0 } = {}) {
   const realRandom = Math.random;
   Math.random = seeded(7);
   try {
-    const ctx = makeCtx(seconds), node = ctx.createGain();
-    sfx.init({ master: { context: ctx, node, gain: 1, volume: 1, muted: false } });
-    sfx.play(name, 0, step, size);
+    const ctx = makeCtx(), node = ctx.createGain();
+    sfx.init({ master: { context: ctx, node, gain: 1 } });
+    sfx.play(name, 0, 0, size);
     const x = ctx.render(node);
     let first = -1, last = -1, peak = 0;
     for (let i = 0; i < x.length; i++) {

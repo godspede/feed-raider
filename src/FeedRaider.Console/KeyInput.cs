@@ -10,24 +10,27 @@ using FeedRaider.Engine.Raider;
 /// </summary>
 sealed class KeyInput : IDisposable
 {
+    private const string Kernel32 = "kernel32.dll";
     private const int StdInputHandle = -10;
     private const uint EnableProcessedInput = 0x1;
     private const ushort KeyEventType = 1, FocusEventType = 0x10;
-    private const int Spi_GetKeyboardDelay = 0x16, Spi_GetKeyboardSpeed = 0x0A;
+    private const int SpiGetKeyboardDelay = 0x16, SpiGetKeyboardSpeed = 0x0A;
+    private const int SpiNoParam = 0, SpiNoIniUpdate = 0;   // the keyboard queries take no parameter and write no setting
     private const int WinRecordBatch = 32;
+    private const int StdinChunkBytes = 256;
     private static readonly TimeSpan KittyReplyWait = TimeSpan.FromMilliseconds(300);
     private static readonly TimeSpan EscapeWait = TimeSpan.FromMilliseconds(40);
-    private const int IdlePollMs = 100;       // how long the Unix loop waits for a byte when no escape sequence is half-read
-    private const int ReplyPollMs = 20;       // how long the terminal-reply wait blocks on one byte
+    private static readonly TimeSpan IdlePoll = TimeSpan.FromMilliseconds(100);    // how long the Unix loop waits for a byte when no escape sequence is half-read
+    private static readonly TimeSpan ReplyPoll = TimeSpan.FromMilliseconds(20);    // how long the terminal-reply wait blocks on one byte
 
     private readonly TextWriter _out;
-    private readonly nint _hIn;
+    private readonly nint _inputHandle;
     private uint _savedMode;
     private bool _winRecords, _kitty, _unixRaw, _disposed;
     private string? _savedStty;
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
 
-    private KeyInput(TextWriter output) { _out = output; _hIn = OperatingSystem.IsWindows() ? GetStdHandle(StdInputHandle) : 0; }
+    private KeyInput(TextWriter output) { _out = output; _inputHandle = OperatingSystem.IsWindows() ? GetStdHandle(StdInputHandle) : 0; }
 
     /// <summary>True when key-ups are reported, so no hold timer is needed.</summary>
     public bool HasReleases => _winRecords || _kitty;
@@ -35,30 +38,36 @@ sealed class KeyInput : IDisposable
 
     public static KeyInput Open(TextWriter output)
     {
-        var k = new KeyInput(output);
-        if (Console.IsInputRedirected) return k;
+        var input = new KeyInput(output);
+        if (Console.IsInputRedirected) return input;
         try
         {
-            if (OperatingSystem.IsWindows()) k.OpenWindows();
-            else k.OpenUnix();
+            if (OperatingSystem.IsWindows()) input.OpenWindows();
+            else input.OpenUnix();
         }
         catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
-            k.Restore();
+            // Raw input is optional: if the console cannot be switched, the game falls back to the plain redirected-input loop.
+            input.Restore();
         }
-        return k;
+        return input;
     }
 
+    /// <summary>Switches the console to key records. A console that refuses either mode call is left as found, and
+    /// the game then reads presses through the redirected-input loop.</summary>
     private void OpenWindows()
     {
-        if (!GetConsoleMode(_hIn, out _savedMode)) return;
+        if (!GetConsoleMode(_inputHandle, out _savedMode)) return;
         // Processed input only: no line editing, echo, mouse or resize records, and Ctrl+C still cancels.
-        if (!SetConsoleMode(_hIn, EnableProcessedInput)) return;
+        if (!SetConsoleMode(_inputHandle, EnableProcessedInput)) return;
         _winRecords = true;
-        if (SystemParametersInfoW(Spi_GetKeyboardDelay, 0, out int delay, 0) && SystemParametersInfoW(Spi_GetKeyboardSpeed, 0, out int speed, 0))
+        // The player's own repeat delay and rate only refine the holds; when Windows does not report them, the default timing serves.
+        if (SystemParametersInfoW(SpiGetKeyboardDelay, SpiNoParam, out int delay, SpiNoIniUpdate) && SystemParametersInfoW(SpiGetKeyboardSpeed, SpiNoParam, out int speed, SpiNoIniUpdate))
             Timing = KeyRepeatTiming.FromWindows(delay, speed);
     }
 
+    /// <summary>Switches the terminal to raw bytes and asks whether it speaks the kitty keyboard protocol. Without a working stty
+    /// the terminal is left as found, and the game then reads presses through the redirected-input loop.</summary>
     private void OpenUnix()
     {
         _savedStty = Stty("-g")?.Trim();
@@ -70,11 +79,11 @@ sealed class KeyInput : IDisposable
         _reader.Start();
         _out.Write(TerminalKeyParser.KittyQuery + TerminalKeyParser.DeviceAttributes); _out.Flush();
         var reply = new StringBuilder();
-        var deadline = DateTime.UtcNow + KittyReplyWait;
+        var waited = Stopwatch.StartNew();
         // The device-attributes reply (ending in 'c') comes after any kitty reply, so it closes the wait.
-        while (DateTime.UtcNow < deadline && !reply.ToString().Contains('c'))
+        while (waited.Elapsed < KittyReplyWait && !reply.ToString().Contains('c'))
         {
-            if (_bytes.TryTake(out byte b, ReplyPollMs)) reply.Append((char)b);
+            if (_bytes.TryTake(out byte next, ReplyPoll)) reply.Append((char)next);
         }
         _kitty = TerminalKeyParser.IsKittyReply(reply.ToString());
         if (_kitty) { _out.Write(TerminalKeyParser.KittyPush); _out.Flush(); }
@@ -86,43 +95,45 @@ sealed class KeyInput : IDisposable
     private void ReadStdin()
     {
         using var stdin = Console.OpenStandardInput();
-        var buf = new byte[256];
+        var chunk = new byte[StdinChunkBytes];
         try
         {
-            int n;
-            while ((n = stdin.Read(buf, 0, buf.Length)) > 0) for (int i = 0; i < n; i++) _bytes.Add(buf[i]);
+            int read;
+            while ((read = stdin.Read(chunk, 0, chunk.Length)) > 0) for (int i = 0; i < read; i++) _bytes.Add(chunk[i]);
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException) { }   // stdin closed or the reader was disposed: no more keys, and the game's own loop ends the run
     }
 
     /// <summary>Blocks reading keys until the token is cancelled or the player quits; key events are applied under the game's lock.</summary>
-    public void Loop(RaiderGame game, CancellationTokenSource cts, Action? onMute = null)
+    public void Loop(RaiderGame game, CancellationTokenSource cts, Action? onMute, Action<int> onFeedSpeed)
     {
-        var router = new KeyRouter(game.Input, HasReleases, Timing, onMute);
+        var router = new KeyRouter(game.Input, HasReleases, Timing, onMute, onFeedSpeed);
         if (_winRecords) WindowsLoop(game, router, cts);
         else if (_unixRaw) UnixLoop(game, router, cts);
         else RedirectedLoop(game, router, cts);
     }
 
-    private static bool Dispatch(RaiderGame game, KeyRouter router, CancellationTokenSource cts, TermKeyEvent e)
+    /// <summary>Applies one key event under the game's lock and, when the event quits, cancels the run and returns true.</summary>
+    private static bool ApplyAndCancelOnQuit(RaiderGame game, KeyRouter router, CancellationTokenSource cts, TermKeyEvent keyEvent)
     {
         bool quit;
-        lock (game) quit = router.Apply(e);
+        lock (game) quit = router.Apply(keyEvent);
         if (quit) cts.Cancel();
         return quit;
     }
 
     private void WindowsLoop(RaiderGame game, KeyRouter router, CancellationTokenSource cts)
     {
-        var recs = new InputRecord[WinRecordBatch];
+        var records = new InputRecord[WinRecordBatch];
         while (!cts.IsCancellationRequested)
         {
-            if (!ReadConsoleInputW(_hIn, recs, (uint)recs.Length, out uint n)) return;
-            for (int i = 0; i < n; i++)
+            // A failed read means the console handle is gone (closed or detached); there is no input left to wait for.
+            if (!ReadConsoleInputW(_inputHandle, records, (uint)records.Length, out uint read)) return;
+            for (int i = 0; i < read; i++)
             {
-                if (recs[i].EventType == FocusEventType && recs[i].KeyDownOrFocus == 0) lock (game) router.ReleaseAll();
-                else if (recs[i].EventType == KeyEventType && Win32Keys.Map(recs[i].VirtualKey, recs[i].KeyDownOrFocus != 0) is { } e)
-                    if (Dispatch(game, router, cts, e)) return;
+                if (records[i].EventType == FocusEventType && records[i].KeyDownOrFocus == 0) lock (game) router.ReleaseAll();
+                else if (records[i].EventType == KeyEventType && Win32Keys.Map(records[i].VirtualKey, records[i].KeyDownOrFocus != 0) is { } keyEvent)
+                    if (ApplyAndCancelOnQuit(game, router, cts, keyEvent)) return;
             }
         }
     }
@@ -133,9 +144,9 @@ sealed class KeyInput : IDisposable
         var events = new List<TermKeyEvent>();
         while (!cts.IsCancellationRequested)
         {
-            if (_bytes.TryTake(out byte b, parser.Pending ? (int)EscapeWait.TotalMilliseconds : IdlePollMs)) parser.Feed(b, events);
+            if (_bytes.TryTake(out byte next, parser.Pending ? EscapeWait : IdlePoll)) parser.Feed(next, events);
             else parser.Flush(events);
-            foreach (var e in events) if (Dispatch(game, router, cts, e)) return;
+            foreach (var keyEvent in events) if (ApplyAndCancelOnQuit(game, router, cts, keyEvent)) return;
             events.Clear();
         }
     }
@@ -145,8 +156,8 @@ sealed class KeyInput : IDisposable
     {
         while (!cts.IsCancellationRequested)
         {
-            var k = Console.ReadKey(true);
-            TermKey? tk = k.Key switch
+            var pressed = Console.ReadKey(true);
+            TermKey? mapped = pressed.Key switch
             {
                 ConsoleKey.W or ConsoleKey.UpArrow => TermKey.Up,
                 ConsoleKey.S or ConsoleKey.DownArrow => TermKey.Down,
@@ -156,11 +167,16 @@ sealed class KeyInput : IDisposable
                 ConsoleKey.F => TermKey.AutoFire,
                 ConsoleKey.B => TermKey.Bomb,
                 ConsoleKey.E => TermKey.Like,
+                ConsoleKey.R => TermKey.Repost,
+                ConsoleKey.Oem4 => TermKey.MarkUp,
+                ConsoleKey.Oem6 => TermKey.MarkDown,
                 ConsoleKey.M => TermKey.Mute,
+                ConsoleKey.OemMinus or ConsoleKey.Subtract => TermKey.SlowerFeed,
+                ConsoleKey.OemPlus or ConsoleKey.Add => TermKey.FasterFeed,
                 ConsoleKey.Q or ConsoleKey.Escape => TermKey.Quit,
                 _ => null,
             };
-            if (tk is { } key && Dispatch(game, router, cts, new(key, KeyAction.Press))) return;
+            if (mapped is { } key && ApplyAndCancelOnQuit(game, router, cts, new(key, KeyAction.Press))) return;
         }
     }
 
@@ -180,7 +196,7 @@ sealed class KeyInput : IDisposable
         try
         {
             if (_kitty) { _out.Write(TerminalKeyParser.KittyPop); _out.Flush(); _kitty = false; }
-            if (_winRecords) { SetConsoleMode(_hIn, _savedMode); _winRecords = false; }
+            if (_winRecords) { _ = SetConsoleMode(_inputHandle, _savedMode); _winRecords = false; }   // a refusal here means the console is already gone
             if (_unixRaw && _savedStty is not null) { Stty(_savedStty); _unixRaw = false; }
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException or DllNotFoundException) { }   // restoring a terminal that is already gone: nothing is left to undo
@@ -190,15 +206,15 @@ sealed class KeyInput : IDisposable
     {
         try
         {
-            // Inherits the terminal as stdin; only stdout is captured.
+            // stty reads and sets the terminal on its stdin, so stdin stays the inherited terminal.
             var psi = new ProcessStartInfo("stty", args) { RedirectStandardOutput = true, UseShellExecute = false };
-            using var p = Process.Start(psi);
-            if (p is null) return null;
-            string o = p.StandardOutput.ReadToEnd();
-            p.WaitForExit();
-            return p.ExitCode == 0 ? o : null;
+            using var process = Process.Start(psi);
+            if (process is null) return null;
+            string printed = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+            return process.ExitCode == 0 ? printed : null;
         }
-        catch (System.ComponentModel.Win32Exception) { return null; }
+        catch (System.ComponentModel.Win32Exception) { return null; }   // no stty on PATH: the caller treats null as raw mode being unavailable
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 20)]
@@ -210,9 +226,9 @@ sealed class KeyInput : IDisposable
         [FieldOffset(10)] public ushort VirtualKey;
     }
 
-    [DllImport("kernel32.dll")] private static extern nint GetStdHandle(int which);
-    [DllImport("kernel32.dll")] private static extern bool GetConsoleMode(nint h, out uint mode);
-    [DllImport("kernel32.dll")] private static extern bool SetConsoleMode(nint h, uint mode);
-    [DllImport("kernel32.dll")] private static extern bool ReadConsoleInputW(nint h, [Out] InputRecord[] buffer, uint length, out uint read);
+    [DllImport(Kernel32)] private static extern nint GetStdHandle(int which);
+    [DllImport(Kernel32)] private static extern bool GetConsoleMode(nint handle, out uint mode);
+    [DllImport(Kernel32)] private static extern bool SetConsoleMode(nint handle, uint mode);
+    [DllImport(Kernel32)] private static extern bool ReadConsoleInputW(nint handle, [Out] InputRecord[] buffer, uint length, out uint read);
     [DllImport("user32.dll")] private static extern bool SystemParametersInfoW(int action, int param, out int value, int winIni);
 }

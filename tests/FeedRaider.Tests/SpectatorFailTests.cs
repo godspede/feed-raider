@@ -22,10 +22,10 @@ public class SpectatorFailTests
     {
         var sink = new Sink();
         var spectator = new Spectator(new HttpClient(new Fail()), () => (100, 30), sink);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => spectator.RunAsync("bsky.app", CancellationToken.None));
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => spectator.RunAsync("bsky.app", CancellationToken.None));
         Assert.Contains("fetching who", sink.Frames[0]);
         var last = sink.Frames[^1];
         Assert.DoesNotContain("fetching who", last);
-        Assert.Contains("could not load who @bsky.app follows, reload to try again", last);
+        Assert.Contains("could not load who @bsky.app follows; reload to try again", last);
     }
 }

@@ -1,180 +1,221 @@
+using System.Runtime.CompilerServices;
 using TUImation;
 using FeedRaider.Engine;
 using FeedRaider.Engine.Raider;
 
 namespace FeedRaider.Tests;
 
-// Everything that touches the game draws above every kind of post box (a wingman's, a darkness enemy's): one test per object class,
-// each run over both boxes, plus the enemy that must not sit under its own post. The rendered frames of a busy scene are saved when
+// Everything that touches the game draws above an enemy's speech box (a darkness enemy's): one test per object class,
+// plus the enemy that must not sit under its own post. The rendered frames of a busy scene are saved when
 // FR_SCREENS names a directory.
 public class UnitsOverAllPostsTests
 {
     private const int Cols = 60, Rows = 60;
-    private const string Post = "this is a perfectly ordinary post with enough words in it to run well past three short lines of comm text";
+
+    private const int GameSeed = 5;
+
+    /// <summary>Pixels the ship sits in from the field's left and bottom edges: a corner far from the speech box.</summary>
+    private const double ShipInset = 8;
+
+    /// <summary>Where the gunship sits, as fractions of the field's width and height.</summary>
+    private const double GunshipAcross = 0.25, GunshipDown = 0.55;
+    private const int GunshipHp = 8;
+
+    /// <summary>Frames the speech box has been open: a few frames into its typing, so its first letters show.</summary>
+    private const int BoxAge = 5;
+
+    /// <summary>The health of every other enemy the tests place, full.</summary>
+    private const int UnitHp = 4;
+
+    /// <summary>A wind-up under way, which draws a turret's reticle and a diver's aim line, and no wind-up at all.</summary>
+    private const int WindingUp = 10, NotWindingUp = -1;
+
+    /// <summary>The box's first text row, under its top border and title.</summary>
+    private const int FirstTextRow = 2;
+
+    /// <summary>The box's frame is one cell thick, and the text keeps half of <see cref="EnemySpeechBox.TextSide"/> clear on each side.</summary>
+    private const int Border = 1, TextInset = EnemySpeechBox.TextSide / 2;
+
+    /// <summary>The middle of a cell in pixels, where a thing aimed at the cell is put.</summary>
+    private const int CellMiddle = CardField.PixelsPerCell / 2;
+
+    /// <summary>A test ring's frames left and its whole life in frames: half way through it.</summary>
+    private const int RingLife = 10, RingMax = 20;
 
     private sealed class Scene
     {
-        public RaiderGame G = null!;
-        public Wingman W = null!;
-        public Enemy E = null!;
-        public CellRect WingBox, EnemyBox;
+        public RaiderGame Game = null!;
+        public Enemy Enemy = null!;
+        public CellRect EnemyBox;
         public Screen Control = null!;
     }
 
     private static Scene Make()
     {
-        var g = new RaiderGame(5) { LoggedIn = true, MaxWings = 2 };
-        g.SetLayout(FieldLayout.Compute(Cols, Rows));
-        g.Queue.Offer(new FeedPost("at://did:plc:b1/app.bsky.feed.post/1", "cid1", "did:plc:b1", "b1.test", Post, 10, 0, 0, null, null));
-        for (int i = 0; i < 3000 && !(g.Wings.Count == 1 && g.Comms.Speaker is not null); i++) g.Step();
-        var w = g.Wings.Single();
-        w.X = g.Layout.PW * 0.72; w.Y = 20;
-        SetPlayer(g, 8, g.Layout.PH - 8);
-        g.Enemies.Clear(); g.Bullets.Clear(); g.Pickups.Clear(); g.Particles.Clear(); g.Rings.Clear();
-        var e = new Enemy { Kind = EnemyKind.Gunship, Sprite = Art.Gunship, X = g.Layout.PW * 0.25, Y = g.Layout.PH * 0.55, Hp = 8, MaxHp = 8, Header = "RUDE", Live = true, Text = "you are all idiots and nobody likes your takes at all" };
-        g.Enemies.Add(e);
-        EnemyComm.Update(e, g.Layout.PCols, g.Layout.PRows);
-        e.CommAge = 5;
-        var s = new Scene { G = g, W = w, E = e, WingBox = CommPainter.Box(w, g.Layout), EnemyBox = EnemyComm.Box(e, g.Layout) };
-        Assert.True(EnemyComm.IsOpen(e));
-        Assert.False(s.WingBox.Overlaps(s.EnemyBox));
-        s.Control = Render(g);
-        return s;
+        var game = new RaiderGame(GameSeed) { SignedIn = true };
+        game.SetLayout(FieldLayout.Compute(Cols, Rows));
+        SetShip(game, ShipInset, game.Layout.PH - ShipInset);
+        game.Enemies.Clear(); game.Bullets.Clear(); game.Pickups.Clear(); game.Particles.Clear(); game.Rings.Clear();
+        var enemy = new Enemy { Kind = EnemyKind.Gunship, Sprite = Art.Gunship, X = game.Layout.PW * GunshipAcross, Y = game.Layout.PH * GunshipDown, Hp = GunshipHp, MaxHp = GunshipHp, Header = "RUDE", Live = true, Text = "sample text standing in for a rude post, aimed at nobody" };
+        game.Enemies.Add(enemy);
+        EnemySpeechBox.Update(enemy, game.Layout.PCols, game.Layout.Rows);
+        enemy.SpeechBoxAge = BoxAge;
+        var scene = new Scene { Game = game, Enemy = enemy, EnemyBox = EnemySpeechBox.Box(enemy, game.Layout) };
+        Assert.True(EnemySpeechBox.IsOpen(enemy));
+        scene.Control = Render(game);
+        return scene;
     }
 
-    private static void SetPlayer(RaiderGame g, double x, double y)
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_PX")]
+    private static extern void SetPX(RaiderGame game, double value);
+
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_PY")]
+    private static extern void SetPY(RaiderGame game, double value);
+
+    private static void SetShip(RaiderGame game, double x, double y)
     {
-        typeof(RaiderGame).GetProperty("PX")!.GetSetMethod(true)!.Invoke(g, [x]);
-        typeof(RaiderGame).GetProperty("PY")!.GetSetMethod(true)!.Invoke(g, [y]);
+        SetPX(game, x);
+        SetPY(game, y);
     }
 
-    private static Screen Render(RaiderGame g)
+    private static Screen Render(RaiderGame game)
     {
         var scr = new Screen(Cols, Rows);
-        new RaiderView().Render(g, scr);
+        new RaiderView().FitAndRender(game, scr);
         return scr;
     }
 
     /// <summary>A cell of the box that carries a letter of its text.</summary>
-    private static (int c, int r) LetterCell(Screen scr, CellRect box, int minCol)
+    private static (int col, int row) LetterCell(Screen scr, CellRect box)
     {
-        for (int r = box.R + 2; r < box.Bottom - 1; r++)
-            for (int c = box.C + minCol; c < box.Right - 2; c++)
-                if (char.IsLetter(scr.CharAt(c, r))) return (c, r);
+        for (int row = box.R + FirstTextRow; row < box.Bottom - Border; row++)
+            for (int col = box.C + TextInset; col < box.Right - TextInset; col++)
+                if (char.IsLetter(scr.CharAt(col, row))) return (col, row);
         throw new Xunit.Sdk.XunitException("no letter in the box");
     }
 
-    private static bool Hidden(Screen scr, Screen control, int c, int r) =>
-        !char.IsLetter(scr.CharAt(c, r)) && (scr.Fg[r * Cols + c] != control.Fg[r * Cols + c] || scr.Bg[r * Cols + c] != control.Bg[r * Cols + c]);
+    private static bool Hidden(Screen scr, Screen control, int col, int row) =>
+        !char.IsLetter(scr.CharAt(col, row)) && (scr.Fg[row * Cols + col] != control.Fg[row * Cols + col] || scr.Bg[row * Cols + col] != control.Bg[row * Cols + col]);
 
-    public static IEnumerable<object[]> Boxes() => [["wingman"], ["enemy"]];
-
-    private static (CellRect box, int c, int r, double px, double py) Target(Scene s, string which)
+    private static (CellRect box, int col, int row, double px, double py) Target(Scene scene)
     {
-        var box = which == "wingman" ? s.WingBox : s.EnemyBox;
-        var (c, r) = LetterCell(s.Control, box, which == "wingman" ? 8 : 2);
-        return (box, c, r, (c - s.G.Layout.Col0) * 2 + 1, r * 2 + 1);
+        var box = scene.EnemyBox;
+        var (col, row) = LetterCell(scene.Control, box);
+        return (box, col, row, (col - scene.Game.Layout.Col0) * CardField.PixelsPerCell + CellMiddle, row * CardField.PixelsPerCell + CellMiddle);
     }
 
-    private static void Shows(Scene s, string which, Action<RaiderGame, double, double> place, string what)
+    private static string AThing(object kind) => $"a {kind}";
+
+    private static void Shows(Scene scene, Action<RaiderGame, double, double> place, string what)
     {
-        var (_, c, r, px, py) = Target(s, which);
-        place(s.G, px, py);
-        var scr = Render(s.G);
-        Assert.True(Hidden(scr, s.Control, c, r), $"{what} is drawn over the {which} box");
-    }
-
-    [Theory, MemberData(nameof(Boxes))]
-    public void A_friendly_shot_shows(string which) => Shows(Make(), which, (g, x, y) => g.Bullets.Add(new Bullet { X = x, Y = y + 1, Friendly = true }), "a shot");
-
-    [Theory, MemberData(nameof(Boxes))]
-    public void A_wingmans_shot_shows(string which) => Shows(Make(), which, (g, x, y) => g.Bullets.Add(new Bullet { X = x, Y = y, Friendly = true, Wing = true }), "a wingman's shot");
-
-    [Theory, MemberData(nameof(Boxes))]
-    public void An_enemy_bullet_shows(string which) => Shows(Make(), which, (g, x, y) => g.Bullets.Add(new Bullet { X = x, Y = y, Friendly = false }), "an enemy bullet");
-
-    [Theory, MemberData(nameof(Boxes))]
-    public void An_aimed_bullet_shows(string which) => Shows(Make(), which, (g, x, y) => g.Bullets.Add(new Bullet { X = x, Y = y, Friendly = false, Aimed = true }), "an aimed bullet");
-
-    [Theory, MemberData(nameof(Boxes))]
-    public void The_players_ship_shows(string which) => Shows(Make(), which, SetPlayer, "the ship");
-
-    [Theory, MemberData(nameof(Boxes))]
-    public void A_pickup_shows(string which)
-    {
-        foreach (var kind in Enum.GetValues<PickupKind>())
-            Shows(Make(), which, (g, x, y) => g.Pickups.Add(new Pickup { Kind = kind, X = x, Y = y, BaseX = x }), "a " + kind + " pickup");
-    }
-
-    [Theory, MemberData(nameof(Boxes))]
-    public void Another_enemy_shows(string which)
-    {
-        foreach (var kind in new[] { EnemyKind.Grunt, EnemyKind.Mine, EnemyKind.Diver, EnemyKind.Splitter, EnemyKind.Turret })
-            Shows(Make(), which, (g, x, y) =>
-            {
-                var sp = kind switch { EnemyKind.Diver => Art.Diver, EnemyKind.Turret => Art.Turret, _ => Art.Grunt };
-                g.Enemies.Add(new Enemy { Kind = kind, Sprite = sp, X = x, BaseX = x, Y = y, Hp = 4, MaxHp = 4, Windup = -1, Grace = 0 });
-            }, "a " + kind);
-    }
-
-    [Theory, MemberData(nameof(Boxes))]
-    public void A_blast_ring_shows(string which) =>
-        Shows(Make(), which, (g, x, y) => g.Rings.Add(new Ring { X = x - 6, Y = y, R0 = 6, R1 = 6, Life = 10, Max = 20, Color = 0xffffff }), "a ring");
-
-    [Theory, MemberData(nameof(Boxes))]
-    public void A_turret_reticle_shows(string which) =>
-        Shows(Make(), which, (g, x, y) => g.Enemies.Add(new Enemy { Kind = EnemyKind.Turret, Sprite = Art.Turret, X = 4, Y = g.Layout.PH - 20, Hp = 4, MaxHp = 4, Windup = 10, AimX = x, AimY = y }), "a turret reticle");
-
-    [Theory, MemberData(nameof(Boxes))]
-    public void A_diver_aim_line_and_crosshair_show(string which)
-    {
-        var s = Make();
-        var (box, c, r, px, py) = Target(s, which);
-        s.G.Enemies.Add(new Enemy { Kind = EnemyKind.Diver, Sprite = Art.Diver, X = px - 10, Y = box.R * 2 - 20, BaseX = px, Hp = 4, MaxHp = 4, Windup = 10, AimX = px, AimY = py });
-        var scr = Render(s.G);
-        int changed = 0;
-        for (int y = box.R; y < box.Bottom; y++)
-            for (int x = box.C; x < box.Right; x++) if (Hidden(scr, s.Control, x, y)) changed++;
-        Assert.True(Hidden(scr, s.Control, c, r), "the crosshair cell");
-        Assert.True(changed >= 2, "the aim line crosses the box too");
+        var (_, col, row, px, py) = Target(scene);
+        place(scene.Game, px, py);
+        var scr = Render(scene.Game);
+        Assert.True(Hidden(scr, scene.Control, col, row), $"{what} is drawn over the speech box");
     }
 
     [Fact]
-    public void An_enemys_own_shot_shows_over_its_own_box()
+    public void A_friendly_shot_shows() => Shows(Make(), (game, x, y) => game.Bullets.Add(new Bullet { X = x, Y = y, Friendly = true }), "a shot");
+
+    [Fact]
+    public void A_bolt_shows() => Shows(Make(), (game, x, y) => game.Bullets.Add(new Bullet { X = x, Y = y, Friendly = false }), "a bolt");
+
+    [Fact]
+    public void An_aimed_bolt_shows() => Shows(Make(), (game, x, y) => game.Bullets.Add(new Bullet { X = x, Y = y, Friendly = false, Aimed = true }), "an aimed bolt");
+
+    [Fact]
+    public void The_ship_shows() => Shows(Make(), SetShip, "the ship");
+
+    [Fact]
+    public void A_pickup_shows()
     {
-        var s = Make();
-        var (box, c, r, px, py) = Target(s, "enemy");
-        s.G.Bullets.Add(new Bullet { X = px, Y = py, Friendly = false });
-        Assert.True(Hidden(Render(s.G), s.Control, c, r));
+        foreach (var kind in Enum.GetValues<PickupKind>())
+            Shows(Make(), (game, x, y) => game.Pickups.Add(new Pickup { Kind = kind, X = x, Y = y, BaseX = x }), AThing(kind) + " pickup");
     }
+
+    [Fact]
+    public void Another_enemy_shows()
+    {
+        foreach (var kind in new[] { EnemyKind.Grunt, EnemyKind.Mine, EnemyKind.Diver, EnemyKind.Splitter, EnemyKind.Turret })
+            Shows(Make(), (game, x, y) =>
+            {
+                var sprite = kind switch { EnemyKind.Diver => Art.Diver, EnemyKind.Turret => Art.Turret, _ => Art.Grunt };
+                game.Enemies.Add(new Enemy { Kind = kind, Sprite = sprite, X = x, BaseX = x, Y = y, Hp = UnitHp, MaxHp = UnitHp, Windup = NotWindingUp, Grace = 0 });
+            }, AThing(kind));
+    }
+
+    /// <summary>The ring's radius, start and end alike; it is centred one radius left of the target, so its rim passes over it.</summary>
+    private const double TestRingRadius = 6;
+
+    [Fact]
+    public void A_blast_ring_shows() =>
+        Shows(Make(), (game, x, y) => game.Rings.Add(new Ring { X = x - TestRingRadius, Y = y, R0 = TestRingRadius, R1 = TestRingRadius, Life = RingLife, Max = RingMax, Colour = Palette.White }), "a ring");
+
+    [Fact]
+    public void A_turret_reticle_shows() =>
+        Shows(Make(), (game, x, y) => game.Enemies.Add(new Enemy { Kind = EnemyKind.Turret, Sprite = Art.Turret, X = TurretX, Y = game.Layout.PH - TurretAboveBottom, Hp = UnitHp, MaxHp = UnitHp, Windup = WindingUp, AimX = x, AimY = y }), "a turret reticle");
+
+    /// <summary>Pixels the turret sits in from the field's left edge and up from its bottom: far from the speech box, so only its reticle is near.</summary>
+    private const double TurretX = 4, TurretAboveBottom = 20;
+
+    /// <summary>Pixels the diver starts left of the target and above the box, so its aim line runs down across the box.</summary>
+    private const double DiverLeftOfTarget = 10, DiverAboveBox = 20;
+
+    [Fact]
+    public void A_diver_aim_line_and_crosshair_show()
+    {
+        var scene = Make();
+        var (box, col, row, px, py) = Target(scene);
+        scene.Game.Enemies.Add(new Enemy { Kind = EnemyKind.Diver, Sprite = Art.Diver, X = px - DiverLeftOfTarget, Y = box.R * CardField.PixelsPerCell - DiverAboveBox, BaseX = px, Hp = UnitHp, MaxHp = UnitHp, Windup = WindingUp, AimX = px, AimY = py });
+        var scr = Render(scene.Game);
+        int changed = 0;
+        for (int y = box.R; y < box.Bottom; y++)
+            for (int x = box.C; x < box.Right; x++) if (Hidden(scr, scene.Control, x, y)) changed++;
+        Assert.True(Hidden(scr, scene.Control, col, row), "the crosshair cell");
+        const int CrosshairAndALineCell = 2;
+        Assert.True(changed >= CrosshairAndALineCell, "the aim line crosses the box too");
+    }
+
+    [Fact]
+    public void An_enemys_own_bolt_shows_over_its_own_box()
+    {
+        var scene = Make();
+        var (_, col, row, px, py) = Target(scene);
+        scene.Game.Bullets.Add(new Bullet { X = px, Y = py, Friendly = false });
+        Assert.True(Hidden(Render(scene.Game), scene.Control, col, row));
+    }
+
+    /// <summary>Enemy heights in pixels near the field's top, where the box no longer fits above the sprite.</summary>
+    private static readonly double[] NearTopYs = [7, 10, 14, 20];
 
     [Fact]
     public void An_enemy_near_the_top_gets_its_box_below_so_neither_hides_the_other()
     {
-        var s = Make();
-        var e = s.E;
-        foreach (double y in new[] { 7.0, 10, 14, 20 })
+        var scene = Make();
+        var enemy = scene.Enemy;
+        foreach (double y in NearTopYs)
         {
-            e.Y = y;
-            var box = EnemyComm.Box(e, s.G.Layout);
-            int top = (int)Math.Floor((e.Y - e.Sprite.H / 2.0) / 2), bottom = (int)Math.Ceiling((e.Y + e.Sprite.H / 2.0) / 2);
+            enemy.Y = y;
+            var box = EnemySpeechBox.Box(enemy, scene.Game.Layout);
+            int top = (int)Math.Floor((enemy.Y - enemy.Sprite.H / 2.0) / CardField.PixelsPerCell), bottom = (int)Math.Ceiling((enemy.Y + enemy.Sprite.H / 2.0) / CardField.PixelsPerCell);
             Assert.True(box.Bottom <= top || box.R >= bottom, $"box rows {box.R}-{box.Bottom} clear of the sprite rows {top}-{bottom} at y={y}");
-            var scr = Render(s.G);
-            int cc = s.G.Layout.Col0 + (int)(e.X / 2), cr = (int)(e.Y / 2);
-            Assert.False(box.C <= cc && cc < box.Right && box.R <= cr && cr < box.Bottom, "the sprite's centre is outside the box");
-            if (EnemyComm.IsBelow(e, box)) Assert.Equal('▲', scr.CharAt(box.C + box.W / 2, box.R));
+            var scr = Render(scene.Game);
+            int centreCol = scene.Game.Layout.Col0 + (int)(enemy.X / CardField.PixelsPerCell), centreRow = (int)(enemy.Y / CardField.PixelsPerCell);
+            Assert.False(box.C <= centreCol && centreCol < box.Right && box.R <= centreRow && centreRow < box.Bottom, "the sprite's centre is outside the box");
+            if (EnemySpeechBox.IsBelow(enemy, box)) Assert.Equal('▲', scr.CharAt(box.C + box.W / 2, box.R));
         }
     }
 
     [Fact]
     public void Nothing_in_the_box_changes_when_no_unit_is_near()
     {
-        var s = Make();
-        s.G.Bullets.Add(new Bullet { X = 2, Y = s.G.Layout.PH - 30, Friendly = true });
-        var scr = Render(s.G);
-        foreach (var box in new[] { s.WingBox, s.EnemyBox })
-            for (int y = box.R; y < box.Bottom; y++)
-                for (int x = box.C; x < box.Right; x++) Assert.Equal(s.Control.CharAt(x, y), scr.CharAt(x, y));
+        var scene = Make();
+        const double farX = 2, farAboveBottom = 30;   // low on the left, far from the speech box
+        scene.Game.Bullets.Add(new Bullet { X = farX, Y = scene.Game.Layout.PH - farAboveBottom, Friendly = true });
+        var scr = Render(scene.Game);
+        var box = scene.EnemyBox;
+        for (int y = box.R; y < box.Bottom; y++)
+            for (int x = box.C; x < box.Right; x++) Assert.Equal(scene.Control.CharAt(x, y), scr.CharAt(x, y));
     }
 
     [Fact]
@@ -187,7 +228,7 @@ public class UnitsOverAllPostsTests
         try
         {
             SaveBusyScenes(dir);
-            foreach (var name in new[] { "busy-scene-both-boxes.png", "control-boxes-only.png", "enemy-near-top-box-below.png" })
+            foreach (var name in new[] { BusyScenePng, ControlPng, NearTopPng })
                 Assert.True(new FileInfo(Path.Combine(dir, name)).Length > 0, $"{name} was written");
         }
         finally
@@ -196,30 +237,49 @@ public class UnitsOverAllPostsTests
         }
     }
 
+    private const string BusyScenePng = "busy-scene-enemy-box.png", ControlPng = "control-box-only.png", NearTopPng = "enemy-near-top-box-below.png";
+
+    /// <summary>The height in pixels the near-top picture's enemy is moved to, so its box sits below it.</summary>
+    private const double NearTopPictureY = 9;
+
+    /// <summary>The busy scene's ring colour: the pink of a small kill's ring.</summary>
+    private const uint BusyRingColour = 0xff8fb1u;
+
+    /// <summary>Pixels in from the box's top left corner to the busy scene's corner.</summary>
+    private const double BusyInset = 4;
+
+    /// <summary>Where each thing of the busy scene sits against the scene's corner, in pixels.</summary>
+    private static readonly (double X, double Y) BusyShot = (0, 2), BusyBolt = (6, 4), BusyAimedBolt = (12, 4),
+        BusyPickup = (26, 6), BusyRing = (20, 8), BusyGrunt = (36, 8);
+
+    /// <summary>Pixels the busy scene's diver starts right of the target and above the box, and where its ship sits against the target.</summary>
+    private const double BusyDiverRightOfTarget = 20, BusyDiverAboveBox = 14;
+    private static readonly (double X, double Y) BusyShip = (4, 3);
+
+    private const double BusyRingRadius = 9;
+    private const int BusyGruntHp = 2;
+
     private static void SaveBusyScenes(string dir)
     {
-        var s = Make();
-        var g = s.G;
-        foreach (var which in new[] { "wingman", "enemy" })
+        var scene = Make();
+        var game = scene.Game;
         {
-            var (box, _, _, _, _) = Target(s, which);
-            double x0 = (box.C - g.Layout.Col0) * 2 + 4, y0 = box.R * 2 + 4;
-            g.Bullets.Add(new Bullet { X = x0, Y = y0 + 2, Friendly = true });
-            g.Bullets.Add(new Bullet { X = x0 + 6, Y = y0 + 4, Friendly = false });
-            g.Bullets.Add(new Bullet { X = x0 + 12, Y = y0 + 4, Friendly = false, Aimed = true });
-            g.Bullets.Add(new Bullet { X = x0 + 18, Y = y0 + 3, Friendly = true, Wing = true });
-            g.Pickups.Add(new Pickup { Kind = PickupKind.Shield, X = x0 + 26, Y = y0 + 6, BaseX = x0 + 26 });
-            g.Enemies.Add(new Enemy { Kind = EnemyKind.Grunt, Sprite = Art.Grunt, X = x0 + 36, Y = y0 + 8, Hp = 2, MaxHp = 2, Windup = -1 });
-            g.Rings.Add(new Ring { X = x0 + 20, Y = y0 + 8, R0 = 9, R1 = 9, Life = 10, Max = 20, Color = 0xff8fb1 });
+            var box = scene.EnemyBox;
+            double x0 = (box.C - game.Layout.Col0) * CardField.PixelsPerCell + BusyInset, y0 = box.R * CardField.PixelsPerCell + BusyInset;
+            game.Bullets.Add(new Bullet { X = x0 + BusyShot.X, Y = y0 + BusyShot.Y, Friendly = true });
+            game.Bullets.Add(new Bullet { X = x0 + BusyBolt.X, Y = y0 + BusyBolt.Y, Friendly = false });
+            game.Bullets.Add(new Bullet { X = x0 + BusyAimedBolt.X, Y = y0 + BusyAimedBolt.Y, Friendly = false, Aimed = true });
+            game.Pickups.Add(new Pickup { Kind = PickupKind.Shield, X = x0 + BusyPickup.X, Y = y0 + BusyPickup.Y, BaseX = x0 + BusyPickup.X });
+            game.Enemies.Add(new Enemy { Kind = EnemyKind.Grunt, Sprite = Art.Grunt, X = x0 + BusyGrunt.X, Y = y0 + BusyGrunt.Y, Hp = BusyGruntHp, MaxHp = BusyGruntHp, Windup = NotWindingUp });
+            game.Rings.Add(new Ring { X = x0 + BusyRing.X, Y = y0 + BusyRing.Y, R0 = BusyRingRadius, R1 = BusyRingRadius, Life = RingLife, Max = RingMax, Colour = BusyRingColour });
         }
-        var (eb, _, _, ex, ey) = Target(s, "enemy");
-        g.Enemies.Add(new Enemy { Kind = EnemyKind.Diver, Sprite = Art.Diver, X = ex + 20, Y = eb.R * 2 - 14, BaseX = ex, Hp = 4, MaxHp = 4, Windup = 10, AimX = ex, AimY = ey });
-        var (_, _, _, wx, wy) = Target(s, "wingman");
-        SetPlayer(g, wx, wy + 3);
-        FrameImage.Write(Render(g), Path.Combine(dir, "busy-scene-both-boxes.png"));
-        FrameImage.Write(s.Control, Path.Combine(dir, "control-boxes-only.png"));
-        s = Make();
-        s.E.Y = 9;
-        FrameImage.Write(Render(s.G), Path.Combine(dir, "enemy-near-top-box-below.png"));
+        var (targetBox, _, _, targetX, targetY) = Target(scene);
+        game.Enemies.Add(new Enemy { Kind = EnemyKind.Diver, Sprite = Art.Diver, X = targetX + BusyDiverRightOfTarget, Y = targetBox.R * CardField.PixelsPerCell - BusyDiverAboveBox, BaseX = targetX, Hp = UnitHp, MaxHp = UnitHp, Windup = WindingUp, AimX = targetX, AimY = targetY });
+        SetShip(game, targetX + BusyShip.X, targetY + BusyShip.Y);
+        FrameImage.Write(Render(game), Path.Combine(dir, BusyScenePng));
+        FrameImage.Write(scene.Control, Path.Combine(dir, ControlPng));
+        scene = Make();
+        scene.Enemy.Y = NearTopPictureY;
+        FrameImage.Write(Render(scene.Game), Path.Combine(dir, NearTopPng));
     }
 }

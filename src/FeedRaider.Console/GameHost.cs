@@ -3,14 +3,12 @@ using FeedRaider.Console.Audio;
 using FeedRaider.Engine;
 using FeedRaider.Engine.Raider;
 
-/// <summary>Feed Raider in a terminal: keyboard only, signed out (the like prompt says so). Wingmen come from Discover, or from
+/// <summary>Feed Raider in a terminal: keyboard only, signed out. Posts come from Discover, or from
 /// the follows of --handle.</summary>
 static class GameHost
 {
-    public static async Task<int> RunAsync(string? handle, string feedName, int? seconds, bool darkness, AudioOptions audioOptions)
+    public static async Task<int> RunAsync(string? handle, string feed, int? seconds, bool darkness, AudioOptions audioOptions, int feedSpeed = FeedSpeed.Default)
     {
-        string? feed = Feeds.Resolve(feedName);
-        if (feed is null) { Console.Error.WriteLine("unknown --feed (discover, foryou, random or an at:// feed generator uri)"); return 2; }
         Console.OutputEncoding = new UTF8Encoding(false);
         using var stdout = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false), StdoutBuffer) { AutoFlush = false };
         using var http = new HttpClient { Timeout = HttpTimeout };
@@ -26,26 +24,27 @@ static class GameHost
             game.Music = new MusicDirector(audio.Cue);
             game.Sfx = new SfxBus(audio.Sfx);
         }
+        game.FeedSpeed = feedSpeed;
         game.PlainOnly = handle is null && feed == Feeds.Random;
         var threads = new PublicThreadSource(http);
-        game.ThreadWanted = post => _ = RaiderFeeds.ThreadAsync(game, threads, post, cts.Token, onTrouble: m => { lock (game) game.Say(m); });
+        game.ThreadWanted = post => _ = RaiderFeeds.ThreadAsync(game, threads, post, cts.Token);
         var runner = new RaiderRunner(game, Size, new Sink(stdout));
         var pub = new PublicFeedSource(http);
-        IFeedSource primary = handle is not null ? new FollowsFeedSource(http, handle) : feed == Feeds.Random ? new RandomFeedSource(pub, pub, m => { lock (game) game.Say(m); }) : pub;
+        IFeedSource primary = handle is not null ? new FollowsFeedSource(http, handle, onTrouble: m => { lock (game) game.Say(m); }) : feed == Feeds.Random ? new RandomFeedSource(pub, pub, m => { lock (game) game.Say(m); }) : pub;
         IFeedSource? fallback = handle is null ? null : new PublicFeedSource(http);
 
         using var keyInput = KeyInput.Open(stdout);
         // A crash skips the finally below; the exit handler still puts the keyboard back.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => keyInput.Dispose();
         stdout.Write(EnterScreen); stdout.Flush();
-        var tasks = new List<Task> { runner.RunAsync(cts.Token), RaiderFeeds.WingmenAsync(game, primary, fallback, feed, cts.Token, onFallback: m => { lock (game) game.Say(m); }) };
+        var tasks = new List<Task> { runner.RunAsync(cts.Token), RaiderFeeds.PostsAsync(game, primary, fallback, feed, cts.Token, onFallback: m => { lock (game) game.Say(m); }) };
         if (darkness) tasks.Add(RaiderFeeds.DarknessAsync(game, http, cts.Token).ContinueWith(t =>
         {
             // The game plays on without the darkness feed, so a fault is reported on screen instead of ending the run.
             if (t.IsFaulted) lock (game) game.Say($"darkness feed stopped: {t.Exception.GetBaseException().Message}");
         }, CancellationToken.None));
         // The input blocks on a read, so a quit from elsewhere leaves this loop parked on a background thread until the process exits.
-        var keys = Task.Factory.StartNew(() => keyInput.Loop(game, cts, audio is null ? null : () => game.Say(audio.ToggleMute() ? "sound off (M)" : "sound on (M)")), TaskCreationOptions.LongRunning);
+        var keys = Task.Factory.StartNew(() => keyInput.Loop(game, cts, audio is null ? null : () => game.Say(audio.ToggleMute() ? "sound off (M)" : "sound on (M)"), step => game.SetFeedSpeed(game.FeedSpeed + step)), TaskCreationOptions.LongRunning);
         try
         {
             await Task.WhenAny(Task.WhenAll(tasks), keys);

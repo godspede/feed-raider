@@ -37,6 +37,18 @@ public sealed class AudioMixer(MusicRotation? rotation, Func<string, IMusicStrea
     /// <summary>The ms of the page's per-sound gap, so a caller that does not go through the game's bus cannot stack a sound.</summary>
     private static readonly Dictionary<string, int> GapMs = new()
     {
+        ["warn"] = 600,
+        ["ping"] = 133,
+        ["open"] = 100,
+        ["shut"] = 100,
+        ["beam"] = 600,
+        ["lob"] = 100,
+        ["blast"] = 66,
+        ["hatch"] = 66,
+        ["tick"] = 100,
+        ["part"] = 66,
+        ["boss_down"] = 1500,
+        ["sting"] = 500,
         ["shot"] = 60,
         ["hit"] = 45,
         ["kill"] = 40,
@@ -49,12 +61,12 @@ public sealed class AudioMixer(MusicRotation? rotation, Func<string, IMusicStrea
         ["darkness"] = 1500,
         ["pickup_shield"] = 100,
         ["pickup_bomb"] = 100,
-        ["pickup_power"] = 100,
+        ["pickup_weapon"] = 100,
         ["shield_hit"] = 90,
     };
 
     /// <summary>The sounds that dip the music under them, with the hold in ms.</summary>
-    private static readonly Dictionary<string, int> DuckHoldMs = new() { ["bomb"] = 250, ["boom"] = 500, ["death"] = 400 };
+    private static readonly Dictionary<string, int> DuckHoldMs = new() { ["bomb"] = 250, ["boom"] = 500, ["death"] = 400, ["boss_down"] = 1500, ["sting"] = 500 };
 
     private sealed class Voice(float[] pcm, float left, float right)
     {
@@ -79,13 +91,12 @@ public sealed class AudioMixer(MusicRotation? rotation, Func<string, IMusicStrea
     private long _clock;                 // frames mixed so far
     private long _duckFrom = long.MinValue / 2;
     private int _duckHold;
-    private float _master = DefaultVolume, _masterNow = DefaultVolume;
+    private float _masterNow = DefaultVolume;
     private bool _muted;
     private string? _cue;
     private (string Cue, bool AfterBoss)? _pendingCue;
     private bool _pendingNext;
 
-    public float Volume { get { lock (_gate) return _master; } set { lock (_gate) _master = Math.Clamp(value, 0, 1); } }
     public bool Muted { get { lock (_gate) return _muted; } set { lock (_gate) _muted = value; } }
     public int VoiceCount { get { lock (_gate) return _voices.Count; } }
     public string? CurrentCue { get { lock (_gate) return _cue; } }
@@ -95,8 +106,8 @@ public sealed class AudioMixer(MusicRotation? rotation, Func<string, IMusicStrea
     {
         lock (_gate)
         {
-            if (cue == _cue) return;
-            _pendingCue = (cue, _cue == MusicCues.Boss && cue == MusicCues.Gameplay);
+            if (MusicCues.IsAhead(cue) || cue == _cue) return;   // the fetch-ahead hint is for a page that downloads its tracks; every file is here already
+            _pendingCue = (cue, MusicCues.IsBoss(_cue) && cue == MusicCues.Gameplay);
             _cue = cue;
         }
     }
@@ -110,7 +121,6 @@ public sealed class AudioMixer(MusicRotation? rotation, Func<string, IMusicStrea
             _lastAt[name] = _clock;
         }
         float[] pcm = SfxSynth.Render(name, step, size, rng);
-        if (pcm.Length == 0) return;
         double angle = (Math.Clamp(double.IsFinite(pan) ? pan : 0, -1, 1) + 1) * Math.PI / 4;   // equal power, like a StereoPanner
         var voice = new Voice(pcm, (float)Math.Cos(angle), (float)Math.Sin(angle));
         lock (_gate)
@@ -229,7 +239,7 @@ public sealed class AudioMixer(MusicRotation? rotation, Func<string, IMusicStrea
             if (v.Pos >= v.Pcm.Length) _voices.RemoveAt(vi);
         }
 
-        float target = _muted ? 0 : _master;
+        float target = _muted ? 0 : DefaultVolume;
         for (int f = 0; f < frames; f++)
         {
             _masterNow += Math.Clamp(target - _masterNow, -MasterSmoothing, MasterSmoothing);
