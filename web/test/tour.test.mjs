@@ -287,7 +287,7 @@ test('main.js: the tour runs only while the start page shows, and a pick ends it
   assert.match(main, /musicCue\('start'\);\s+tour\.show\(\);/);
   assert.match(main, /if \(needsStart && !queued\) tour\.show\(\)/);
   // the game's keys do nothing while the start page or the pause menu shows
-  assert.match(main, /!menu\?\.isPlaying\(\) \|\| menu\?\.isOpen\(\)/);
+  assert.match(main, /!menu\.isPlaying\(\) \|\| menu\.isOpen\(\)/);
 });
 
 test('index.html: the title glow pulses by opacity alone, over a title whose own shadow holds still, and shows nothing when still', () => {

@@ -11,7 +11,7 @@ public class LegibleTextTests
 
     private const int GuardFrames = 400;
     private const int StageWithTwoHints = 2, HintsAtThatStage = 2, PostId = 1;
-    private const string ShieldUp = PickupTests.ShieldUp, PowerUp = PickupTests.PowerUp;
+    private const string ShieldUp = PickupTests.ShieldUp, ShieldFull = PickupTests.ShieldFull;
     /// <summary>The pop-up a shot-down enemy makes with its score.</summary>
     private const string Score = "+100";
 
@@ -28,7 +28,7 @@ public class LegibleTextTests
     private static RaiderGame GameWithCard(int cols, int rows, Action<RaiderGame> setUp)
     {
         var game = EnemyKit.Game(cols, rows);
-        game.Posts.Offer(HoldRig.Post(PostId));
+        game.Posts.Offer(PressRig.Post(PostId));
         game.Step();
         setUp(game);
         var card = game.Cards.Cards.Single();
@@ -128,7 +128,7 @@ public class LegibleTextTests
     public void Three_pop_ups_added_at_one_point_stay_whole_and_on_rows_of_their_own_for_their_whole_life(int cols, int rows)
     {
         var game = EnemyKit.Game(cols, rows);
-        string[] texts = [Score, ShieldUp, PowerUp];
+        string[] texts = [Score, ShieldUp, ShieldFull];
         foreach (var text in texts) game.Popups.Add(PopupAt(text, game.PW / 2.0, game.PH / 2.0));
         int frames = 0;
         for (; game.Popups.Count > 0 && frames < GuardFrames; frames++)
@@ -159,21 +159,14 @@ public class LegibleTextTests
     [Fact]
     public void A_gold_like_makes_pop_ups_that_are_whole_in_the_screen_on_the_frame_after()
     {
-        var (game, card, _) = HoldRig.Scene(post: HoldRig.Post(PostId, likes: Tuning.GoldLikes));
+        var (game, card, _) = PressRig.Scene(post: PressRig.Post(PostId, likes: Tuning.GoldLikes));
         EnemyKit.ScriptedThreeParts(game);
-        HoldRig.Force(game, nameof(RaiderGame.Shield), LikeHoldTests.NoShield);
-        for (int i = 0; i < GuardFrames && !card.Marks.Paid; i++)
-        {
-            game.Bullets.Clear();
-            int top = card.Top;
-            HoldRig.Park(game, card, PostAction.Like);
-            game.Step();
-            card.Top = top;
-        }
+        PressRig.Force(game, nameof(RaiderGame.Shield), LikePressTests.NoShield);
+        LikeClearsPartsTests.PressKeepingEnemies(game, card, PostAction.Like);
         Assert.True(card.Marks.Paid);
         game.Step();
-        var scr = Render(game, HoldRig.ScrCols, HoldRig.ScrRows);
-        string[] made = [RaiderGame.GoldPopup, ShieldUp, PowerUp, RaiderGame.PartsPopup];
+        var scr = Render(game, PressRig.ScrCols, PressRig.ScrRows);
+        string[] made = [RaiderGame.GoldPopup, ShieldUp, RaiderGame.PartsPopup];
         foreach (var text in made) Assert.Contains(game.Popups, popup => popup.Text == text);
         var rowsSeen = made.Select(text => Assert.Single(RowsOf(scr, text))).ToList();
         Assert.Equal(rowsSeen.Count, rowsSeen.Distinct().Count());
@@ -190,10 +183,11 @@ public class LegibleTextTests
         Assert.All(spots, spot => Assert.True(spot.Col >= lay.Col0 && spot.Col + spot.Popup.Text.Length <= lay.Col0 + lay.PCols));
     }
 
-    /// <summary>A screen of one colour wide enough for a pop-up or two, which <see cref="DrawPopups"/> draws by cell: a pop-up's
-    /// centre is its column and its row.</summary>
+    /// <summary>The size of the pop-up screen, the row pop-ups are centred on and the column the first starts at.</summary>
     private const int PopupScreenCols = 40, PopupScreenRows = 10, PopupRow = 5, PopupLeft = 10;
 
+    /// <summary>A screen of one colour wide enough for a pop-up or two, which <see cref="DrawPopups"/> draws by cell: a pop-up's
+    /// centre is its column and its row.</summary>
     private static Screen PopupScreen(uint back)
     {
         var scr = new Screen(PopupScreenCols, PopupScreenRows);
@@ -225,8 +219,8 @@ public class LegibleTextTests
     public void A_pop_up_that_ends_where_another_starts_keeps_its_letters_and_the_others()
     {
         var scr = PopupScreen(CardColours.Slab);
-        DrawPopups(scr, PopupFrom(Score, PopupLeft), PopupFrom(PowerUp, PopupLeft + Score.Length));
-        Assert.Equal(Score + PowerUp, RowText(scr, PopupRow).Substring(PopupLeft, Score.Length + PowerUp.Length));
+        DrawPopups(scr, PopupFrom(Score, PopupLeft), PopupFrom(ShieldFull, PopupLeft + Score.Length));
+        Assert.Equal(Score + ShieldFull, RowText(scr, PopupRow).Substring(PopupLeft, Score.Length + ShieldFull.Length));
     }
 
     [Theory]

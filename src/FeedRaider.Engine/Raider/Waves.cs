@@ -16,7 +16,7 @@ public enum WavePattern { Line, Vee, Arc, Column, Sine }
 public sealed record EnemySpawn(EnemyKind Kind, double X, int Delay, double Amp, double Phase, string? Text);
 
 /// <summary>A planned wave. <see cref="Live"/> waves come from a real darkness event, filler ones from the generator.</summary>
-public sealed record WaveSpec(bool Live, DarknessKind? Kind, WavePattern Pattern, IReadOnlyList<EnemySpawn> Enemies, string? Text, string? Label = null, DarkSource Source = DarkSource.Label);
+public sealed record WaveSpec(bool Live, DarknessKind? Kind, WavePattern Pattern, IReadOnlyList<EnemySpawn> Enemies, string? Text, string? Label = null, DarknessSource Source = DarknessSource.Label);
 
 /// <summary>Turns darkness events (and the filler generator) into waves. Pure: the same post always gives the same wave.
 /// The text a wave carries went through <see cref="DarknessText"/> already; nothing here knows an author.</summary>
@@ -59,7 +59,7 @@ public static class WaveSpawner
 
     /// <summary>A darkness event's wave. From <see cref="Tuning.LiveSpecialsFromStage"/> a live wave swaps a few plain grunts for
     /// newer kinds that can be killed (never a mine, so the wave can always be cleared); the carrier and its text stay as they are.</summary>
-    public static WaveSpec FromPost(DarkPost post, int stage = 1)
+    public static WaveSpec FromPost(DarknessPost post, int stage = 1)
     {
         ulong s = post.Seed;
         string text = DarknessText.Clean(post.Text, DarknessText.MaxPostChars);

@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { AVATAR_SIDE, PICTURE_MAX_SIDE, PICTURE_WAIT_MS, PICTURES_KEY, bindPicturesSwitch, createPictures, pictureReader, pdsFinder, pdsOrigin, pictureCid, picturesStartOn,
-  rememberRecent, shrinkPixels, thinConnection } from '../../src/FeedRaider.Web/wwwroot/page.js';
+  rememberRecent, shrinkPixels, thinConnection, videoThumbUrl } from '../../src/FeedRaider.Web/wwwroot/page.js';
 
 const wwwroot = new URL('../../src/FeedRaider.Web/wwwroot/', import.meta.url);
 const DID = 'did:plc:abc123', PDS = 'https://pds.example.com';
@@ -86,6 +86,7 @@ test('a picture is asked of the DID directory and the author\'s PDS and of no ot
   assert.match(main, /page\.pictureReader\(/);
   assert.match(main, /fetchAvatar: pictureReader\.avatar,/);
   assert.match(main, /fetchPicture: pictureReader\.picture,/);
+  assert.match(main, /fetchVideoThumb: pictureReader\.videoThumb,/);
   // the avatars ask the same finder, so an author's DID document is fetched once, and no address is built from one in main.js
   assert.equal(main.match(/page\.pdsFinder\(/g).length, 1);
   assert.doesNotMatch(main, /didDocUrl|serviceEndpoint/);
@@ -96,7 +97,7 @@ test('a URL that is not the author\'s feed picture, or a size out of bounds, ask
   const get = pictureGetter({ fetch: n.fetch, pdsOf: pdsFinder({ fetch: n.fetch }), decode: flat(1) });
   assert.equal(await get(DID, 'https://tracker.example/pixel.gif', 4, 4), null);
   assert.equal(await get(DID, thumb('bafkone', 'did:plc:someoneelse'), 4, 4), null);
-  for (const [w, h] of [[0, 4], [4, 65], [65, 4], [2.5, 2], [-1, 2]]) assert.equal(await get(DID, thumb('bafkone'), w, h), null, `${w}x${h}`);
+  for (const [w, h] of [[0, 4], [4, PICTURE_MAX_SIDE + 1], [PICTURE_MAX_SIDE + 1, 4], [2.5, 2], [-1, 2]]) assert.equal(await get(DID, thumb('bafkone'), w, h), null, `${w}x${h}`);
   assert.deepEqual(n.asked, []);
 });
 
@@ -527,6 +528,49 @@ test('a refused redirect gives no picture, and nothing more is asked of anyone',
   const noBlob = pictureGetter({ fetch: n.fetch, pdsOf: pdsFinder({ fetch: n.fetch }), decode: flat(1) });
   assert.equal(await noBlob(DID, thumb('bafkone'), 2, 2), null);
   assert.deepEqual(n.asked, [`https://plc.directory/${DID}`, `${PDS}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(DID)}&cid=bafkone`]);
+});
+
+const VIDEO_DID = 'did:plc:z72i7hdynmk6r22z27h6tvur', VIDEO_CID = 'bafkreiapzmyzxc72yow7zhko4fgykat7ppbcvnz4wv7okwcwnesbasy5um';
+// A stand-in video CDN: every URL asked for is recorded with its redirect rule, and a thumbnail of `size` bytes answers each.
+function videoNet(size = 10) {
+  const asked = [];
+  const fetch = async (url, init) => {
+    asked.push([String(url), init?.redirect]);
+    return { ok: true, headers: new Map([['content-length', String(size)]]), body: bodyOf(size) };
+  };
+  return { asked, fetch };
+}
+
+test('a video\'s thumbnail address is built only from a DID and a CID of the shape a post gives', () => {
+  assert.equal(videoThumbUrl(VIDEO_DID, VIDEO_CID), `https://video.cdn.bsky.app/hls/${VIDEO_DID}/${VIDEO_CID}/thumbnail.jpg`);
+  assert.equal(videoThumbUrl('did:web:example.com', 'bafkone12'), 'https://video.cdn.bsky.app/hls/did:web:example.com/bafkone12/thumbnail.jpg');
+  for (const [did, cid] of [['did:plc:short', VIDEO_CID], ['did:plc:z72i7hdynmk6r22z27h6tvur/../x', VIDEO_CID], [VIDEO_DID, '../../x'],
+    [VIDEO_DID, 'baf?x=1'], ['did%3Aplc%3Az72i7hdynmk6r22z27h6tvur', VIDEO_CID], [null, VIDEO_CID], [VIDEO_DID, undefined]])
+    assert.equal(videoThumbUrl(did, cid), null, `${did} ${cid}`);
+});
+
+test('a video\'s thumbnail is read from the video CDN alone, with redirects refused, shrunk to the size asked and kept by its CID', async () => {
+  const n = videoNet();
+  const decodes = [];
+  const reader = readerWithPicturesOn({ fetch: n.fetch, pdsOf: async () => assert.fail('a video thumbnail asks no PDS'), decode: async (_b, w, h) => { decodes.push([w, h]); return Array(w * h).fill(7); } });
+  assert.equal(await reader.videoThumb(VIDEO_DID, VIDEO_CID, 2, 1), '7,7');
+  assert.equal(await reader.videoThumb(VIDEO_DID, VIDEO_CID, 3, 1), '7,7,7');
+  assert.deepEqual(n.asked, [[`https://video.cdn.bsky.app/hls/${VIDEO_DID}/${VIDEO_CID}/thumbnail.jpg`, 'error']]);
+  assert.deepEqual(decodes, [[PICTURE_MAX_SIDE, PICTURE_MAX_SIDE]]);
+});
+
+test('a video\'s thumbnail of a malformed DID, out of bounds, over the byte cap or with the pictures off is null', async () => {
+  const n = videoNet(OVER_LIMIT_BYTES);
+  const reader = readerWithPicturesOn({ fetch: n.fetch, pdsOf: async () => null, decode: flat(1) });
+  assert.equal(await reader.videoThumb('did:plc:short', VIDEO_CID, 2, 2), null);
+  assert.equal(await reader.videoThumb(VIDEO_DID, VIDEO_CID, 0, 2), null);
+  assert.equal(await reader.videoThumb(VIDEO_DID, VIDEO_CID, 2, PICTURE_MAX_SIDE + 1), null);
+  assert.equal(n.asked.length, 0);
+  assert.equal(await reader.videoThumb(VIDEO_DID, VIDEO_CID, 2, 2), null);
+  assert.equal(n.asked.length, 1);
+  const off = pictureReader({ fetch: n.fetch, pdsOf: async () => null, decode: flat(1), wanted: () => false });
+  assert.equal(await off.videoThumb(VIDEO_DID, 'bafkother1', 2, 2), null);
+  assert.equal(n.asked.length, 1);
 });
 
 test('the PDS lookups are kept for only so many authors', async () => {

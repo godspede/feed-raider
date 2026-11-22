@@ -7,7 +7,10 @@ public static class SfxNames
         SpeechBox = "comm", Like = "like", NoLike = "nolike", Darkness = "darkness", Clear = "clear",
         PickupShield = "pickup_shield", PickupBomb = "pickup_bomb", PickupWeapon = "pickup_weapon", ShieldHit = "shield_hit",
         Warn = "warn", Ping = "ping", Open = "open", Shut = "shut", Charge = "charge", Beam = "beam", Lob = "lob", Blast = "blast",
-        Hatch = "hatch", Tick = "tick", Part = "part", BossDown = "boss_down", Sting = "sting", Hold = "hold", Repost = "repost";
+        Hatch = "hatch", Tick = "tick", Part = "part", BossDown = "boss_down", Sting = "sting", Repost = "repost",
+        Undo = "undo", Burst = "burst", BurstEnd = "burst_end",
+        ShotHeavy = "shot_heavy", ShotTwin = "shot_twin", ShotMissile = "shot_missile", ShotTwinHeavy = "shot_twin_heavy", ShotSpread = "shot_spread",
+        ShotMachineGun = "shot_machine_gun", ShotGatling = "shot_gatling", ShotSwarm = "shot_swarm", ShotStorm = "shot_storm";
 }
 
 /// <summary>
@@ -16,8 +19,8 @@ public static class SfxNames
 /// the pan, -1 (left) to 1 (right). Kills inside <see cref="ComboFrames"/> of each other make a combo: each one raises the pitch of
 /// the kill and hit sounds by a semitone (up to <see cref="MaxStep"/>) until a pause, or the ship being hurt, resets it. `emit`
 /// gets (name, pan, step, size): the combo step in semitones, and the size of the thing that died, 0 (grunt) to 1 (gunship).
-/// Three cues borrow those fields: `tick` takes its pitch step (0 to <see cref="MaxTickStep"/>), `charge` its length as `size`,
-/// 0 (0.4 s) to 1 (1.6 s), and `hold` the step of the build-up it marks (0 to <see cref="MaxStep"/>).
+/// Two cues borrow those fields: `tick` takes its pitch step (0 to <see cref="MaxTickStep"/>), and `charge` its length as `size`,
+/// 0 (0.4 s) to 1 (1.6 s).
 /// The page does its own voice limiting on top.
 /// </summary>
 public sealed class SfxBus(Action<string, double, int, double> emit)
@@ -36,10 +39,11 @@ public sealed class SfxBus(Action<string, double, int, double> emit)
     public static int MinGapFrames(string name) => name switch
     {
         SfxNames.Shot or SfxNames.Hit or SfxNames.Kill => 2,
+        SfxNames.ShotHeavy or SfxNames.ShotTwin or SfxNames.ShotMissile or SfxNames.ShotTwinHeavy or SfxNames.ShotSpread or SfxNames.ShotSwarm or SfxNames.ShotStorm => 2,
+        SfxNames.ShotMachineGun or SfxNames.ShotGatling => 5,       // the guns fire every 3 frames and are heard every second shot
         SfxNames.Hurt or SfxNames.Like or SfxNames.Repost or SfxNames.ShieldHit => 3,
         SfxNames.PickupShield or SfxNames.PickupBomb or SfxNames.PickupWeapon => 4,
-        SfxNames.Hold => 4,                                    // a beat is never closer than 5 ticks; a twitch on and off the button is heard once
-        SfxNames.Bomb or SfxNames.NoLike => 6,
+        SfxNames.Bomb or SfxNames.NoLike or SfxNames.Undo => 6,
         SfxNames.SpeechBox => 8,
         SfxNames.Clear => 15,
         SfxNames.Darkness => 30,
@@ -49,6 +53,7 @@ public sealed class SfxBus(Action<string, double, int, double> emit)
         SfxNames.Warn or SfxNames.Beam => 18,                  // 0.6 s: the cue plays out before it can start again
         SfxNames.BossDown => 45,
         SfxNames.Sting => 15,                                  // 0.5 s: one visitor at a time
+        SfxNames.Burst or SfxNames.BurstEnd => 10,             // 0.35 s: the whoosh plays out; two bursts are 20 s apart anyway
         _ => 0,
     };
 
@@ -71,7 +76,6 @@ public sealed class SfxBus(Action<string, double, int, double> emit)
         }
         else if (name == SfxNames.Hit) step = Step(frame);
         else if (name == SfxNames.Tick) step = Math.Clamp(tickStep, 0, MaxTickStep);   // the fuse's count, not the combo
-        else if (name == SfxNames.Hold) step = Math.Clamp(tickStep, 0, MaxStep);       // the beat of the build-up
         if (_last.TryGetValue(name, out long prev) && frame - prev < MinGapFrames(name)) return;
         _last[name] = frame;
         emit(name, Math.Clamp(pan, -1, 1), step, Math.Clamp(size, 0, 1));

@@ -5,7 +5,7 @@ using FeedRaider.Engine.Raider;
 
 /// <summary>The --frames run: a fixed-seed <see cref="PilotedGame"/> (the tour's pilot and built-in posts, three
 /// darkness posts) drawn frame by frame, so the PNG frames and the timing are repeatable without a network. In the first loop the
-/// pilot holds a gold card's heart until the like lands and the author's reply comes in as a thread card.</summary>
+/// pilot likes a gold card and the author's reply comes in as a thread card.</summary>
 static class FramesRun
 {
     public const ulong Seed = 42;
@@ -105,9 +105,9 @@ sealed class PilotedGame
         game.FeedSpeed = FeedSpeed.Max;
         return
         [
-            (60, () => game.OfferDark(new DarkPost(DarknessKind.Spam, Seed: 11, "buy followers cheap click my profile now"))),
-            (200, () => game.OfferDark(new DarkPost(DarknessKind.Rude, Seed: 12, "sample text standing in for a rude post"))),
-            (420, () => game.OfferDark(new DarkPost(DarknessKind.Spam, Seed: 13, "free crypto giveaway dm me"))),
+            (60, () => game.OfferDarkness(new DarknessPost(DarknessKind.Spam, Seed: 11, "buy followers cheap click my profile now"))),
+            (200, () => game.OfferDarkness(new DarknessPost(DarknessKind.Rude, Seed: 12, "sample text standing in for a rude post"))),
+            (420, () => game.OfferDarkness(new DarknessPost(DarknessKind.Spam, Seed: 13, "free crypto giveaway dm me"))),
         ];
     }
 }

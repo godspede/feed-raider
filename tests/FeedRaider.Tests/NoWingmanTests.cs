@@ -5,13 +5,15 @@ using FeedRaider.Tests.Enemies;
 namespace FeedRaider.Tests;
 
 // In flight nothing on the field likes a post by itself: there is no wingman and no automatic bomb, posts reach the game's queue and
-// nothing on the field reads them, and E acts only on the feed log's marked post, so pressing it in flight writes nothing (resting the
-// ship on a card's heart is the one way to like on the field: HoldTests). In the left-pane run the feed log shows its heading and no
-// entries, since no post has scrolled off the field into it yet.
+// nothing on the field reads them, and E acts only on the feed log's marked post, so pressing it in flight writes nothing (on the
+// field Z, X or a click likes, and resting the ship on a heart does not: PressTests). In the left-pane run the feed log shows
+// its heading and no entries, since no post has scrolled off the field into it yet.
 public class NoWingmanTests
 {
     private const int Cols = 130, Rows = 46;
     private const int UntouchedRunFrames = 200, HalfRunFrames = 100, SettleFrames = 30, LikeKeyWatchFrames = 90;
+    /// <summary>Frames the pointer rests on the card before it clicks, and frames kept running after the click.</summary>
+    private const int HoverFrames = 3 * Tuning.Fps, AfterClickFrames = 10;
     /// <summary>Seconds the no-wingman run keeps the fire key down.</summary>
     private const int FedRunSeconds = 60;
     /// <summary>Frames between one post offered to the queue and the next in the no-wingman run.</summary>
@@ -99,7 +101,7 @@ public class NoWingmanTests
         played.Clear();
         for (int i = 0; i < LikeKeyWatchFrames; i++)
         {
-            if (i % LikeKeyEveryFrames == 0) g.Input.Like();
+            if (i % LikeKeyEveryFrames == 0) g.Input.LogLike();
             g.Step();
             Assert.Null(g.Toast);
         }
@@ -119,9 +121,9 @@ public class NoWingmanTests
         played.Clear();
         var (px, py) = (g.Layout.Col0 + g.PX / 2, g.PY / 2);
         g.Input.Pointer(px, py);
-        Run(g, 3 * Tuning.Fps);
-        g.Input.Tap(px, py);
-        Run(g, 10);
+        Run(g, HoverFrames);
+        g.Input.Click(px, py);
+        Run(g, AfterClickFrames);
         Assert.Empty(writes);
         Assert.Empty(said);
         Assert.Null(g.Toast);
@@ -156,7 +158,7 @@ public class NoWingmanTests
     public void A_post_added_to_the_log_shows_under_the_heading()
     {
         var (g, _, _) = New();
-        g.Log.Add(new LogEntry(Post(7), g.Book.For(Post(7))));
+        g.Log.Add(new LogEntry(Post(7), g.Book.MarksFor(Post(7))));
         var lay = g.Layout;
         int right = lay.Col0 - Tuning.SideGapCols;
         var scr = Render(g);
@@ -173,7 +175,7 @@ public class NoWingmanTests
         {
             var cues = new List<string>();
             var g = new RaiderGame(EnemyKit.PlainSeed);
-            g.SetLayout(FieldLayout.Compute(HoldRig.ScrCols, HoldRig.ScrRows));
+            g.SetLayout(FieldLayout.Compute(PressRig.ScrCols, PressRig.ScrRows));
             g.Music = new MusicDirector(cues.Add);
             for (int i = 0; i < MusicRunSeconds * Tuning.Fps; i++)
             {

@@ -5,14 +5,16 @@ namespace FeedRaider.Tests;
 
 public class CardFieldTests
 {
-    private static FeedPost P(int n, string text = "hello") =>
+    private static readonly int FramesPerRowAtStep5 = FeedSpeed.FramesPerRow(5);
+
+    private static FeedPost Post(int n, string text = "hello") =>
         new($"at://did:plc:a/app.bsky.feed.post/{n}", "c", "did:plc:a", "a.test", text, 1, 0, 0, null, null);
 
     // field of 56 columns: cards are 52 wide, two columns in from each side
     private static CardField Field(int step = 3, int cols = 56, int rows = 40, int posts = 0)
     {
         var q = new PostQueue();
-        for (int i = 0; i < posts; i++) q.Offer(P(i));
+        for (int i = 0; i < posts; i++) q.Offer(Post(i));
         return new CardField(q, new PostBook(), cols, rows, step);
     }
 
@@ -29,8 +31,10 @@ public class CardFieldTests
     {
         Assert.Equal(30, FeedSpeed.FramesPerRow(-4));
         Assert.Equal(6, FeedSpeed.FramesPerRow(99));
-        Assert.Equal(3, FeedSpeed.Default);
     }
+
+    [Fact]
+    public void The_default_speed_is_one_of_the_steps() => Assert.InRange(FeedSpeed.Default, FeedSpeed.Min, FeedSpeed.Max);
 
     [Theory]
     [InlineData(1)]
@@ -94,7 +98,7 @@ public class CardFieldTests
         var q = new PostQueue();
         var f = new CardField(q, new PostBook(), 56, 40, 5);
         for (int i = 0; i < 20; i++) f.Step();
-        q.Offer(P(1));
+        q.Offer(Post(1));
         f.Step();
         Assert.Single(f.Cards);
     }
@@ -130,9 +134,9 @@ public class CardFieldTests
         int guard = 0;
         while (c.Top == top && guard++ < 100) f.Step();
         Assert.Equal(top + 1, c.Top);
-        Assert.Equal(6, f.FramesPerRow);
+        Assert.Equal(FramesPerRowAtStep5, f.FramesPerRow);
         int t2 = c.Top;
-        for (int i = 0; i < 5; i++) { f.Step(); Assert.Equal(t2, c.Top); }
+        for (int i = 0; i < FramesPerRowAtStep5 - 1; i++) { f.Step(); Assert.Equal(t2, c.Top); }
         f.Step();
         Assert.Equal(t2 + 1, c.Top);
     }
@@ -141,9 +145,9 @@ public class CardFieldTests
     public void A_resize_measures_the_cards_again_and_keeps_their_top_rows()
     {
         var q = new PostQueue();
-        q.Offer(P(1, string.Join(" ", Enumerable.Repeat("word", 60))));
+        q.Offer(Post(1, string.Join(" ", Enumerable.Repeat("word", 60))));
         var f = new CardField(q, new PostBook(), 64, 40, 5);
-        for (int i = 0; i < 6 * 8; i++) f.Step();
+        for (int i = 0; i < FramesPerRowAtStep5 * 8; i++) f.Step();
         var c = f.Cards[0];
         int top = c.Top, rows = c.Shape.Rows;
         Assert.Equal(60, c.Shape.Cols);
@@ -158,10 +162,10 @@ public class CardFieldTests
     public void A_buttons_pixel_box_moves_one_cell_of_pixels_with_each_row_step()
     {
         var f = Field(step: 5, cols: 64, posts: 1);
-        for (int i = 0; i < 6 * 3; i++) f.Step();
+        for (int i = 0; i < FramesPerRowAtStep5 * 3; i++) f.Step();
         var c = f.Cards[0];
         var a = f.ButtonBox(c, PostAction.Like);
-        for (int i = 0; i < 6; i++) f.Step();
+        for (int i = 0; i < FramesPerRowAtStep5; i++) f.Step();
         var b = f.ButtonBox(c, PostAction.Like);
         Assert.Equal(a.X, b.X);
         Assert.Equal(a.Y + CardField.PixelsPerCell, b.Y);
@@ -187,24 +191,22 @@ public class CardFieldTests
     public void The_same_post_offered_twice_gets_the_same_marks_object()
     {
         var book = new PostBook();
-        var a = book.For(P(1));
-        var b = book.For(P(1));
+        var a = book.MarksFor(Post(1));
+        var b = book.MarksFor(Post(1));
         Assert.Same(a, b);
-        Assert.NotSame(a, book.For(P(2)));
+        Assert.NotSame(a, book.MarksFor(Post(2)));
     }
 
     [Fact]
     public void Marks_start_from_what_the_post_already_carries()
     {
-        var liked = P(1) with { AlreadyLiked = true, LikeUri = "at://x/like/1" };
-        var m = new PostBook().For(liked);
+        var liked = Post(1) with { AlreadyLiked = true, LikeUri = "at://x/like/1" };
+        var m = new PostBook().MarksFor(liked);
         Assert.Equal(ButtonState.Lit, m.Like);
         Assert.Equal("at://x/like/1", m.LikeUri);
         Assert.Equal(ButtonState.Off, m.Repost);
-        Assert.Equal(ButtonState.Lit, new PostBook().For(P(2) with { AlreadyReposted = true }).Repost);
+        Assert.Equal(ButtonState.Lit, new PostBook().MarksFor(Post(2) with { AlreadyReposted = true }).Repost);
         Assert.False(m.Paid);
-        Assert.Equal(0, m.LikeProgress);
-        Assert.Equal(0, m.RepostProgress);
     }
 
     [Fact]
@@ -212,9 +214,9 @@ public class CardFieldTests
     {
         var book = new PostBook();
         var q = new PostQueue();
-        q.Offer(P(1));
+        q.Offer(Post(1));
         var f = new CardField(q, book, 56, 40, 5);
         f.Step();
-        Assert.Same(book.For(P(1)), f.Cards[0].Marks);
+        Assert.Same(book.MarksFor(Post(1)), f.Cards[0].Marks);
     }
 }

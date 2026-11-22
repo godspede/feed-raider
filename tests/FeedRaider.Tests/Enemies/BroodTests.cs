@@ -153,7 +153,6 @@ public sealed class BroodTests(ITestOutputHelper output)
         return g;
     }
 
-    /// <summary>A shot that kills the sac on this frame.</summary>
     private static void KillSac(RaiderGame g, Enemy b) => EnemyKit.Shot(g, b.X, b.Y - SacAboveCentre, SacKillingDamage);
 
     // ---------------------------------------------------------------- the kind
@@ -176,7 +175,7 @@ public sealed class BroodTests(ITestOutputHelper output)
     public void It_is_a_sac_over_four_armoured_hatches_of_five_by_four()
     {
         var g = EnemyKit.Game();
-        var b = g.SpawnKind(EnemyKind.Brood, 0.5);
+        var b = g.SpawnKind(EnemyKind.Brood, EnemyKit.MidWidth);
         Assert.Equal(["sac", "hatch-1", "hatch-2", "hatch-3", "hatch-4"], b.Parts!.Select(p => p.Name));
         var sac = PartOf(b, "sac");
         Assert.Equal(PartState.Open, sac.State);
@@ -560,7 +559,7 @@ public sealed class BroodTests(ITestOutputHelper output)
     public void It_enters_holds_and_stays_inside_the_field_above_the_floor(int cols, int rows)
     {
         var g = EnemyKit.Game(cols, rows);
-        var b = g.SpawnKind(EnemyKind.Brood, 0.5);
+        var b = g.SpawnKind(EnemyKind.Brood, EnemyKit.MidWidth);
         const int settledBy = 120, leastSway = 3;
         Assert.True(b.Y < 0, "it enters from above");
         double floor = EnemyKit.BossFloor(g.PH);
@@ -590,7 +589,7 @@ public sealed class BroodTests(ITestOutputHelper output)
     public void Its_parts_open_and_throw_inside_the_field_on_every_size(int cols, int rows)
     {
         var g = EnemyKit.Game(cols, rows);
-        var b = g.SpawnKind(EnemyKind.Brood, 0.5);
+        var b = g.SpawnKind(EnemyKind.Brood, EnemyKit.MidWidth);
         const int frenzyAt = 400, barrenAt = 800, frames = 1200, mostBolts = 24;
         double floor = EnemyKit.BossFloor(g.PH);
         int frenzy = 0;
@@ -817,7 +816,7 @@ public sealed class BroodTests(ITestOutputHelper output)
 
     // ---------------------------------------------------------------- voice
 
-    private static void Offer(RaiderGame g, ulong seed, string text) => g.OfferDark(new DarkPost(DarknessKind.Rude, seed, text));
+    private static void Offer(RaiderGame g, ulong seed, string text) => g.OfferDarkness(new DarknessPost(DarknessKind.Rude, seed, text));
 
     [Fact]
     public void It_takes_the_newest_waiting_post_first()

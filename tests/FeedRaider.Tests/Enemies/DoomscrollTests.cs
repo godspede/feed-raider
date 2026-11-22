@@ -78,7 +78,7 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
     /// <summary>Guns on a side in each drawing.</summary>
     private const int TallDrawnGuns = 3, ShortDrawnGuns = 1;
 
-    private const int BossStage = 10, FightLevel = Tuning.MaxWeaponLevel;
+    private const int BossStage = 10, FightLevel = 4;
 
     /// <summary>The terminal field, in columns and rows: short and wide, so the boss is in its short form.</summary>
     private const int TerminalCols = 80, TerminalRows = 24;
@@ -231,7 +231,7 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
     private static Enemy Settled(RaiderGame g, Lay lay)
     {
         var e = g.SpawnKind(EnemyKind.Doomscroll, MidField);
-        for (int i = 0; i < ArrivalWait && e.Y < lay.CentreY - RoundingSlack; i++) { EnemyKit.StepSweeping(g); Assert.Empty(Hostile(g)); }   // it fires nothing on its way in
+        for (int i = 0; i < ArrivalWait && e.Y < lay.CentreY - RoundingSlack; i++) { EnemyKit.StepSweeping(g); Assert.Empty(Hostile(g)); }
         Assert.Equal(lay.CentreY, e.Y, Places);
         return e;
     }
@@ -347,10 +347,10 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
                 foreach (var p in e.Parts ?? [])
                     if (p.State == PartState.Open && (e.Y + p.OY > low + LevelRows || (e.Y + p.OY > low - LevelRows && Math.Abs(e.X + p.OX - px) < Math.Abs(aim - px)))) { low = Math.Max(low, e.Y + p.OY); aim = e.X + p.OX; }
             double best = double.MaxValue, goal = px;
-            var maw = g.Enemies.FirstOrDefault(q => q.Kind == EnemyKind.Doomscroll);
+            var boss = g.Enemies.FirstOrDefault(q => q.Kind == EnemyKind.Doomscroll);
             var mem = Memory.GetOrCreateValue(g);
-            WatchTheMaw(g, maw, mem);
-            double? wait = WaitColumn(maw, mem);
+            WatchTheMaw(g, boss, mem);
+            double? wait = WaitColumn(boss, mem);
             for (int k = -Steps; k <= Steps; k++)
             {
                 double cx = Math.Clamp(px + k * Tuning.ShipSpeed, EdgeMargin, g.PW - EdgeMargin);
@@ -373,18 +373,18 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
         /// chin, so no pilot can see them; a player follows the dotted gold line, which this pilot remembers through
         /// <see cref="WatchTheMaw"/> and waits beside, because the ship and its shield would hide the line.
         /// </summary>
-        private static double? WaitColumn(Enemy? maw, Seen mem)
+        private static double? WaitColumn(Enemy? boss, Seen mem)
         {
-            if (maw is null || maw.Mode != MawShut || double.IsNaN(mem.Gap) || maw.ModeAge >= BarGoneAt) return null;
-            return maw.ModeAge < BarFrame ? mem.Park : mem.Gap;
+            if (boss is null || boss.Mode != MawShut || double.IsNaN(mem.Gap) || boss.ModeAge >= BarGoneAt) return null;
+            return boss.ModeAge < BarFrame ? mem.Park : mem.Gap;
         }
 
         /// <summary>Forgets the gold line in <paramref name="mem"/> on any frame the maw is not shut, and while the line shows
         /// clears the pickups and reads it off the drawn field through <see cref="RememberMarker"/>.</summary>
-        private static void WatchTheMaw(RaiderGame g, Enemy? maw, Seen mem)
+        private static void WatchTheMaw(RaiderGame g, Enemy? boss, Seen mem)
         {
-            if (maw is null || maw.Mode != MawShut) mem.Gap = mem.Park = double.NaN;
-            else if (maw.ModeAge >= MarkerFrom && maw.ModeAge < BarFrame) RememberMarker(g, maw, mem);
+            if (boss is null || boss.Mode != MawShut) mem.Gap = mem.Park = double.NaN;
+            else if (boss.ModeAge >= MarkerFrom && boss.ModeAge < BarFrame) RememberMarker(g, boss, mem);
         }
 
         /// <summary>Clears the pickups and draws the field, reads the gold line below the boss off it into <paramref name="mem"/>'s gap, and the first time
@@ -458,10 +458,10 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
     {
         for (int y = 0; y < TallDrawing.Length; y++)
             for (int x = 0; x < TallDrawing[y].Length; x++)
-                Assert.True(TallDrawing[y][x] == DrawingChar(true, TallDrawnGuns, TallDrawing[y].Length, x, y), $"tall drawing at {x},{y}");
+                Assert.Equal(TallDrawing[y][x], DrawingChar(true, TallDrawnGuns, TallDrawing[y].Length, x, y));
         for (int y = 0; y < ShortDrawing.Length; y++)
             for (int x = 0; x < ShortDrawing[y].Length; x++)
-                Assert.True(ShortDrawing[y][x] == DrawingChar(false, ShortDrawnGuns, ShortDrawing[y].Length, x, y), $"short drawing at {x},{y}");
+                Assert.Equal(ShortDrawing[y][x], DrawingChar(false, ShortDrawnGuns, ShortDrawing[y].Length, x, y));
     }
 
     // ---------------------------------------------------------------- what it is
@@ -546,7 +546,6 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
         var e = Settled(g, lay);
         Assert.Equal(Crown, e.Mode);
 
-        // the crown falls on the step the last gun dies, and not before
         var guns = Guns(e).ToList();
         for (int i = 0; i < guns.Count - 1; i++)
         {
@@ -566,7 +565,6 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
         Assert.Equal(MawShut, e.Mode);
         Assert.Equal(0, e.ModeAge);
 
-        // the maw is armoured while shut and takes nothing
         const int beforeShot = 10;
         var maw = PartOf(e, MawPart);
         Run(g, beforeShot);
@@ -585,7 +583,6 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
         Assert.Equal(MawShut, e.Mode);
         StepToMode(g, e, MawOpen);
 
-        // the husk falls on the step the maw dies
         const double scratch = 30;
         double mawHp = maw.Hp;
         Shoot(g, e, maw, scratch);
@@ -603,7 +600,6 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
         Assert.Equal(Heart, e.Mode);
         Assert.False(e.Untouchable);
 
-        // the kill is the heart's
         var heart = PartOf(e, HeartPart);
         Assert.True(heart.Vital);
         Assert.Equal(PartState.Open, heart.State);
@@ -791,7 +787,6 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
             for (int i = 1; i < angles.Count; i++) Assert.Equal(Math.Tau / RingBolts, angles[i] - angles[i - 1], RingPlaces);
         }
 
-        // a rest at an anchor, then a hop
         for (int c = 0; c < cycles; c++)
         {
             int from = c == 0 ? 0 : HopCycle * c - 1, rested = HopCycle * c + HopRest - 1, landed = HopCycle * (c + 1) - 1;
@@ -888,11 +883,11 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
         var lay = LayOf(g, MaxSegments, true, TopRow);
         var e = g.SpawnKind(EnemyKind.Doomscroll, MidField);
         SettleAndSpeak(g, e, lay);
-        Assert.Equal(ArriveLine, e.Text);          // Arrive
+        Assert.Equal(ArriveLine, e.Text);
         Assert.Equal(BossName, e.Header);
         ReadOut(g, e);
 
-        KillGuns(g, e);                                    // Phase: the crown comes down
+        KillGuns(g, e);
         Assert.Equal(ShutLine, e.Text);
         Assert.Equal(BossName, e.Header);
         StepToMode(g, e, MawOpen);                         // a scroll bar is spat meanwhile: no post, no line, so it says nothing new
@@ -908,7 +903,7 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
         ReadOut(g, e);
         Assert.Equal(OpenLine, e.Text);    // nothing else cuts into the heart's turn
 
-        Shoot(g, e, PartOf(e, HeartPart));                   // Dying
+        Shoot(g, e, PartOf(e, HeartPart));
         EnemyKit.StepSweeping(g);
         Assert.DoesNotContain(e, g.Enemies);
         Assert.Equal(DeathLine, e.Text);
@@ -924,13 +919,13 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
         const string FirstAuthor = "alice";
         var offered = new[]
         {
-            new DarkPost(DarknessKind.Rude, 11, "scroll scroll scroll scroll", DarkSource.Label, FirstAuthor),                                   // short, quiet
-            new DarkPost(DarknessKind.Rude, 12, "YOU CALL THAT A FEED?!! " + string.Join(' ', Enumerable.Repeat("ratio", longPostWords)), DarkSource.Hidden, null),  // long, loud
-            new DarkPost(DarknessKind.Rude, 13, "meh, the same stuff in a different hat and so on and so on", DarkSource.Demo, "a demo"),     // middling
-            new DarkPost(DarknessKind.Rude, 14, "no", DarkSource.Label, null),                                                              // tiny
+            new DarknessPost(DarknessKind.Rude, 11, "scroll scroll scroll scroll", DarknessSource.Label, FirstAuthor),                                   // short, quiet
+            new DarknessPost(DarknessKind.Rude, 12, "YOU CALL THAT A FEED?!! " + string.Join(' ', Enumerable.Repeat("ratio", longPostWords)), DarknessSource.Hidden, null),  // long, loud
+            new DarknessPost(DarknessKind.Rude, 13, "meh, the same stuff in a different hat and so on and so on", DarknessSource.Demo, "a demo"),     // middling
+            new DarknessPost(DarknessKind.Rude, 14, "no", DarknessSource.Label, null),                                                              // tiny
         };
         const int apart = 7;
-        foreach (var p in offered) { g.OfferDark(p); EnemyKit.StepSweeping(g, apart); }   // each one a little older than the next
+        foreach (var p in offered) { g.OfferDarkness(p); EnemyKit.StepSweeping(g, apart); }   // each one a little older than the next
         var waiting = g.Rude.Waiting.ToList();
         Assert.Equal(offered.Length, waiting.Count);
         for (int i = 1; i < waiting.Count; i++) Assert.True(waiting[i - 1].Arrived < waiting[i].Arrived);
@@ -938,13 +933,13 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
         var e = g.SpawnKind(EnemyKind.Doomscroll, MidField);
         SettleAndSpeak(g, e, lay);
         Assert.Equal(waiting[0].Text, e.Text);              // Arrive takes the oldest
-        Assert.Equal(EnemySpeechBox.Header(FirstAuthor, DarknessKind.Rude, DarkSource.Label), e.Header);
+        Assert.Equal(EnemySpeechBox.Header(FirstAuthor, DarknessKind.Rude, DarknessSource.Label), e.Header);
         ReadOut(g, e);
 
         KillGuns(g, e);                                      // Phase takes the next oldest
         var order = new List<RudePost> { waiting[0], waiting[1] };
         Assert.Equal(waiting[1].Text, e.Text);
-        Assert.Equal(EnemySpeechBox.Header(null, DarknessKind.Rude, DarkSource.Hidden), e.Header);
+        Assert.Equal(EnemySpeechBox.Header(null, DarknessKind.Rude, DarknessSource.Hidden), e.Header);
 
         const int frames = 700, nextBarWait = 400;
         var seen = new HashSet<Bullet>(g.Bullets);
@@ -962,7 +957,7 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
             Assert.Equal(waiting[order.Count - 1].Text, e.Text);
         }
         Assert.Equal(waiting.Count, order.Count);
-        Assert.Equal(EnemySpeechBox.Header(null, DarknessKind.Rude, DarkSource.Label), e.Header);
+        Assert.Equal(EnemySpeechBox.Header(null, DarknessKind.Rude, DarknessSource.Label), e.Header);
         Assert.Empty(g.Rude.Waiting);
 
         // nothing waits: the next bar says one of the four heard posts again, never the one already on show
@@ -981,8 +976,8 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
         ToOpenMaw(g, e);
         const int stillReadingWords = 90;   // long enough that the heart is still reading it when a scroll bar goes by
         string first = "first " + string.Join(' ', Enumerable.Repeat("stop", stillReadingWords));
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 21, first, DarkSource.Label, "bob"));
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 22, "second", DarkSource.Label, "carol"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 21, first, DarknessSource.Label, "bob"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 22, "second", DarknessSource.Label, "carol"));
         string wanted = g.Rude.Waiting[0].Text, second = g.Rude.Waiting[1].Text;
 
         Shoot(g, e, PartOf(e, MawPart));                       // Opens: a post is taken on this step or as soon as the line on show is read
@@ -1063,7 +1058,7 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
     public void The_same_seed_gives_the_same_run_with_doomscroll_in_it()
     {
         const ulong seed = 11;
-        (string, bool) Go()
+        (string, bool) PlaySeededRun()
         {
             var g = new RaiderGame(seed) { SignedIn = true };
             g.SetLayout(FieldLayout.Compute(EnemyKit.BigCols, EnemyKit.BigRows));
@@ -1079,8 +1074,8 @@ public sealed class DoomscrollTests(ITestOutputHelper output)
                 + $"#{g.Bullets.Count}:{g.Score}:{g.Kills}:{g.Deaths}:{g.PX:0.0}";
             return (state, seen);
         }
-        var (first, brought) = Go();
-        var (second, _) = Go();
+        var (first, brought) = PlaySeededRun();
+        var (second, _) = PlaySeededRun();
         Assert.Equal(first, second);
         Assert.True(brought, $"the gate brings Doomscroll inside {HalfMinute} frames");
     }

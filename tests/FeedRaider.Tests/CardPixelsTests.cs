@@ -1,5 +1,6 @@
 using FeedRaider.Engine;
 using FeedRaider.Engine.Raider;
+using FeedRaider.Tests.Enemies;
 
 namespace FeedRaider.Tests;
 
@@ -27,14 +28,12 @@ public class CardPixelsTests
     private const double ShipAmongUnitsY = 40.0;
     /// <summary>The rows the shake test skips past the card's bottom and above the field's bottom when it looks for cells that moved.</summary>
     private const int BelowCardMarginRows = 3, FieldBottomMarginRows = 4;
-    /// <summary>The stars of the sky, as <see cref="Background"/> scatters them.</summary>
-    private const int StarCount = 34;
     /// <summary>How many steps the stars drift between the two pictures of the sky.</summary>
     private const int StarDriftSteps = 300;
 
     private static FeedPost Post(int id, bool liked = false, bool reposted = false, string? text = null) =>
         new($"at://did:plc:c{id}/app.bsky.feed.post/{id}", $"cid{id}", $"did:plc:c{id}", $"c{id}.test",
-            text ?? $"post number {id} says a few ordinary words and ends with tail{id}word", HoldRig.OrdinaryLikes, HoldRig.OrdinaryReposts, 0, null, null,
+            text ?? $"post number {id} says a few ordinary words and ends with tail{id}word", PressRig.OrdinaryLikes, PressRig.OrdinaryReposts, 0, null, null,
             DisplayName: "Display Name", AlreadyLiked: liked, AlreadyReposted: reposted);
 
     /// <summary>A game with one card on the field and nothing else on it, the ship parked off the left edge.</summary>
@@ -262,16 +261,15 @@ public class CardPixelsTests
     [Fact]
     public void Every_unit_bullet_pickup_ring_and_particle_shows_over_a_slab_the_same_pixels_of_the_world_pass_as_over_the_sky()
     {
-        // opaque things must give the very same colours over a slab; blended rings and glows the same pixels, mixed with the slab
         var adds = new (string Name, Action<RaiderGame> Add, bool Opaque)[]
         {
             ("ship shot", game => game.Bullets.Add(new Bullet { X = 40, Y = 40, Friendly = true }), true),
             ("enemy bolt", game => game.Bullets.Add(new Bullet { X = 60, Y = 50, Friendly = false }), true),
-            ("enemy", game => { var enemy = game.SpawnKind(EnemyKind.Gunship, 0.5); enemy.X = 64; enemy.Y = 36; enemy.Grace = 0; enemy.Age = 0; enemy.Flash = 0; }, true),
+            ("enemy", game => { var enemy = game.SpawnKind(EnemyKind.Gunship, EnemyKit.MidWidth); enemy.X = 64; enemy.Y = 36; enemy.Grace = 0; enemy.Age = 0; enemy.Flash = 0; }, true),
             ("spark", game => game.Particles.Add(new Particle { X = 50, Y = 44, Life = CardRig.ParticleLife, MaxLife = CardRig.ParticleLife, Colour = CardRig.ParticleColour, Size = CardRig.ParticleSize }), true),
-            ("ring", game => game.Rings.Add(new Ring { X = 70, Y = 40, R0 = CardRig.RingStartRadius, R1 = CardRig.RingEndRadius, Life = CardRig.RingLife, Max = CardRig.RingMaxLife, Colour = 0xff3d6e }), false),
+            ("ring", game => game.Rings.Add(new Ring { X = 70, Y = 40, R0 = CardRig.RingStartRadius, R1 = CardRig.RingEndRadius, Life = CardRig.RingLife, Max = CardRig.RingMaxLife, Colour = Palette.Crimson }), false),
             ("pickup", game => game.Pickups.Add(new Pickup { Kind = PickupKind.Shield, X = 80, Y = 44 }), false),
-            ("ship", game => { HoldRig.Force(game, nameof(RaiderGame.PX), CardRig.ShipOverCardX); HoldRig.Force(game, nameof(RaiderGame.PY), ShipAmongUnitsY); }, false),
+            ("ship", game => { PressRig.Force(game, nameof(RaiderGame.PX), CardRig.ShipOverCardX); PressRig.Force(game, nameof(RaiderGame.PY), ShipAmongUnitsY); }, false),
         };
         foreach (var (name, add, opaque) in adds)
         {
@@ -281,15 +279,13 @@ public class CardPixelsTests
             CardRig.ClearAndParkShip(plain);
             add(game); add(plain);
             var over = Draw(game);
-            var onlyUnits = Draw(plain);   // the same world over the sky, no card
+            var onlyUnits = Draw(plain);
             var cardless = Without(game, card);
             Assert.True(onlyUnits.P.SequenceEqual(cardless.P), $"{name}: the two cardless fields differ");
-            // the card at the same place with nothing in the world, to see the slab alone
             CardRig.ClearAndParkShip(game);
             var slabOnly = Draw(game);
             var drawn = Changed(onlyUnits, Draw(CardRig.ClearAndParkShip(plain)));
             Assert.NotEmpty(drawn);
-            // every pixel the unit changed over the sky, it changes over the slab too, and an opaque one to the same colour
             foreach (int index in drawn.Where(pixel => Inside(game, card, pixel, over.W)))
             {
                 Assert.NotEqual(slabOnly.P[index], over.P[index]);
@@ -309,7 +305,7 @@ public class CardPixelsTests
     public void A_shake_of_one_pixel_leaves_the_slabs_on_their_cells_and_of_two_pixels_moves_them_one_cell(int pixels, int cells)
     {
         var (game, card) = Scene(top: ShakeCardTop);
-        HoldRig.Force(game, nameof(RaiderGame.PX), CardRig.ShipOverCardX); HoldRig.Force(game, nameof(RaiderGame.PY), CardRig.ShipBelowCardY);
+        PressRig.Force(game, nameof(RaiderGame.PX), CardRig.ShipOverCardX); PressRig.Force(game, nameof(RaiderGame.PY), CardRig.ShipBelowCardY);
         var still = new Screen(ScrCols, ScrRows);
         Draw(game, still);
         CardRig.ShakeBy(game, pixels);
@@ -343,7 +339,8 @@ public class CardPixelsTests
         }
         var early = At(1);
         var late = At(StarDriftSteps);
+        int stars = new Background(early.W, early.H, RaiderView.DefaultBackgroundSeed).StarTotal;
         int differing = Changed(early, late).Count;
-        Assert.InRange(differing, 1, 2 * StarCount);   // each star lost from one pixel and found in another
+        Assert.InRange(differing, 1, 2 * stars);   // each star lost from one pixel and found in another
     }
 }

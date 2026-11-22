@@ -35,7 +35,7 @@ function loadStartRun(query = '') {
   return { run, world, calls };
 }
 
-test('the run is told the stage, the boss and whether boss gates are on, as the address says', () => {
+test('the run is told the stage, the boss and whether boss fights are on, as the address says', () => {
   const read = (query) => {
     const { run, world } = loadStartRun(query);
     run({ handle: 'alice.example', feed: '' });

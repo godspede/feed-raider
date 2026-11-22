@@ -112,7 +112,7 @@ public sealed class ShutterTests(ITestOutputHelper output)
         g.SetLayout(FieldLayout.Compute(cols, rows));
         g.StartAtStage(ShutterStage);
         EnemyKit.Clear(g);
-        return (g, g.SpawnKind(EnemyKind.Shutter, 0.5));
+        return (g, g.SpawnKind(EnemyKind.Shutter, EnemyKit.MidWidth));
     }
 
     private static void StepKeeping(RaiderGame g, Enemy s)
@@ -625,7 +625,7 @@ public sealed class ShutterTests(ITestOutputHelper output)
 
     // ---------------------------------------------------------------- voice
 
-    private static RudePost Post(ulong seed, string text) => new(seed, text, DarkSource.Label, null, 0);
+    private static RudePost Post(ulong seed, string text) => new(seed, text, DarknessSource.Label, null, 0);
 
     [Fact]
     public void It_takes_the_shortest_waiting_post_first_and_the_oldest_of_equals()
@@ -640,10 +640,10 @@ public sealed class ShutterTests(ITestOutputHelper output)
     public void Posts_are_taken_shortest_first_from_a_store_of_four()
     {
         var (g, s) = Fresh();
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 11, "this is a really quite long post indeed"));
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 12, "mid length post"));
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 13, "no"));
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 14, "a bit longer than that"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 11, "this is a really quite long post indeed"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 12, "mid length post"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 13, "no"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 14, "a bit longer than that"));
         for (int f = 0; f < FirstWordsWithin && s.Text is null; f++) StepKeeping(g, s);
         Assert.Equal("no", s.Text);
     }
@@ -665,7 +665,7 @@ public sealed class ShutterTests(ITestOutputHelper output)
     {
         const int LongPostWords = 40, WatchFrames = 700, LeastTypingFrames = 50, LeastHeldFrames = 20;
         var (g, s) = Fresh();
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 21, string.Join(' ', Enumerable.Repeat("word", LongPostWords))));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 21, string.Join(' ', Enumerable.Repeat("word", LongPostWords))));
         int movedOpen = 0, movedShut = 0, heldShut = 0;
         bool wasOpen = false;
         int prevAge = 0;
@@ -708,7 +708,7 @@ public sealed class ShutterTests(ITestOutputHelper output)
     {
         var (g, s) = Fresh();
         for (int f = 0; f < FirstWordsWithin && s.Text is null; f++) StepKeeping(g, s);
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 31, "you again"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 31, "you again"));
         KillOpenEye(g, s);
         Assert.Equal("you again", s.Text);
     }
@@ -759,7 +759,6 @@ public sealed class ShutterTests(ITestOutputHelper output)
     {
         var flying = g.Bullets.Where(b => !b.Friendly && b.VY > MinThreatSpeed && b.Y <= g.PY + BoltRowSlack && (g.PY - b.Y) / b.VY <= LookaheadFrames).ToList();
         if (flying.Count == 0) return want;
-        // a column is safe if the ship, walking there at its own speed, is clear of every bolt when that bolt reaches the ship's row
         bool Safe(double c) => flying.All(b =>
         {
             double t = Math.Max(0, (g.PY - b.Y) / b.VY);
@@ -819,9 +818,9 @@ public sealed class ShutterTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void A_bot_that_keeps_under_the_open_eye_and_dodges_beats_it_at_level_two_in_the_band()
+    public void A_bot_that_keeps_under_the_open_eye_and_dodges_beats_it_with_the_light_laser_in_the_band()
     {
-        const int Seeds = 6, WeaponLevel = 2;
+        const int Seeds = 6, WeaponLevel = 1;
         const double MedianFastestSeconds = 15.0, MedianSlowestSeconds = 27.0;
         var times = new List<int>();
         var deaths = new List<int>();

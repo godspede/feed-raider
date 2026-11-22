@@ -229,7 +229,7 @@ public class EnemyKindsTests
         }
         Assert.Equal(Tuning.TurretVolleys, bursts);
         Assert.Equal(Tuning.TurretVolleys * Tuning.TurretBurst, aimedSeen);
-        Assert.DoesNotContain(turret, game.Enemies);           // it climbed back out
+        Assert.DoesNotContain(turret, game.Enemies);
     }
 
     [Fact]
@@ -330,7 +330,7 @@ public class EnemyKindsTests
         for (ulong seed = 0; seed < StageOneSeeds; seed++)
         {
             Assert.Equal(WaveSpawner.Filler(seed).Enemies, WaveSpawner.Filler(seed, FirstStage).Enemies);
-            var spam = new DarkPost(DarknessKind.Spam, seed, CryptoSpam);
+            var spam = new DarknessPost(DarknessKind.Spam, seed, CryptoSpam);
             Assert.Equal(WaveSpawner.FromPost(spam).Enemies, WaveSpawner.FromPost(spam, Tuning.LiveSpecialsFromStage - 1).Enemies);   // live waves keep their shape until LiveSpecialsFromStage
         }
     }
@@ -350,16 +350,17 @@ public class EnemyKindsTests
             bool goLeft = frame / TurnFrames % SweepWays == 0;
             game.Input.Key(GameKey.Left, goLeft);
             game.Input.Key(GameKey.Right, !goLeft);
-            if (frame == SpamFrame) game.OfferDark(new DarkPost(DarknessKind.Spam, SpamSeed, FollowerSpam));
-            if (frame == RudeFrame) game.OfferDark(new DarkPost(DarknessKind.Rude, RudeSeed, "some rude words for the gunship"));
+            if (frame == SpamFrame) game.OfferDarkness(new DarknessPost(DarknessKind.Spam, SpamSeed, FollowerSpam));
+            if (frame == RudeFrame) game.OfferDarkness(new DarknessPost(DarknessKind.Rude, RudeSeed, "some rude words for the gunship"));
             game.Step();
             Assert.Equal(FirstStage, game.Stage);
             Assert.DoesNotContain(game.Enemies, enemy => enemy.Kind >= EnemyKind.Mine);
             foreach (var enemy in game.Enemies) hash = (hash ^ (ulong)(long)Math.Round(enemy.X * HashXScale + enemy.Y * HashYScale)) * HashPrime;
             hash = (hash ^ (ulong)game.Bullets.Count) * HashPrime;
         }
-        // a fingerprint of the stage-one run: one death, one live wave, and the half of the stage reached at frame 677
-        Assert.Equal("677/2175/22/1/6/1/6/4/f5044176f43a7e30",
+        // a fingerprint of the stage-one run: two deaths among stage 1's four fillers up, one live wave, and the run's last frame
+        // reached short of half the stage
+        Assert.Equal("700/2082/24/2/7/1/3/8/82b6432e9e22c8ce",
             $"{game.Frame}/{game.Score}/{game.Kills}/{game.Deaths}/{game.WavesSpawned}/{game.LiveWavesSpawned}/{game.Enemies.Count}/{game.Bullets.Count}/{hash:x16}");
     }
 
@@ -563,7 +564,7 @@ public class EnemyKindsTests
     {
         for (ulong seed = 1; seed < SeedsTried; seed++)
         {
-            var wave = WaveSpawner.FromPost(new DarkPost(DarknessKind.Spam, seed, CryptoSpam), Tuning.StageCap);
+            var wave = WaveSpawner.FromPost(new DarknessPost(DarknessKind.Spam, seed, CryptoSpam), Tuning.StageCap);
             Assert.Single(wave.Enemies, spawn => spawn.Kind == EnemyKind.Carrier);
             Assert.Single(wave.Enemies, spawn => spawn.Text is not null);
             Assert.DoesNotContain(wave.Enemies, spawn => spawn.Kind == EnemyKind.Mine);   // a live wave can always be shot clear
@@ -571,7 +572,7 @@ public class EnemyKindsTests
         const int LiveWaveSize = 5;
         var game = NewGame();
         game.StartAtStage(Tuning.StageCap);
-        game.OfferDark(new DarkPost(DarknessKind.Spam, SpamSeed, FollowerSpam));
+        game.OfferDarkness(new DarknessPost(DarknessKind.Spam, SpamSeed, FollowerSpam));
         for (int i = 0; i < LiveWaveArrivesFrames && game.Enemies.Count(enemy => enemy.Live) < LiveWaveSize; i++) game.Step();
         var live = game.Enemies.Where(enemy => enemy.Live).ToList();
         Assert.Contains(live, enemy => enemy.Kind >= EnemyKind.Mine);
@@ -606,7 +607,7 @@ public class EnemyKindsTests
         // the diver's sprite is 16 tall, so the line starts at y 28 and runs to y 80 in dots three pixels apart, at 28, 31, 34 and so on, and
         // two pixel rows to a cell, so the dots land on screen rows 14, 15, 17, 18 ... and the cross at the end on row 40
         int[] dots = [14, 15, 17, 18, 20, 21, 23, 24, 26, 27, 29, 30, 32, 33, 35, 36, 38, 39, 40];
-        Assert.Equal(dots, AimRows(EnemyKind.Diver));
+        Assert.Equal(dots, LimeRows(EnemyKind.Diver));
     }
 
     [Fact]
@@ -614,22 +615,22 @@ public class EnemyKindsTests
     {
         // the sprite's own lime sits on rows 9 to 11; nothing below it
         int[] spriteLimeRows = [9, 10, 11];
-        Assert.Equal(spriteLimeRows, AimRows(EnemyKind.Diver, windup: 0));
-        Assert.Equal(spriteLimeRows, AimRows(EnemyKind.Diver, dashing: true));
+        Assert.Equal(spriteLimeRows, LimeRows(EnemyKind.Diver, windup: 0));
+        Assert.Equal(spriteLimeRows, LimeRows(EnemyKind.Diver, dashing: true));
     }
 
     [Fact]
     public void A_turret_in_its_windup_draws_no_aim_line()
     {
-        Assert.Empty(AimRows(EnemyKind.Turret));
+        Assert.Empty(LimeRows(EnemyKind.Turret));
     }
 
-    /// <summary>The wind-up frames left on an enemy <see cref="AimRows"/> draws, unless a test gives its own.</summary>
+    /// <summary>The wind-up frames left on an enemy <see cref="LimeRows"/> draws, unless a test gives its own.</summary>
     private const int AimWindupFrames = 10;
 
     /// <summary>An enemy of <paramref name="kind"/> winding up at (<c>EnemyX</c>, <c>EnemyY</c>) with its aim locked straight down to
     /// <c>AimY</c>, rendered; the screen rows that carry the diver's lime in its column.</summary>
-    private static List<int> AimRows(EnemyKind kind, int windup = AimWindupFrames, bool dashing = false)
+    private static List<int> LimeRows(EnemyKind kind, int windup = AimWindupFrames, bool dashing = false)
     {
         const int GlintOffFrame = 3, EnemyX = 40, EnemyY = 20, AimY = 80;
         var game = NewGame();

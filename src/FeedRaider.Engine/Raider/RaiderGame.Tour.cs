@@ -2,7 +2,7 @@ namespace FeedRaider.Engine.Raider;
 
 /// <summary>
 /// What the start page's scripted tour needs from the game and a real run never uses: a ship that cannot die, and a cut
-/// from one scene to the next. Both are off unless the tour asks, so the rules of a played game are what they were.
+/// from one scene to the next. Both are off unless the tour asks, so a played game keeps its own rules.
 /// </summary>
 public sealed partial class RaiderGame
 {
@@ -10,11 +10,16 @@ public sealed partial class RaiderGame
     /// tour is never cut short by a death. False in every played game.</summary>
     public bool Charmed { get; init; }
 
+    /// <summary>Where the tour's pointer mark is, in field pixels, while the scripted click makes its way to a button; null when
+    /// there is none. The view draws it on the start page's backdrop only.</summary>
+    public (double X, double Y)? TourPointer { get; internal set; }
+
     /// <summary>Hits the charmed ship has shrugged off.</summary>
     public int Shrugged { get; private set; }
 
-    /// <summary>The charmed ship takes a hit: the flash, the ring and the invulnerability of a real one, and nothing lost.</summary>
-    private bool Shrug()
+    /// <summary>Takes a hit on the charmed ship: the flash, shake, ring and invulnerability of a real hit with nothing lost.
+    /// Returns false, and does nothing, when the ship is not charmed.</summary>
+    private bool AbsorbWithCharm()
     {
         if (!Charmed) return false;
         Shrugged++;

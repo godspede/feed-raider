@@ -30,12 +30,14 @@ public sealed class InputState
 
     internal bool BombPressed;
     /// <summary>E and R: toggle the like or repost of the marked feed-log entry. Latched like a bomb press, and stale after the same span.</summary>
-    internal int LikeLatch, RepostLatch;
+    internal int LogLikeLatch, LogRepostLatch;
+    /// <summary>Z and X: like or repost the post under or nearest the ship, or undo it. Latched and stale the same way.</summary>
+    internal int ShipLikeLatch, ShipRepostLatch;
     /// <summary>[ and ]: move the feed log's mark to the older or newer entry.</summary>
     internal bool MarkUpPressed, MarkDownPressed;
     internal double DragCols, DragRows;
-    internal bool HasTap;
-    internal double TapCol, TapRow;
+    internal bool HasClick, ClickTouch;
+    internal double ClickCol, ClickRow;
 
     public bool Held(GameKey k) => _down[(int)k] || _hold[(int)k] > 0;
 
@@ -60,8 +62,10 @@ public sealed class InputState
 
     public void ToggleAutoFire() { AutoToggle = !AutoToggle; PointerLast = false; }
     public void Bomb() => BombPressed = true;
-    public void Like() => LikeLatch = LikeLatchFrames;
-    public void Repost() => RepostLatch = LikeLatchFrames;
+    public void LogLike() => LogLikeLatch = LikeLatchFrames;
+    public void LogRepost() => LogRepostLatch = LikeLatchFrames;
+    public void ShipLike() { ShipLikeLatch = LikeLatchFrames; PointerLast = false; }
+    public void ShipRepost() { ShipRepostLatch = LikeLatchFrames; PointerLast = false; }
     public void MarkUp() => MarkUpPressed = true;
     public void MarkDown() => MarkDownPressed = true;
 
@@ -78,16 +82,20 @@ public sealed class InputState
         DragCols += dCols; DragRows += dRows; PointerLast = true; PointerActive = false;
     }
 
-    /// <summary>A single-finger tap or click: presses the on-screen bomb button. It never likes.</summary>
-    public void Tap(double col, double row)
+    /// <summary>A click, by mouse or by a single finger (<paramref name="touch"/>): on the on-screen bomb button it bombs, on a card's heart or
+    /// repost it likes or reposts, or undoes a like or repost already made; anywhere else it does nothing. A finger's press is
+    /// forgiven <see cref="Tuning.TouchPadCells"/> past a button's edge.</summary>
+    public void Click(double col, double row, bool touch = false)
     {
-        HasTap = true; TapCol = col; TapRow = row; PointerLast = true;
+        HasClick = true; ClickCol = col; ClickRow = row; ClickTouch = touch; PointerLast = true;
     }
 
     internal void EndFrame()
     {
         for (int i = 0; i < _hold.Length; i++) if (_hold[i] > 0) _hold[i]--;
-        if (LikeLatch > 0) LikeLatch--;
-        if (RepostLatch > 0) RepostLatch--;
+        if (LogLikeLatch > 0) LogLikeLatch--;
+        if (LogRepostLatch > 0) LogRepostLatch--;
+        if (ShipLikeLatch > 0) ShipLikeLatch--;
+        if (ShipRepostLatch > 0) ShipRepostLatch--;
     }
 }

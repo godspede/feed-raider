@@ -42,12 +42,17 @@ public class TerminalKeysTests
     [InlineData("b", TermKey.Bomb, KeyAction.Press)]
     [InlineData("B", TermKey.Bomb, KeyAction.Press)]
     [InlineData("[98u", TermKey.Bomb, KeyAction.Press)]
-    [InlineData("e", TermKey.Like, KeyAction.Press)]
-    [InlineData("r", TermKey.Repost, KeyAction.Press)]
-    [InlineData("R", TermKey.Repost, KeyAction.Press)]
+    [InlineData("e", TermKey.LogLike, KeyAction.Press)]
+    [InlineData("r", TermKey.LogRepost, KeyAction.Press)]
+    [InlineData("R", TermKey.LogRepost, KeyAction.Press)]
+    [InlineData("z", TermKey.ShipLike, KeyAction.Press)]
+    [InlineData("Z", TermKey.ShipLike, KeyAction.Press)]
+    [InlineData("x", TermKey.ShipRepost, KeyAction.Press)]
+    [InlineData("\x1b[122u", TermKey.ShipLike, KeyAction.Press)]
+    [InlineData("\x1b[120;1:3u", TermKey.ShipRepost, KeyAction.Release)]
     [InlineData("[", TermKey.MarkUp, KeyAction.Press)]
     [InlineData("]", TermKey.MarkDown, KeyAction.Press)]
-    [InlineData("[114u", TermKey.Repost, KeyAction.Press)]
+    [InlineData("[114u", TermKey.LogRepost, KeyAction.Press)]
     [InlineData("[91u", TermKey.MarkUp, KeyAction.Press)]
     [InlineData("[93;1:3u", TermKey.MarkDown, KeyAction.Release)]
     [InlineData("m", TermKey.Mute, KeyAction.Press)]
@@ -62,7 +67,7 @@ public class TerminalKeysTests
     public void IgnoresRepliesAndOtherKeys()
     {
         Assert.Empty(Parse("\x1b[?0u\x1b[?62;4c"));
-        Assert.Empty(Parse("\x1b[5~\x1b[1;5:3u\x1b[120;5uz"));
+        Assert.Empty(Parse("\x1b[5~\x1b[1;5:3u\x1b[120;5uy"));
         Assert.Empty(Parse("\x1b[1;1:3H"));
     }
 
@@ -117,8 +122,10 @@ public class TerminalKeysTests
     [InlineData((int)ConsoleKey.Spacebar, false, TermKey.Fire, KeyAction.Release)]
     [InlineData((int)ConsoleKey.F, true, TermKey.AutoFire, KeyAction.Press)]
     [InlineData((int)ConsoleKey.B, true, TermKey.Bomb, KeyAction.Press)]
-    [InlineData((int)ConsoleKey.E, true, TermKey.Like, KeyAction.Press)]
-    [InlineData((int)ConsoleKey.R, true, TermKey.Repost, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.E, true, TermKey.LogLike, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.R, true, TermKey.LogRepost, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.Z, true, TermKey.ShipLike, KeyAction.Press)]
+    [InlineData((int)ConsoleKey.X, true, TermKey.ShipRepost, KeyAction.Press)]
     [InlineData((int)ConsoleKey.Oem4, true, TermKey.MarkUp, KeyAction.Press)]
     [InlineData((int)ConsoleKey.Oem6, true, TermKey.MarkDown, KeyAction.Press)]
     [InlineData((int)ConsoleKey.M, true, TermKey.Mute, KeyAction.Press)]
@@ -267,27 +274,40 @@ public class TerminalKeysTests
     }
 
     [Fact]
-    public void BombAndLikeLatch()
+    public void BombAndLogLikeLatch()
     {
         var inp = new InputState();
         var r = new KeyRouter(inp, true, KeyRepeatTiming.Default);
         r.Apply(new(TermKey.Bomb, KeyAction.Press));
-        r.Apply(new(TermKey.Like, KeyAction.Press));
+        r.Apply(new(TermKey.LogLike, KeyAction.Press));
         Assert.True(inp.BombPressed);
-        Assert.Equal(InputState.LikeLatchFrames, inp.LikeLatch);
+        Assert.Equal(InputState.LikeLatchFrames, inp.LogLikeLatch);
     }
 
     [Fact]
-    public void RepostAndTheMarkKeysLatchOnTheInput()
+    public void LogRepostAndTheMarkKeysLatchOnTheInput()
     {
         var inp = new InputState();
         var r = new KeyRouter(inp, true, KeyRepeatTiming.Default);
-        r.Apply(new(TermKey.Repost, KeyAction.Press));
+        r.Apply(new(TermKey.LogRepost, KeyAction.Press));
         r.Apply(new(TermKey.MarkUp, KeyAction.Press));
         r.Apply(new(TermKey.MarkDown, KeyAction.Press));
-        Assert.Equal(InputState.LikeLatchFrames, inp.RepostLatch);
+        Assert.Equal(InputState.LikeLatchFrames, inp.LogRepostLatch);
         Assert.True(inp.MarkUpPressed);
         Assert.True(inp.MarkDownPressed);
+    }
+
+    [Fact]
+    public void The_z_and_x_keys_latch_a_like_and_a_repost_on_the_post_under_the_ship()
+    {
+        var inp = new InputState();
+        var r = new KeyRouter(inp, true, KeyRepeatTiming.Default);
+        r.Apply(new(TermKey.ShipLike, KeyAction.Press));
+        r.Apply(new(TermKey.ShipRepost, KeyAction.Press));
+        Assert.Equal(InputState.LikeLatchFrames, inp.ShipLikeLatch);
+        Assert.Equal(InputState.LikeLatchFrames, inp.ShipRepostLatch);
+        Assert.Equal(0, inp.LogLikeLatch);
+        Assert.Equal(0, inp.LogRepostLatch);
     }
 
     [Fact]
@@ -317,6 +337,7 @@ public class TerminalKeysTests
         var t = KeyRepeatTiming.Default;
         var r = new KeyRouter(inp, false, t);
         r.Apply(new(TermKey.Down, KeyAction.Press));
+        r.Apply(new(TermKey.Down, KeyAction.Release));
         Assert.Equal(Frames(t.FirstHoldMs), FramesHeld(inp, GameKey.Down));
     }
 

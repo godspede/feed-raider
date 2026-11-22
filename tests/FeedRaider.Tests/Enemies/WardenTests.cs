@@ -12,6 +12,11 @@ namespace FeedRaider.Tests.Enemies;
 public sealed class WardenTests(ITestOutputHelper output)
 {
     private static EnemyBehaviour Warden => RaiderGame.TableBehaviour(EnemyKind.Warden)!;
+    /// <summary>The post a Warden is offered and then says.</summary>
+    private const string WaitingPost = "grr you again";
+
+    /// <summary>Decimal places two hit points or positions must agree to.</summary>
+    private const int Places = 6;
 
     /// <summary>The hold row is this share of the field's height, but never higher than this row.</summary>
     private const double HoldShare = 0.14, HoldMin = 10;
@@ -101,7 +106,7 @@ public sealed class WardenTests(ITestOutputHelper output)
     public void It_is_a_hull_of_armour_over_an_open_seven_point_emitter()
     {
         var g = EnemyKit.Game();
-        var w = g.SpawnKind(EnemyKind.Warden, 0.5);
+        var w = g.SpawnKind(EnemyKind.Warden, EnemyKit.MidWidth);
         Assert.Equal(["hull", "emitter"], w.Parts!.Select(p => p.Name));
         var hull = PartOf(w, "hull"); var emitter = PartOf(w, "emitter");
         Assert.Equal(PartState.Armoured, hull.State);
@@ -121,9 +126,9 @@ public sealed class WardenTests(ITestOutputHelper output)
     {
         var g = EnemyKit.Game();
         g.StartAtStage(WardenStage);
-        var w = g.SpawnKind(EnemyKind.Warden, 0.5);
-        Assert.Equal(EmitterHp * Ramp.HpMul(WardenStage), PartOf(w, "emitter").Hp, 9);
-        Assert.Equal(PartOf(w, "emitter").Hp, w.Hp, 9);
+        var w = g.SpawnKind(EnemyKind.Warden, EnemyKit.MidWidth);
+        Assert.Equal(EmitterHp * Ramp.HpMul(WardenStage), PartOf(w, "emitter").Hp, Places);
+        Assert.Equal(PartOf(w, "emitter").Hp, w.Hp, Places);
     }
 
     [Fact]
@@ -142,14 +147,14 @@ public sealed class WardenTests(ITestOutputHelper output)
     public void It_enters_holds_and_sways_then_leaves_after_six_hundred_frames(int cols, int rows)
     {
         var g = EnemyKit.Game(cols, rows);
-        var w = g.SpawnKind(EnemyKind.Warden, 0.5);
+        var w = g.SpawnKind(EnemyKind.Warden, EnemyKit.MidWidth);
         Assert.True(w.Y < 0, "it enters from above");
         double minX = double.MaxValue, maxX = double.MinValue, floor = EnemyKit.BossFloor(g.PH);
         for (int f = 1; f <= WatchedFrames; f++)
         {
             StepKeeping(g, w);
             Assert.Contains(w, g.Enemies);
-            if (f >= SettledFrame) { Assert.Equal(Hold(g), w.Y, 6); minX = Math.Min(minX, w.X); maxX = Math.Max(maxX, w.X); }
+            if (f >= SettledFrame) { Assert.Equal(Hold(g), w.Y, Places); minX = Math.Min(minX, w.X); maxX = Math.Max(maxX, w.X); }
             Assert.True(EnemyKit.InsideWidth(g, w), $"frame {f}: x {w.X} outside {g.PW}");
             Assert.True(EnemyKit.LowestPixel(w) <= floor, $"frame {f}: lowest pixel {EnemyKit.LowestPixel(w)} under the floor {floor}");
             Assert.True(EnemyKit.Extent(w).T >= 0 || w.Y < Hold(g), $"frame {f}: the top is above the field once it has settled");
@@ -182,7 +187,7 @@ public sealed class WardenTests(ITestOutputHelper output)
     public void It_shoots_nothing_and_a_ship_standing_still_lives(int cols, int rows)
     {
         var g = EnemyKit.Game(cols, rows);
-        var w = g.SpawnKind(EnemyKind.Warden, 0.5);
+        var w = g.SpawnKind(EnemyKind.Warden, EnemyKit.MidWidth);
         int hostile = 0;
         for (int f = 0; f < GoneWithin; f++)
         {
@@ -278,10 +283,10 @@ public sealed class WardenTests(ITestOutputHelper output)
     public void It_says_a_waiting_post_on_arriving()
     {
         var g = EnemyKit.Game();
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 1, "grr you again"));
-        var w = g.SpawnKind(EnemyKind.Warden, 0.5);
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 1, WaitingPost));
+        var w = g.SpawnKind(EnemyKind.Warden, EnemyKit.MidWidth);
         for (int i = 0; i < SpeakWithin && w.Text is null; i++) g.Step();   // it speaks once it is whole on the field
-        Assert.Equal("grr you again", w.Text);
+        Assert.Equal(WaitingPost, w.Text);
         Assert.True(EnemySpeechBox.Speaks(w));
     }
 
@@ -289,7 +294,7 @@ public sealed class WardenTests(ITestOutputHelper output)
     public void With_no_post_waiting_it_says_its_own_line_under_its_name()
     {
         var g = EnemyKit.Game();
-        var w = g.SpawnKind(EnemyKind.Warden, 0.5);
+        var w = g.SpawnKind(EnemyKind.Warden, EnemyKit.MidWidth);
         for (int i = 0; i < SpeakWithin && w.Text is null; i++) g.Step();   // it speaks once it is whole on the field
         Assert.Equal("They are with me.", w.Text);
         Assert.Equal("WARDEN", w.Header);
@@ -408,8 +413,8 @@ public sealed class WardenTests(ITestOutputHelper output)
         Assert.Equal(EmitterHp, w.Hp);
         EnemyKit.Shot(g, w.X, w.Y + EmitterOffset, ChipDamage);
         StepKeeping(g, w);
-        Assert.Equal(EmitterHp - ChipDamage, emitter.Hp, 6);
-        Assert.Equal(EmitterHp - ChipDamage, w.Hp, 6);
+        Assert.Equal(EmitterHp - ChipDamage, emitter.Hp, Places);
+        Assert.Equal(EmitterHp - ChipDamage, w.Hp, Places);
         Assert.Contains(w, g.Enemies);
     }
 
@@ -429,7 +434,7 @@ public sealed class WardenTests(ITestOutputHelper output)
     [Fact]
     public void They_are_hurt_again_the_frame_it_dies()
     {
-        double Outcome(bool killIt)
+        double GruntDamageTaken(bool killIt)
         {
             var g = EnemyKit.Game();
             var w = MakeEnemy(g, EnemyKind.Warden, WardenX, WardenRow);
@@ -441,8 +446,8 @@ public sealed class WardenTests(ITestOutputHelper output)
             Assert.Equal(killIt, !g.Enemies.Contains(w) || w.Hp <= 0);
             return hp - grunt.Hp;
         }
-        Assert.Equal(0, Outcome(false));
-        Assert.Equal(GruntShotDamage, Outcome(true), 6);
+        Assert.Equal(0, GruntDamageTaken(false));
+        Assert.Equal(GruntShotDamage, GruntDamageTaken(true), Places);
     }
 
     [Fact]
@@ -456,7 +461,7 @@ public sealed class WardenTests(ITestOutputHelper output)
         double hp = grunt.Hp;
         EnemyKit.Shot(g, grunt.X, grunt.Y, GruntShotDamage);
         StepKeeping(g, grunt);
-        Assert.Equal(hp - GruntShotDamage, grunt.Hp, 6);
+        Assert.Equal(hp - GruntShotDamage, grunt.Hp, Places);
         Assert.Null(grunt.ShieldedBy);
     }
 

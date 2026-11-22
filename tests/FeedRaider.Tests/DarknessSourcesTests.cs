@@ -88,7 +88,7 @@ public class DarknessSourcesTests
     public async Task Hidden_replies_become_anonymous_rude_posts()
     {
         var stats = new DarknessStats();
-        var posts = new List<DarkPost>();
+        var posts = new List<DarknessPost>();
         var fetched = new List<string>();
         await DarknessFeed.RunHiddenAsync(Of(Reply(1), Reply(1), "at://did:plc:x/app.bsky.actor.profile/self", Reply(2)),
             (uri, _) => { fetched.Add(uri); return Task.FromResult<string?>("go away @someone.example.social https://t.example/x you muppet"); },
@@ -99,7 +99,7 @@ public class DarknessSourcesTests
         Assert.Equal(2, posts.Count);
         Assert.All(posts, post =>
         {
-            Assert.Equal((DarknessKind.Rude, DarkSource.Hidden), (post.Kind, post.Source));
+            Assert.Equal((DarknessKind.Rude, DarknessSource.Hidden), (post.Kind, post.Source));
             Assert.Equal("go away you muppet", post.Text);
             Assert.DoesNotContain(Replier, post.ToString());
         });
@@ -129,7 +129,7 @@ public class DarknessSourcesTests
     public async Task An_account_spam_label_becomes_a_spam_post_with_the_latest_text_only()
     {
         var stats = new DarknessStats();
-        var posts = new List<DarkPost>();
+        var posts = new List<DarknessPost>();
         var fetched = new List<string>();
         await DarknessFeed.RunAsync(
             Of(new LabelEvent(Spammer, Spam, false, 1), new LabelEvent(Spammer, Spam, Neg: true, 2), new LabelEvent(Spammer, Porn, false, 3)),
@@ -139,13 +139,13 @@ public class DarknessSourcesTests
         Assert.Equal([Spammer], fetched);
         Assert.Equal((3, 1, 1), (stats.LabelsSeen, stats.AccountLabels, stats.PostsFetched));
         var post = Assert.Single(posts);
-        Assert.Equal((DarknessKind.Spam, DarkSource.Label, "win free crypto now"), (post.Kind, post.Source, post.Text));
+        Assert.Equal((DarknessKind.Spam, DarknessSource.Label, "win free crypto now"), (post.Kind, post.Source, post.Text));
 
         var room = RoomOfFigures();
-        room.Dark.Offer(post);
+        room.Darkness.Offer(post);
         string everything = Watch(room, LabelWatchMs);
-        Assert.True(room.Dark.SpawnedFromLabels > 0);
-        Assert.Equal(0, room.Dark.SpawnedFromHidden);
+        Assert.True(room.Darkness.SpawnedFromLabels > 0);
+        Assert.Equal(0, room.Darkness.SpawnedFromHidden);
         Assert.Contains("crypto", everything);
         foreach (var leak in new[] { "spammerspammer", "spammy", "McSpam", "cdn.bsky", "links.test", "Repost of someone" })
             Assert.DoesNotContain(leak, everything, StringComparison.OrdinalIgnoreCase);
@@ -155,11 +155,11 @@ public class DarknessSourcesTests
     public void Spawns_are_counted_by_source()
     {
         var room = RoomOfFigures();
-        room.Dark.Offer(new DarkPost(DarknessKind.Rude, 1, "grr", DarkSource.Hidden));
+        room.Darkness.Offer(new DarknessPost(DarknessKind.Rude, 1, "grr", DarknessSource.Hidden));
         Watch(room, HiddenWatchMs);
-        Assert.Equal(1, room.Dark.SpawnedFromHidden);
-        Assert.Equal(0, room.Dark.SpawnedFromLabels);
-        Assert.Equal(DarkSource.Hidden, room.Dark.Enemies[0].Source);
+        Assert.Equal(1, room.Darkness.SpawnedFromHidden);
+        Assert.Equal(0, room.Darkness.SpawnedFromLabels);
+        Assert.Equal(DarknessSource.Hidden, room.Darkness.Enemies[0].Source);
     }
 
     // ---- layers ------------------------------------------------------------------------------
@@ -203,6 +203,6 @@ public class DarknessSourcesTests
     [Fact]
     public void Spam_motes_are_big_enough_to_read()
     {
-        Assert.True(DarkEnemySprites.MoteW >= 9 && DarkEnemySprites.MoteH >= 6);
+        Assert.True(DarknessEnemySprites.MoteW >= 9 && DarknessEnemySprites.MoteH >= 6);
     }
 }

@@ -390,7 +390,7 @@ public sealed class YokeTests(ITestOutputHelper output)
     public void It_says_a_waiting_post_on_arriving()
     {
         var g = EnemyKit.Game();
-        g.OfferDark(new DarkPost(DarknessKind.Rude, PostSeed, "grr you again"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, PostSeed, "grr you again"));
         var y = g.SpawnKind(EnemyKind.Yoke, CentreShare);
         for (int i = 0; i < VoiceWaitFrames && y.Text is null; i++) StepAlone(g, y);
         Assert.Equal("grr you again", y.Text);

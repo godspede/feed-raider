@@ -20,6 +20,8 @@ if (spectatorMode) {
 // ?debug=feed keeps the header bar for its own sign-in. It is a test page, not the game: the start page never shows over it
 // (CSS hides it on body.debug), nothing behind it is made inert, and no run or start page tour starts.
 const debugFeed = debug === 'feed';
+// ?debug=weapon is an ordinary run where the 0 key steps the weapon, to see and hear every kind
+const debugWeapon = debug === 'weapon', DEBUG_WEAPON_KEY = 'Digit0';
 const darknessParam = (params.get('darkness') || 'on').toLowerCase();
 const errorBarEl = document.getElementById('error');
 // The game's messages (the error bar, the terminal's toasts) are drawn where a screen reader cannot read them, so each one is also
@@ -42,7 +44,7 @@ const showNotice = bar.notice;
 // The start page is plain HTML and CSS, painted before any script runs. This wires it up while the runtime still downloads:
 // the game starts once the runtime is ready and a way in is picked (a typed handle, Random, or a live sign-in session).
 let queued = null; // "play", "guest" or "random" once a start was pressed before the runtime was ready
-const savedKey = 'feed-raider.handle';
+const savedHandleKey = 'feed-raider.handle';
 const $ = (id) => document.getElementById(id);
 const startPage = $('start');
 const startHandle = $('start-handle');
@@ -86,39 +88,39 @@ fit.fit();
 
 // The default DOM renderer rebuilds spans for every changed cell, which is the slow part on a weak phone or old laptop. The
 // WebGL addon paints the same cells on the GPU. It is served beside xterm (xterm/, or from memory in the single-file build) and
-// is loaded in the background: with no WebGL, a file that fails to load or a lost context the terminal keeps the DOM renderer.
+// is loaded in the background: with no WebGL, a file that fails to load or a lost context the terminal keeps the DOM renderer,
+// and a file that fails to load is named on the bar, since the player then sees the slower renderer without a cause.
 // ?renderer=dom forces the DOM renderer.
 // Before the glyph atlas fills to where the addon merges pages and starts drawing stale glyphs (page.watchAtlas), the atlas is
 // started afresh in place: flipping an option the game never shows (it draws only true colour, never bold) makes xterm drop its
 // atlas and make a one-page one in the same addon. The GL context stays, so there is no new-context hitch.
 const loadWebgl = () => {
-  try {
-    const gl = new WebglAddon.WebglAddon();
-    gl.onContextLoss(() => gl.dispose());
-    // The addon raises its atlas events from inside a draw, while it is placing a glyph on a page, and xterm drops the atlas the
-    // moment the option changes: the timer lets that draw finish first.
-    page.watchAtlas(gl, () => setTimeout(() => {
-      term.options.drawBoldTextInBrightColors = !term.options.drawBoldTextInBrightColors;
-    }));
-    term.loadAddon(gl);
-  } catch (e) {
-    // a browser without WebGL2 throws here; the DOM renderer already draws every cell, so the game carries on unchanged
-    console.warn('webgl renderer unavailable, using the DOM renderer: ' + (e.message || e));
-  }
+  const gl = new WebglAddon.WebglAddon();
+  gl.onContextLoss(() => gl.dispose());
+  // The addon raises its atlas events from inside a draw, while it is placing a glyph on a page, and xterm drops the atlas the
+  // moment the option changes: the timer lets that draw finish first.
+  page.watchAtlas(gl, () => setTimeout(() => {
+    term.options.drawBoldTextInBrightColors = !term.options.drawBoldTextInBrightColors;
+  }));
+  term.loadAddon(gl);
 };
-if (params.get('renderer') !== 'dom') {
+// The addon throws on loading where the browser gives no WebGL2 context (none at all, or the GPU blocked), so that is asked
+// first, on a canvas of its own that nothing keeps; without one the DOM renderer, which already draws every cell, stays.
+const hasWebgl2 = () => !!document.createElement('canvas').getContext('webgl2');
+if (params.get('renderer') !== 'dom' && hasWebgl2()) {
   const tag = document.createElement('script');
   tag.src = frBundle ? frBundle.webglUrl : './xterm/addon-webgl.js';
   tag.onload = loadWebgl;
-  tag.onerror = () => console.warn('webgl addon failed to load, using the DOM renderer');
+  tag.onerror = () => showNotice('The fast WebGL renderer did not load, so the game draws with the slower one and may stutter.');
   document.head.appendChild(tag);
 }
 
 // Sign-in (ATProto OAuth) needs crypto.subtle, which browsers expose only on HTTPS or localhost. The bundle loads only there, so a
-// plain-HTTP page still runs the game. A bundle or client that fails to load leaves sign-in off, not an error bar; a callback or
-// restore that fails leaves sign-in on and says why on the start page.
+// plain-HTTP page still runs the game. A bundle or client the network could not fetch (the TypeError a failed import or fetch
+// throws) leaves sign-in off and the page says why (authFailure); a callback or restore that fails leaves sign-in on and says why
+// there too. Any other error is a fault in the sign-in module: it rejects authReady and the bar shows it.
 // It starts at once and runs beside the runtime download, so sign-in works while the game loads.
-let auth = null;
+let auth = null, authFailure = null;
 let authPending = window.isSecureContext;
 // the page we land on after the OAuth redirect (or in the popup; the answer comes in the fragment): the runtime waits for the
 // callback to be handled first
@@ -130,9 +132,11 @@ const authReady = (async () => {
     await mod.init();
     auth = mod;
   } catch (e) {
-    console.warn('sign-in unavailable: ' + (e.message || e));
+    if (!(e instanceof TypeError)) throw e;
+    authFailure = e;
   }
 })();
+authReady.catch((e) => showError(`Sign-in failed to start: ${e?.message || e}`));
 const liveAuth = () => {
   if (!auth) throw new Error('sign-in unavailable on this page');
   return auth;
@@ -166,25 +170,29 @@ runtimeReady.catch((e) => {
 // so music.js loads (and installs the controls) whenever either is on.
 let music = null, sfx = null;
 const musicWanted = (params.get('music') || '').toLowerCase() !== 'off', sfxWanted = (params.get('sfx') || '').toLowerCase() !== 'off';
-// It loads beside the runtime download; the game awaits it before it starts.
+// It loads beside the runtime download; the game awaits it before it starts. A module that cannot be fetched (import rejects
+// with a TypeError when the network is gone) leaves that sound off, and the start page says so; any other error is a fault.
+// What the browser itself refuses (no Web Audio, a sound it cannot make) leaves that sound silent; a track or an effect it refuses also puts the reason on the error bar.
 const audioReady = (async () => {
   if (!musicWanted && !sfxWanted) return;
   try {
     const opts = !musicWanted ? {} : frBundle ? { tracks: frBundle.music } : { manifestUrl: 'music/tracks.json' };
     const mod = await import(frBundle ? frBundle.musicUrl : './music.js');
-    if (mod.init({ ...opts, sfx: sfxWanted, thin: page.thinConnection })) music = mod;
+    if (mod.init({ ...opts, sfx: sfxWanted, thin: page.thinConnection, trouble: showNotice })) music = mod;
     if (sfxWanted) {
       const s = await import(frBundle ? frBundle.sfxUrl : './sfx.js');
       if (s.init({ master: mod.master, duck: mod.duck })) sfx = s;
     }
   } catch (e) {
-    console.warn('audio unavailable: ' + (e.message || e));
+    if (!(e instanceof TypeError)) throw e;
+    if (needsStart) startFail(`The sound could not load (${e.message}), so the game plays silent. Reload to try again.`);
   }
 })();
-// audio must not stop the game: each kind of call warns of its first failure and plays on
-const cueGuard = page.bestEffort('a music cue'), effectGuard = page.bestEffort('a sound effect'), pauseGuard = page.bestEffort('pausing the music');
-const musicCue = (name) => cueGuard(() => music?.cue(name));
-const sfxPlay = (name, pan, step, size) => effectGuard(() => sfx?.play(name, pan, step, size));
+const musicCue = (name) => music?.cue(name);
+const sfxPlay = (name, pan, step, size) => {
+  const refused = sfx?.play(name, pan, step, size);
+  if (refused) showNotice(refused);
+};
 const bestKey = 'feed-raider.best';
 // localStorage throws a DOMException where the browser blocks it (or, on a save, where it is full)
 const bestScore = () => {
@@ -197,11 +205,11 @@ const saveBestScore = (n) => {
 };
 // Function declarations, not consts: the start page reads the saved handle at load, above this line
 function savedHandle() {
-  try { return localStorage.getItem(savedKey) || ''; }
+  try { return localStorage.getItem(savedHandleKey) || ''; }
   catch (e) { if (!(e instanceof DOMException)) throw e; return ''; /* storage unavailable: no handle kept, the box starts empty */ }
 }
 function saveHandle(h) {
-  try { localStorage.setItem(savedKey, h); }
+  try { localStorage.setItem(savedHandleKey, h); }
   catch (e) { if (!(e instanceof DOMException)) throw e; /* storage unavailable: the handle is just not kept */ }
 }
 if (needsStart) audioReady.then(() => musicCue('start'));
@@ -213,8 +221,8 @@ const MAX_PENDING_WRITES = 1;
 // The settings the page keeps in localStorage, which throws a DOMException where the browser blocks it.
 const pageStorage = { get: (k) => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) };
 
-// Avatars and a post's pictures, from the author's own PDS (Bluesky's CDN sends no CORS headers, so a page cannot read its
-// pixels), a few at a time, with a size and a time limit, and only while the Pictures setting is on; see page.pictureReader. A
+// Avatars, a post's pictures and a link card's thumbnail, from the author's own PDS (Bluesky's CDN sends no CORS headers, so a
+// page cannot read its pixels), and a video's thumbnail from Bluesky's video CDN, which does; a few at a time, with a size and a time limit, and only while the Pictures setting is on; see page.pictureReader. A
 // picture that is not fetched leaves the game's tinted placeholder or its empty box.
 const RGBA_BYTES = 4, RED_SHIFT = 16, GREEN_SHIFT = 8;
 const packPixels = (px, n) => { const out = []; for (let i = 0; i < n; i++) out.push((px[i * RGBA_BYTES] << RED_SHIFT) | (px[i * RGBA_BYTES + 1] << GREEN_SHIFT) | px[i * RGBA_BYTES + 2]); return out; };
@@ -385,8 +393,10 @@ if (!spectatorMode) {
     if (t.error) { startFail(t.error); startHandle.focus(); return; }
     busy = 'check';
     renderStartPage();
-    // the public API answers 400 (or 404) for a handle no account uses
-    const r = await fetch(`${page.PUBLIC_API}/xrpc/com.atproto.identity.resolveHandle?handle=` + encodeURIComponent(t.handle)).catch(() => null);
+    // the public API answers 400 (or 404) for a handle no account uses; fetch rejects with a TypeError only where it could not
+    // reach the API, read as null below, and anything else is a fault and is thrown
+    const r = await fetch(`${page.PUBLIC_API}/xrpc/com.atproto.identity.resolveHandle?handle=` + encodeURIComponent(t.handle))
+      .catch((e) => { if (!(e instanceof TypeError)) throw e; return null; });
     busy = false;
     renderStartPage();
     if (!r) return startFail('Could not reach Bluesky. Check your connection.');
@@ -474,8 +484,10 @@ if (!spectatorMode) {
 // a restored session (or the one back from the redirect) turns the first button into Play, with the handle in the small print
 authReady.then(() => {
   authPending = false;
-  const why = auth?.initError();
+  const why = auth ? auth.initError()
+    : authFailure && `Sign-in could not load (${authFailure.message || authFailure}). You can still play as a guest.`;
   if (why && needsStart) startFail(why);
+  else if (why) showNotice(why);
   if (needsStart) showNote(auth?.initNote());
   // back from the redirect: restore the page we left (the callback URL has no query of its own)
   if (auth && auth.returnTo() !== null && auth.returnTo() !== location.search) location.replace(location.pathname + auth.returnTo());
@@ -491,6 +503,7 @@ authReady.then(() => {
         renderStartPage();
         if (finePointer) startEls.play.focus();
       },
+      onFailure: (e) => startFail(page.signInFailed(e)),
     });
   }
 });
@@ -503,6 +516,7 @@ setModuleImports('main.js', {
   termBusy: () => pendingWrites > MAX_PENDING_WRITES,
   fetchAvatar: pictureReader.avatar,
   fetchPicture: pictureReader.picture,
+  fetchVideoThumb: pictureReader.videoThumb,
   showError,
   showNotice,
   announce,
@@ -552,7 +566,7 @@ if (auth) {
   document.getElementById('signout').addEventListener('click', async () => {
     await auth.signOut();
     renderSession();
-    if (debug === 'feed') renderDebug();
+    if (debugFeed) renderDebug();
   });
 }
 
@@ -620,7 +634,7 @@ function postRow(p) {
     el('div', { className: 'text', textContent: p.text }),
     el('div', {}, like, repost, undo, result));
 }
-if (debug === 'feed') renderDebug();
+if (debugFeed) renderDebug();
 
 // --- the game ---
 const gear = $('gear'), side = $('side');
@@ -632,14 +646,13 @@ let releaseKeys = () => {};   // lets go of the held game keys and presses; inst
 const feedSpeed = page.createFeedSpeed({
   search: location.search,
   storage: pageStorage,
-  // the step is already kept on the page; a game that did not take it must not stop the run starting or the pause menu closing
-  tell: (step, say) => { try { exports.Host.SetFeedSpeed(step, say); } catch (e) { console.warn('feed speed not passed on: ' + (e?.message || e)); } },
+  tell: (step, say) => exports.Host.SetFeedSpeed(step, say),
 });
 // A hidden tab pauses the engine's loop, feed paging and both live sockets, and the music; coming back resumes all of it.
 function followTabVisibility() {
   const hidden = document.hidden;
   exports.Host.SetHidden(hidden);
-  pauseGuard(() => music?.setPaused(hidden));
+  music?.setPaused(hidden);
 }
 document.addEventListener('visibilitychange', followTabVisibility);
 // a tab opened in the background is hidden from the start, before the tour or a run sees a frame
@@ -647,8 +660,9 @@ followTabVisibility();
 // The start page's backdrop: the game plays itself under the start page (Host.StartTour), on built-in posts, with no sound effects and
 // nothing saved. It runs only while the start page shows. Reduced motion gets it at a quarter speed.
 const tour = page.createTour({
-  // the tour is only a backdrop: one that stops leaves the start page over a still field, and the start page still works
-  start: (seed, slow) => { exports.Host.StartTour(seed, slow).catch((e) => console.warn('start page tour stopped: ' + (e?.message || e))); },
+  // Host.StartTour ends quietly when the tour is stopped, so a rejection is a fault: it shows in the error bar, over a start
+  // page that still works
+  start: (seed, slow) => { exports.Host.StartTour(seed, slow).catch((e) => showError(`The start page's tour stopped: ${e?.message || e}`)); },
   stop: () => exports.Host.StopTour(),
   sleep: () => { exports.Host.SetTourAsleep(true); startPage.classList.add('asleep'); },
   wake: () => { exports.Host.SetTourAsleep(false); startPage.classList.remove('asleep'); },
@@ -667,11 +681,10 @@ if (spectatorMode) {
   }
   // Main is empty; the exports are usable straight after create(), so dotnet.run() is not needed.
   if (handle) {
+    // Host.StartSpectator shows a failure to read Bluesky itself, so what reaches here is a fault: shown as it is, not as a
+    // network failure
     try { await exports.Host.StartSpectator(handle, darknessParam); }
-    catch (e) {
-      console.warn('spectator failed: ' + (e?.message || e));
-      showError(`Could not reach Bluesky for @${handle}. Check your connection and try again.`);
-    }
+    catch (e) { showError(`The spectator view stopped: ${e?.message || e}`); }
   }
 } else {
   // waits here for the start page's click (or a session) unless the URL already named a handle
@@ -708,7 +721,7 @@ function startRun(choice) {
     Number.parseInt(params.get('stage') || '1', 10) || 1,
     // development aid: ?boss=4 opens the run on the warning of stage 4's boss
     Number.parseInt(params.get('boss') || '0', 10) || 0,
-    // development aid: ?gates=off runs without boss gates, as the balance tests do
+    // development aid: ?gates=off runs without boss fights, as the balance tests do
     (params.get('gates') || 'on').toLowerCase() !== 'off').catch((e) => showError(e?.message || String(e)))
     // pictures still waiting for a turn are for cards no longer on screen; a newer run's own asks are left alone
     .finally(() => { if (run === runsStarted) pictureReader.drop(); });
@@ -730,7 +743,7 @@ function installMenu() {
     toggle: (uri, action) => exports.Host.Toggle(uri, action),
   });
   menu = page.createMenu({
-    refreshLog: () => { logList.clear(); logList.refresh(); },
+    refreshLog: () => { logList.clearStatus(); logList.refresh(); },
     show: () => { speedSlider.sync(); picturesSwitch.sync(); dialog.showModal(); },
     hide: () => { if (dialog.open) dialog.close(); },
     setPaused: (on) => exports.Host.SetMenu(on),
@@ -748,10 +761,12 @@ function installMenu() {
   $('menu-resume').addEventListener('click', () => menu.close());
   $('menu-quit').addEventListener('click', () => menu.backToStartPage());
   $('menu-signout').addEventListener('click', async () => {
-    // a failed sign-out is logged, not shown: the pause menu still has to close, and renderSession then shows whatever session is left
-    try { await auth?.signOut(); } catch (e) { console.warn('sign-out failed: ' + (e?.message || e)); }
+    // the pause menu closes either way: renderSession shows whatever session is left, and the start page says why it is
+    let failed = null;
+    try { await auth?.signOut(); } catch (e) { failed = e; }
     renderSession();
     menu.backToStartPage();
+    if (failed) startFail(`Sign out did not finish (${failed.message || failed}). Try again.`);
   });
   // Sign in again: the normal sign-in for the same handle, which asks for what the game can do now. In a popup the run stays
   // paused behind it and carries on with the repost buttons unlocked; by redirect the page leaves and the run ends.
@@ -803,8 +818,8 @@ function giveGrants(g = page.sessionGrants(currentSession())) {
 
 function renderMenuWho() {
   const s = currentSession();
-  $('menu-who').textContent = s ? `Signed in as @${s.handle}. Holding on a heart or a repost button writes to this account.`
-    : 'Not signed in: holding on a heart or a repost button marks it here and sends nothing.';
+  $('menu-who').textContent = s ? `Signed in as @${s.handle}. A like or repost (Z, X, or a click on its button) writes to this account.`
+    : 'Not signed in: a like or repost (Z, X, or a click on its button) marks it here and sends nothing.';
   $('menu-signout').hidden = !s;
   // a sign-in from before the game could repost: say so, and offer the new one
   const short = page.menuGrants(s, { popup: canPopup() });
@@ -857,7 +872,7 @@ function showStartPage() {
   first?.focus({ preventScroll: true });
 }
 
-// Keyboard, mouse and touch become the engine's input calls. Nothing here sends a like: E likes the marked log post.
+// Keyboard, mouse and touch become the engine's input calls; a click on a log button is passed on as a log click, and the game decides the like or repost.
 function installGameInput() {
   const screen = document.getElementById('term');
   const cell = () => {
@@ -865,7 +880,7 @@ function installGameInput() {
     return { left: r.left, top: r.top, w: r.width / term.cols, h: r.height / term.rows };
   };
   const toCell = (cx, cy) => { const c = cell(); return [(cx - c.left) / c.w, (cy - c.top) / c.h]; };
-  // the feed log on the left: a press on it is a click on its buttons (the game names the button), never a hold or a steering drag
+  // the feed log on the left: a press on it is a click on its buttons (the game names the button), never a steering drag
   const CELL_UNIT = 1;   // c is already in cells, so a cell is one unit wide and tall
   const inLog = (c) => {
     const panel = page.leftPanel(term.cols), at = page.cellAt(c[0], c[1], { left: 0, top: 0, cellW: CELL_UNIT, cellH: CELL_UNIT, cols: term.cols, rows: term.rows });
@@ -881,8 +896,10 @@ function installGameInput() {
   const typing = () => page.isTextEntry(document.activeElement);
   const isFeedSpeedKey = (code) => code === page.SLOWER_FEED_KEY || code === page.FASTER_FEED_KEY;
   window.addEventListener('keydown', (e) => {
+    // ?debug=weapon: 0 steps the ship through the weapon kinds, round from the top to the first
+    if (debugWeapon && e.code === DEBUG_WEAPON_KEY && !e.repeat && !typing() && menu.isPlaying() && !menu.isOpen()) { e.preventDefault(); exports.Host.DebugWeapon(); return; }
     const code = page.gameKey(e);
-    if (!code || typing() || !menu?.isPlaying() || menu?.isOpen() || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!code || typing() || !menu.isPlaying() || menu.isOpen() || e.ctrlKey || e.metaKey || e.altKey) return;
     e.preventDefault();
     if (e.repeat) return;
     // the feed speed keys are the page's: a step, not a key held in the game
@@ -901,10 +918,10 @@ function installGameInput() {
   if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
 
   const gestures = page.createGestures({
-    tap: (c) => exports.Host.Tap(...c),
+    click: (c, touch) => exports.Host.Click(c[0], c[1], touch),
     bomb: () => exports.Host.Bomb(),
     inPanel: inLog,
-    click: (c) => exports.Host.Click(Math.floor(c[0]), Math.floor(c[1])),
+    logClick: (c) => exports.Host.LogClick(Math.floor(c[0]), Math.floor(c[1])),
   });
 
   screen.addEventListener('mousemove', (e) => exports.Host.Pointer(...toCell(e.clientX, e.clientY)));

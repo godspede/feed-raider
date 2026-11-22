@@ -122,7 +122,7 @@ public sealed partial class RaiderGame
     private const double SparkSpreadX = 2.2, SparkRiseY = 1.6;
     private const int SparkLife = 5, SparkLifeSpread = 5;
     private const double NoDistance = 1e-6;   // a distance under this has no direction
-    private const double TouchMarginX = 1, TouchMarginY = 2;   // px of slack a touch allows beyond the box, wider than tall
+    private const double TouchMarginX = 1, TouchMarginY = 2;   // px of slack a touch allows beyond the box: more up and down than sideways
 
     /// <summary>One white spark that rises and fades fast: what a shot that does no damage leaves.</summary>
     private void PingSpark(double x, double y) =>
@@ -243,36 +243,36 @@ public sealed partial class RaiderGame
             if (p.State == PartState.Open && DamagePart(e, p, Tuning.BombPartDamage, e.X + p.OX, e.Y + p.OY, true)) return;
     }
 
-    /// <summary>The hit points the feed-clearing like leaves a part at, at the least: it never kills one.</summary>
-    private const double ClearLeavesHp = 1;
+    /// <summary>The hit points a like or repost leaves a part at, at the least: it never kills one.</summary>
+    private const double ChipLeavesHp = 1;
 
-    /// <summary>The feed-clearing like takes <see cref="Tuning.ClearPartShare"/> of each living part's full hit points, but never kills one:
+    /// <summary>A like or repost takes <see cref="Tuning.ClearPartShare"/> of each living part's full hit points, but never kills one:
     /// a part is left at one hit point at the least, and one already under that is left alone.</summary>
-    private static void ClearParts(Enemy e)
+    private static void ChipParts(Enemy e)
     {
         foreach (var p in e.Parts!)
         {
             if (p.State == PartState.Dead) continue;
-            p.Hp = Math.Max(Math.Min(p.Hp, ClearLeavesHp), p.Hp - p.MaxHp * Tuning.ClearPartShare);
+            p.Hp = Math.Max(Math.Min(p.Hp, ChipLeavesHp), p.Hp - p.MaxHp * Tuning.ClearPartShare);
             p.Flash = Tuning.FlashFrames;
         }
         SyncHp(e);
     }
 
-    /// <summary>A finished hold clears the parts of every enemy that has some, is on the field and can be touched, and says so once.</summary>
-    private void ClearPartsInFight()
+    /// <summary>A like or repost takes a share off the living parts (<see cref="ChipParts"/>) of every enemy that has some, is on the field and can be touched, and says so once.</summary>
+    private void ChipPartsInFight()
     {
         bool any = false;
         foreach (var e in Enemies)
         {
             if (e.Parts is null || e.Untouchable || e.Y <= BombReachY) continue;
-            ClearParts(e);
+            ChipParts(e);
             any = true;
         }
         if (any) Popup(PartsPopup, PX, PY - PartsPopupRise, Palette.White);
     }
 
-    /// <summary>Sends a friendly shot back at the ship from where it is: it turns hostile, keeps its damage, and flies at the enemy bullet speed.</summary>
+    /// <summary>Sends a friendly shot back at the ship from where it is: it turns hostile, keeps its damage, and flies at the enemy bolt speed.</summary>
     internal void Reflect(Bullet b)
     {
         double dx = PX - b.X, dy = PY - b.Y, d = Math.Sqrt(dx * dx + dy * dy);

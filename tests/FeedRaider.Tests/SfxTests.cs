@@ -12,7 +12,7 @@ public class SfxTests
     private static (RaiderGame Game, List<Ev> Played) New()
     {
         var g = new RaiderGame(Enemies.EnemyKit.PlainSeed) { SignedIn = true };
-        g.SetLayout(FieldLayout.Compute(HoldRig.ScrCols, HoldRig.ScrRows));
+        g.SetLayout(FieldLayout.Compute(PressRig.ScrCols, PressRig.ScrRows));
         var played = new List<Ev>();
         g.Sfx = new SfxBus((n, p, step, size) => played.Add(new Ev(n, p, g.Frame, step, size)));
         return (g, played);
@@ -237,8 +237,8 @@ public class SfxTests
     public void A_live_wave_swells_once_when_it_arrives_and_clearing_it_rings()
     {
         var (g, played) = New();
-        const ulong darkSeed = 9;
-        g.OfferDark(new DarkPost(DarknessKind.Spam, darkSeed, "free crypto giveaway dm me now please"));
+        const ulong darknessSeed = 9;
+        g.OfferDarkness(new DarknessPost(DarknessKind.Spam, darknessSeed, "free crypto giveaway dm me now please"));
         for (int i = 0; i < MaxWaitFrames && !g.Enemies.Any(e => e.Live); i++) g.Step();
         Assert.Single(played, p => p.Name == SfxNames.Darkness);
         Assert.DoesNotContain(played, p => p.Name == SfxNames.Clear);
@@ -392,67 +392,27 @@ public class SfxTests
         Assert.Equal(consts, pageNames);
     }
 
-    // ---- the hold on a post's button: a soft tick on every beat, rising, then the like
+    // ---- a press on a post's button: the like at once, and resting on the button sounds nothing
     [Fact]
-    public void Each_beat_of_a_hold_plays_hold_at_its_pitch_step_the_finish_plays_like_and_draining_plays_nothing()
+    public void A_like_key_plays_like_once_and_resting_on_the_heart_first_plays_nothing()
     {
-        var (g, c, played) = HoldRig.Scene();
+        var (g, c, played) = PressRig.Scene();
         g.OnLike = _ => { };
-        HoldRig.Hold(g, c, PostAction.Like, Tuning.HoldFrames);
-        var ticks = played.Where(p => p.Name == SfxNames.Hold).ToList();
-        Assert.Equal(Enumerable.Range(0, HoldBeats.Ticks.Length), ticks.Select(t => t.Step));
-        const int firstTickProgress = 1;   // the first beat sounds on the hold's first tick, which has already counted
-        int[] beatProgress = [firstTickProgress, .. HoldBeats.Ticks[1..]];
-        Assert.Equal(beatProgress, ticks.Select(t => t.Progress));
+        PressRig.RestOn(g, c, PostAction.Like, Tuning.Fps);
+        Assert.Empty(played);
+        PressRig.Press(g, c, PostAction.Like);
         Assert.Equal(SfxNames.Like, played[^1].Name);
         Assert.Single(played, p => p.Name == SfxNames.Like);
         Assert.DoesNotContain(played, p => p.Name == SfxNames.Charge);   // the bosses' wind-up is not borrowed
-
-        // leaving early: silence all the way down
-        var (g2, c2, played2) = HoldRig.Scene();
-        const int held = 50, drained = 10;
-        HoldRig.Hold(g2, c2, PostAction.Like, held);
-        played2.Clear();
-        HoldRig.Rest(g2, Tuning.HoldGraceFrames + drained);
-        Assert.Equal(held - Tuning.HoldDrain * drained, c2.Marks.LikeProgress);
-        Assert.Empty(played2);
-        // coming back part way picks the pitch up where progress is, not from the bottom
-        const int backTicks = 1;   // one tick back on the button sounds a beat at once
-        HoldRig.Hold(g2, c2, PostAction.Like, backTicks);
-        Assert.Equal([(SfxNames.Hold, HoldBeats.StepAt(c2.Marks.LikeProgress))], played2.Select(p => (p.Name, p.Step)));
-    }
-
-    [Fact]
-    public void Hold_carries_its_step_through_the_bus_up_to_seven_and_keeps_four_frames_apart()
-    {
-        const int pastTheTopStep = 40;
-        var got = Recorded(bus => { bus.Play(SfxNames.Hold, 0, 10, 0, SentStep); bus.Play(SfxNames.Hold, 0, 20, 0, pastTheTopStep); });
-        Assert.Equal([(SfxNames.Hold, SentStep, 0.0), (SfxNames.Hold, SfxBus.MaxStep, 0.0)], got);
-        Assert.Equal(4, SfxBus.MinGapFrames(SfxNames.Hold));
-    }
-
-    [Fact]
-    public void Hold_is_a_short_soft_tick_that_rises_with_its_step_on_the_page_and_in_the_terminal()
-    {
-        var low = SfxSynth.Render(SfxNames.Hold, 0, 0, new Random(SynthSeed));
-        var high = SfxSynth.Render(SfxNames.Hold, SfxBus.MaxStep, 0, new Random(SynthSeed));
-        Assert.True(Crossings(high) > Crossings(low));
-        Assert.True(high.Max(Math.Abs) > low.Max(Math.Abs), "it grows louder as it fills");
-        Assert.All(low.Concat(high), x => Assert.True(float.IsFinite(x)));
-        Assert.True(low.Max(Math.Abs) > AudiblePeak);
-        const double longestHoldSeconds = 0.2;
-        Assert.True(high.Length <= longestHoldSeconds * SfxSynth.SampleRate);
-        AssertOnPage(SfxJs(), SfxNames.Hold);
     }
 
     // ---- the repost cue: a rising two-note sweep, clearly not the like chime
     [Fact]
-    public void A_finished_repost_hold_plays_repost_once_and_never_like()
+    public void A_repost_key_plays_repost_once_and_never_like()
     {
-        var (g, c, played) = HoldRig.Scene();
+        var (g, c, played) = PressRig.Scene();
         g.OnRepost = _ => { };
-        HoldRig.Hold(g, c, PostAction.Repost, Tuning.HoldFrames);
-        Assert.Equal(Enumerable.Range(0, HoldBeats.Ticks.Length), played.Where(p => p.Name == SfxNames.Hold).Select(t => t.Step));
+        PressRig.Press(g, c, PostAction.Repost);
         Assert.Equal(SfxNames.Repost, played[^1].Name);
         Assert.Single(played, p => p.Name == SfxNames.Repost);
         Assert.DoesNotContain(played, p => p.Name == SfxNames.Like);

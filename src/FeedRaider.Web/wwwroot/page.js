@@ -184,17 +184,17 @@ export class SignInCancelled extends Error {
   constructor() { super('The sign-in window was closed.'); this.name = 'SignInCancelled'; }
 }
 
-// A reason this page wrote itself, already in plain words.
+// The line for a sign-in that did not finish because of `reason`, one sentence with its full stop trimmed.
 const signInLine = (reason) => `Sign-in did not finish: ${String(reason).trim().replace(/[.\s]+$/, '')}. Try again.`;
-// The start page's line for a sign-in that failed: the callback, the token exchange or the session restore.
+// The start page's line for a sign-in that failed: the callback, the token exchange or the session restore. A known library
+// failure is put in plain words; any other carries the error's own message, so its cause is never hidden behind a generic line.
 export function signInFailed(e) {
   const raw = String((e instanceof Error ? e.message : e) || '');
   const has = (re) => re.test(raw) || re.test(e?.name || '');
-  let reason = "something went wrong. Try again.";
-  if (has(/resolve|metadata|fetch|network|timed? ?out/i)) reason = "could not reach your Bluesky account's server. Check the handle and your connection, then try again.";
-  else if (has(/popup|window|cancel|closed/i)) reason = 'the sign-in window was closed. Try again.';
-  else if (has(/access_denied|denied|declin/i)) reason = 'Bluesky did not allow it. Try again when you are ready to approve.';
-  return `Sign-in did not finish: ${reason}`;
+  if (has(/resolve|metadata|fetch|network|timed? ?out/i)) return "Sign-in did not finish: could not reach your Bluesky account's server. Check the handle and your connection, then try again.";
+  if (has(/popup|window|cancel|closed/i)) return signInLine('the sign-in window was closed');
+  if (has(/access_denied|denied|declin/i)) return 'Sign-in did not finish: Bluesky did not allow it. Try again when you are ready to approve.';
+  return signInLine(raw || `${e?.name || 'an error'} with no message`);
 }
 
 // True when the page URL carries an OAuth answer (state with code or error). The library asks for it in the fragment; the
@@ -264,21 +264,24 @@ export async function completeCallback({ callback, adopt, report = () => {}, han
 // account to restore; a sign-out clears it. A report older than REPORT_MS is no longer about this sign-in.
 export const SIGNIN_REPORT = 'feed-raider(signin-report)';
 export const REPORT_MS = 30 * MINUTE_MS;
+// storage is null where the browser blocks it, and its calls throw a DOMException where it blocks or is full: the report then
+// goes unkept, as the sign-in works without it and a stale one ages out. Any other error is a bug and is thrown.
 export function noteSignIn(storage, step, extra = {}, now = Date.now()) {
-  try { storage?.setItem(SIGNIN_REPORT, JSON.stringify({ ...extra, step, at: now })); } catch (e) { console.warn('sign-in report not saved: ' + e.message); /* best effort: the sign-in works without the report */ }
+  try { storage?.setItem(SIGNIN_REPORT, JSON.stringify({ ...extra, step, at: now })); } catch (e) { if (!(e instanceof DOMException)) throw e; }
 }
+// A report that is not JSON (SyntaxError) or cannot be read (DOMException) is the same as none: it only helps a page that loads
+// soon after a sign-in find the account.
 export function readSignIn(storage, now = Date.now()) {
   try {
     const r = JSON.parse(storage?.getItem(SIGNIN_REPORT) || 'null');
     return r && typeof r.step === 'string' && now - r.at >= 0 && now - r.at < REPORT_MS ? r : null;
   } catch (e) {
-    // an unreadable report is the same as none: it only helps a page that loads soon after a sign-in find the account
-    console.warn('sign-in report unreadable: ' + e.message);
+    if (!(e instanceof SyntaxError || e instanceof DOMException)) throw e;
     return null;
   }
 }
 export function clearSignIn(storage) {
-  try { storage?.removeItem(SIGNIN_REPORT); } catch (e) { console.warn('sign-in report not cleared: ' + e.message); /* best effort: a stale report ages out */ }
+  try { storage?.removeItem(SIGNIN_REPORT); } catch (e) { if (!(e instanceof DOMException)) throw e; }
 }
 
 const SAVED_STEPS = ['saved', 'restored'];
@@ -309,7 +312,7 @@ export function signInLost(report, error) {
   switch (report.step) {
     case 'started': return signInLine('no answer from Bluesky reached this browser. The sign-in window was closed before Bluesky sent it back, or it opened where this page cannot see its storage');
     case 'answered': return signInLine('the sign-in window was closed before it saved your session. Leave it open until it says you are signed in');
-    case 'failed': return signInFailed(report.error || 'unknown error');
+    case 'failed': return signInFailed(report.error);
     default: return signInLine('no saved session was found in this browser');
   }
 }
@@ -334,8 +337,9 @@ function watchReturn(back) {
 
 // While this page is signed out, a session another page of the site saved (a popup whose sign-in this page stopped waiting for,
 // or a sign-in in another tab) is adopted when that page writes storage: `restore()` resolves it or null, `onSession` shows it.
-// A restore that fails leaves the page as it is. Returns a function that stops watching.
-export function watchSaved({ restore, onSession, signedIn = () => false, target = globalThis.window }) {
+// A restore that fails leaves the page signed out and hands its error to `onFailure`, which tells the player. Returns a function
+// that stops watching.
+export function watchSaved({ restore, onSession, onFailure, signedIn = () => false, target = globalThis.window }) {
   if (!target) return () => {};
   let checking = false, again = false, stopped = false;
   const check = async () => {
@@ -348,7 +352,9 @@ export function watchSaved({ restore, onSession, signedIn = () => false, target 
         try {
           const s = await restore();
           if (s && !stopped) return onSession(s);
-        } catch (e) { console.warn('restoring the saved session failed: ' + e.message); /* the page stays as it is */ }
+        } catch (e) {
+          if (!stopped) onFailure(e);
+        }
       } while (again && !stopped && !signedIn());
     } finally {
       checking = false;
@@ -375,7 +381,8 @@ export async function signIn(client, raw, { scope, state, open = globalThis.wind
   const target = signInTarget(raw);
   let popup = null;
   if (!standalone && typeof client.authorize === 'function' && typeof open === 'function') {
-    try { popup = open('about:blank', POPUP_NAME, POPUP_FEATURES); } catch (e) { console.warn('the sign-in popup could not open, using a redirect: ' + e.message); }
+    // a browser that refuses the window throws a DOMException; with no popup the sign-in goes by the redirect below
+    try { popup = open('about:blank', POPUP_NAME, POPUP_FEATURES); } catch (e) { if (!(e instanceof DOMException)) throw e; }
   }
   if (!popup) {
     await client.signInRedirect(target, { scope, state });
@@ -389,7 +396,7 @@ export async function signIn(client, raw, { scope, state, open = globalThis.wind
     popup.location.href = url.href;
     popup.focus?.();
   } catch (e) {
-    try { if (!popup.closed) popup.close(); } catch (closeErr) { console.warn('the sign-in popup could not be closed: ' + closeErr.message); /* best effort: the original failure is rethrown below, and a popup left open is the player's to close */ }
+    if (!popup.closed) popup.close();
     throw signal?.aborted ? new SignInCancelled() : e;
   }
   onWaiting();
@@ -480,9 +487,10 @@ export function pdsOrigin(endpoint) {
 // Where an author's DID document lives (plc.directory, or a did:web host's well-known file), or null for a DID we cannot resolve.
 // A did:web with a port (%3A) or a path (a further colon) is refused, as is any host that is not a public name.
 const DID_WEB = 'did:web:';
+const PLC_DIRECTORY = 'https://plc.directory';
 export function didDocUrl(did) {
   if (typeof did !== 'string') return null;
-  if (did.startsWith('did:plc:')) return 'https://plc.directory/' + did;
+  if (did.startsWith('did:plc:')) return `${PLC_DIRECTORY}/${did}`;
   const host = did.startsWith(DID_WEB) ? did.slice(DID_WEB.length) : '';
   return isPublicHostName(host) ? `https://${host.toLowerCase()}/.well-known/did.json` : null;
 }
@@ -501,6 +509,19 @@ export function pictureCid(url, did) {
   return m && m[1] === did ? m[2] : null;
 }
 
+// The host a video's thumbnail is read from. The address a post gives is on video.bsky.app, which answers with a redirect to this
+// one; the reader builds it here from the DID and CID, so it follows no redirect and reads from nowhere else.
+export const VIDEO_THUMB_ORIGIN = 'https://video.cdn.bsky.app';
+
+// The thumbnail address of the video `cid` that `did` posted, or null when either is not the shape the game reads.
+export function videoThumbUrl(did, cid) {
+  const didOk = typeof did === 'string' && /^did:(?:plc:[a-z2-7]{24}|web:[a-z0-9.-]+)$/.test(did);
+  const cidOk = typeof cid === 'string' && /^[a-z0-9]{8,128}$/i.test(cid);
+  return didOk && cidOk ? `${VIDEO_THUMB_ORIGIN}/hls/${did}/${cid}/thumbnail.jpg` : null;
+}
+
+const fitsPicture = (w, h) => Number.isInteger(w) && Number.isInteger(h) && w >= 1 && h >= 1 && w <= PICTURE_MAX_SIDE && h <= PICTURE_MAX_SIDE;
+
 // The value `cache` holds under `key`, made by make() the first time. A cache at `cap` entries drops its oldest first, so a
 // long session does not grow it without end.
 export function rememberRecent(cache, key, make, cap) {
@@ -516,19 +537,6 @@ export function rememberRecent(cache, key, make, cap) {
 export function thinConnection() {
   const c = globalThis.navigator?.connection;
   return !!c && (c.saveData === true || ['slow-2g', '2g', '3g'].includes(c.effectiveType) || c.type === 'cellular');
-}
-
-// Runs a call the game must not stop for, such as an audio cue: a throw is warned of once, naming `what`, and later throws pass quietly,
-// so a broken player does not fill the console at every frame.
-export function bestEffort(what, warn = console.warn) {
-  let warned = false;
-  return (call) => {
-    try { call(); } catch (e) {
-      if (warned) return;
-      warned = true;
-      warn(`${what} failed, later failures are not reported: ${e?.message || e}`);
-    }
-  };
 }
 
 const AUTHORS_KEPT = 300;   // authors whose PDS or avatar is remembered at once
@@ -603,8 +611,10 @@ const NOT_FETCHED = Symbol('not fetched');
 // picture(did, url, w, h) resolves to w*h comma-joined values, or null. A post picture is kept by its CID at PICTURE_MAX_SIDE
 // square (the last picturesKept of them), so another size of it is shrunk from that copy and never fetched again.
 // avatar(did, url) resolves to AVATAR_SIDE squared values, or null; avatars are kept for the last AUTHORS_KEPT CIDs.
+// videoThumb(did, cid, w, h) reads a video's thumbnail from videoThumbUrl instead of a PDS, under the same limits, turns and count,
+// and resolves as picture() does; the thumbnails are kept by CID apart from the pictures.
 export function pictureReader({ fetch, pdsOf, decode, wanted, tooSlow = () => {}, atOnce = PICTURES_AT_ONCE, timeoutMs = PICTURE_TIMEOUT_MS, picturesKept = PICTURES_KEPT, now = () => performance.now() }) {
-  const pictures = new Map(), avatars = new Map();
+  const pictures = new Map(), avatars = new Map(), videoThumbs = new Map();
   const waiting = [];
   let busy = 0;
   let timeoutsInARow = 0;
@@ -630,11 +640,15 @@ export function pictureReader({ fetch, pdsOf, decode, wanted, tooSlow = () => {}
       chunks.push(value);
     }
   };
-  const read = async (did, cid, side, signal) => {
+  const blobAddress = async (did, cid) => {
     const pds = await pdsOf(did);
-    if (!pds || signal.aborted) return null;
+    return pds ? `${pds}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(did)}&cid=${encodeURIComponent(cid)}` : null;
+  };
+  const read = async (address, did, cid, side, signal) => {
+    const url = await address(did, cid);
+    if (!url || signal.aborted) return null;
     // a redirect is refused as pdsFinder refuses one: the author's PDS could send every player's browser to any host
-    const r = await fetch(`${pds}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(did)}&cid=${encodeURIComponent(cid)}`, { signal, redirect: 'error' });
+    const r = await fetch(url, { signal, redirect: 'error' });
     if (!r.ok || Number(r.headers.get('content-length')) > PICTURE_MAX_BYTES) return null;
     const blob = await readCapped(r);
     if (!blob || signal.aborted) return null;
@@ -648,13 +662,13 @@ export function pictureReader({ fetch, pdsOf, decode, wanted, tooSlow = () => {}
     if (!ranOut) { timeoutsInARow = 0; return; }
     if (++timeoutsInARow === PICTURE_TIMEOUTS_TOO_SLOW) tooSlow();
   };
-  const load = async (did, cid, side) => {
+  const load = async (address, did, cid, side) => {
     if (!(await turn())) return NOT_FETCHED;
     const stop = new AbortController();
     let timer, ranOut = false;
     const late = new Promise((give) => { timer = setTimeout(() => { ranOut = true; stop.abort(); give(null); }, timeoutMs); });
     try {
-      return await Promise.race([read(did, cid, side, stop.signal).catch(emptyIfLost), late]);
+      return await Promise.race([read(address, did, cid, side, stop.signal).catch(emptyIfLost), late]);
     } finally {
       clearTimeout(timer);
       stop.abort(); // a blob refused for its size is not downloaded to the end
@@ -663,10 +677,10 @@ export function pictureReader({ fetch, pdsOf, decode, wanted, tooSlow = () => {}
     }
   };
   // The cached answer for cid, null too; a turn that was dropped is forgotten, so the next ask fetches it.
-  const cachedOrFetch = (cache, cap, did, cid, side) => {
+  const cachedOrFetch = (cache, cap, did, cid, side, address = blobAddress) => {
     if (!wanted()) return Promise.resolve(null);
     return rememberRecent(cache, cid, () => {
-      const answer = load(did, cid, side).then((px) => {
+      const answer = load(address, did, cid, side).then((px) => {
         if (px !== NOT_FETCHED) return px;
         if (cache.get(cid) === answer) cache.delete(cid);
         return null;
@@ -679,14 +693,18 @@ export function pictureReader({ fetch, pdsOf, decode, wanted, tooSlow = () => {}
   return {
     picture(did, url, w, h) {
       const cid = pictureCid(url, did);
-      const sized = Number.isInteger(w) && Number.isInteger(h) && w >= 1 && h >= 1 && w <= PICTURE_MAX_SIDE && h <= PICTURE_MAX_SIDE;
-      if (!cid || !sized) return Promise.resolve(null);
+      if (!cid || !fitsPicture(w, h)) return Promise.resolve(null);
       return cachedOrFetch(pictures, picturesKept, did, cid, PICTURE_MAX_SIDE).then((px) => px && shrinkPixels(px, PICTURE_MAX_SIDE, w, h).join(','));
     },
     avatar(did, url) {
       const cid = avatarCid(url);
       if (!cid) return Promise.resolve(null);
       return cachedOrFetch(avatars, AUTHORS_KEPT, did, cid, AVATAR_SIDE).then((px) => px && px.join(','));
+    },
+    videoThumb(did, cid, w, h) {
+      const url = videoThumbUrl(did, cid);
+      if (!url || !fitsPicture(w, h)) return Promise.resolve(null);
+      return cachedOrFetch(videoThumbs, picturesKept, did, cid, PICTURE_MAX_SIDE, async () => url).then((px) => px && shrinkPixels(px, PICTURE_MAX_SIDE, w, h).join(','));
     },
     drop,
     // the pictures were switched off: the asks still waiting are dropped, and the timeouts in a row are counted from none
@@ -700,7 +718,7 @@ export function pictureReader({ fetch, pdsOf, decode, wanted, tooSlow = () => {}
 // --- game input, kept free of the DOM so node can test it ---
 
 export const SLOWER_FEED_KEY = 'Minus', FASTER_FEED_KEY = 'Equal';
-export const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyF', 'KeyB', 'KeyE', 'KeyR', 'BracketLeft', 'BracketRight', SLOWER_FEED_KEY, FASTER_FEED_KEY]);
+export const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyF', 'KeyB', 'KeyE', 'KeyR', 'KeyZ', 'KeyX', 'BracketLeft', 'BracketRight', SLOWER_FEED_KEY, FASTER_FEED_KEY]);
 
 // The game key a keyboard event means, or null. event.code is the physical key; when a browser or input method leaves it empty
 // or odd (code "Unidentified", an IME), the typed letter still names the key.
@@ -727,12 +745,12 @@ function gameKeyOf(e) {
 // --- the feed-speed option: five steps, kept in localStorage, ?feed-speed=1 to 5 for one visit ---
 
 export const FEED_SPEED_KEY = 'feed-raider.feed-speed';
-export const FEED_SPEED_MIN = 1, FEED_SPEED_MAX = 5, FEED_SPEED_DEFAULT = 3;
-export const FEED_SPEED_NAMES = ['Slowest', 'Slow', 'Normal', 'Fast', 'Fastest'];   // the engine's FeedSpeed steps 1 to 5
+export const FEED_SPEED_MIN = 1, FEED_SPEED_MAX = 5, FEED_SPEED_DEFAULT = 4;
+export const FEED_SPEED_NAMES = ['Slowest', 'Slower', 'Slow', 'Normal', 'Fast'];   // the engine's FeedSpeed steps 1 to 5; the default is Normal
 
 const speedStep = (v) => (typeof v === 'string' && new RegExp(`^[${FEED_SPEED_MIN}-${FEED_SPEED_MAX}]$`).test(v) ? Number(v) : null);
 
-// The step to start at: ?feed-speed= when it is a whole number 1 to 5, else the stored step, else 3. Anything else is ignored.
+// The step to start at: ?feed-speed= when it is a whole number 1 to 5, else the stored step, else the default. Anything else is ignored.
 export function feedSpeed(search, stored) {
   return speedStep(new URLSearchParams(search).get('feed-speed')) ?? speedStep(stored == null ? null : String(stored)) ?? FEED_SPEED_DEFAULT;
 }
@@ -849,22 +867,25 @@ export function isTextEntry(el) {
   return !['button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color', 'file', 'image'].includes((el.type || 'text').toLowerCase());
 }
 
-export const TAP_MS = 350;      // a press shorter than this that barely moved is a tap
+export const CLICK_MS = 350;    // a touch shorter than this that barely moved is a click
 export const SLOP = 12;   // pixels of travel before a touch is a drag, not a press
-const SECOND_FINGER_MOVED = 99;   // a second finger down counts as travel far past SLOP: the touch is never a tap
-const ONE_FINGER = 1, BOMB_FINGERS = 2;   // one finger steers and taps; a quick tap with two or more drops a bomb
-const MAIN_BUTTON = 0, SECONDARY_BUTTON = 2;   // MouseEvent.button: the left click taps, the right click drops a bomb
+const SECOND_FINGER_MOVED = 99;   // a second finger down counts as travel far past SLOP: the touch is never a click
+const ONE_FINGER = 1, BOMB_FINGERS = 2;   // one finger steers and clicks; a quick touch with two or more drops a bomb
+const MAIN_BUTTON = 0, SECONDARY_BUTTON = 2;   // MouseEvent.button: the left button clicks, the right drops a bomb
 
-// Turns mouse and touch events into the host calls. A tap or click never likes. host: { tap(cell), bomb() }, cells are [col, row].
-// A press on the feed log (host.inPanel(cell)) is a click on its buttons, never a hold, a steering drag or a tap on the field:
-// host.click(cell) comes on the press for a mouse and on a quick lift for a finger.
+// Turns mouse and touch events into the host calls. A click (the mouse's left button, or a quick touch of one finger) on a heart
+// or repost likes or reposts; anywhere else it does nothing. host: { click(cell, touch), bomb(), inPanel(cell), logClick(cell) },
+// cells are [col, row]; touch is true for a finger, whose press the game forgives a little past a button's edge. A finger that
+// travels SLOP steers and never clicks, and one held still for CLICK_MS does nothing, so a resting thumb never likes.
+// A press on the feed log (host.inPanel(cell)) is a log click on its buttons, never a steering drag or a click on the field:
+// host.logClick(cell) comes on the press for a mouse and on a quick lift for a finger.
 export function createGestures(host, now = () => performance.now()) {
   let touch = null; // { at, x, y, cell, moved, fingers, onPanel } while a finger is down
   const inPanel = (cell) => !!host.inPanel?.(cell);
   return {
     mouseDown(button, cell) {
-      if (button === MAIN_BUTTON && inPanel(cell)) host.click(cell);
-      else if (button === MAIN_BUTTON) host.tap(cell); else if (button === SECONDARY_BUTTON) host.bomb();
+      if (button === MAIN_BUTTON && inPanel(cell)) host.logClick(cell);
+      else if (button === MAIN_BUTTON) host.click(cell, false); else if (button === SECONDARY_BUTTON) host.bomb();
     },
     touchStart(count, x, y, cell) {
       if (count === ONE_FINGER) {
@@ -884,8 +905,8 @@ export function createGestures(host, now = () => performance.now()) {
     },
     touchEnd(remaining) {
       if (remaining > 0 || !touch) return;
-      const quick = now() - touch.at < TAP_MS && touch.moved < SLOP;
-      if (quick && touch.fingers >= BOMB_FINGERS) host.bomb(); else if (quick && touch.onPanel) host.click(touch.cell); else if (quick) host.tap(touch.cell);
+      const quick = now() - touch.at < CLICK_MS && touch.moved < SLOP;
+      if (quick && touch.fingers >= BOMB_FINGERS) host.bomb(); else if (quick && touch.onPanel) host.logClick(touch.cell); else if (quick) host.click(touch.cell, true);
       touch = null;
     },
     touchCancel() { touch = null; },
@@ -897,7 +918,7 @@ export function createGestures(host, now = () => performance.now()) {
 // What a key means for the pause menu: 'open', 'close' or null. Only during a run, so the start page keeps Esc for its list.
 export function menuKey(e, { playing, open }) {
   if (!playing || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return null;
-  if (e.key !== 'Escape' && e.key !== 'Esc' && e.code !== 'Escape') return null;
+  if (e.key !== 'Escape' && e.code !== 'Escape') return null;
   return open ? 'close' : 'open';
 }
 
@@ -970,7 +991,7 @@ const LONGEST_READOUT = 'STAGE 10';   // the widest HUD text on the field row; t
 
 // The engine's FieldLayout for a window `cols` wide: the field's first column (Col0) and width (PCols), and the width of each side
 // panel (PanelCols), 0 when the margin cannot hold the narrowest. Everything the page places beside the field starts here.
-function sidePanels(cols) {
+function fieldLayout(cols) {
   // even, as FieldLayout.Compute rounds it: a cell is two pixels wide, so only an even width puts the field's middle, where the
   // ship starts, on the line between two cells
   const fieldCols = Math.min(cols, FIELD_MAX_COLS) & ~1;
@@ -984,7 +1005,7 @@ function sidePanels(cols) {
 // left of the longest readout ("STAGE 10"). The panel mirrors the engine's feed log (FieldLayout.PanelCols): the same cell
 // width, the same gap from the field, the same rows (2 to rows - 2); with too little margin both go and there is no panel.
 export function chromeLayout({ cols, rows, cellW, cellH, left, top }) {
-  const { fieldCol, fieldCols, panelCols } = sidePanels(cols);
+  const { fieldCol, fieldCols, panelCols } = fieldLayout(cols);
   const fieldRight = left + (fieldCol + fieldCols) * cellW;
   const stageLeft = left + (fieldCol + fieldCols - 1 - LONGEST_READOUT.length) * cellW;
   const h = Math.round(cellH), w = Math.round(cellH * GEAR_ASPECT);
@@ -1113,7 +1134,7 @@ export function cellAt(x, y, m) {
 
 // The feed log's side panel in a window `cols` wide, as { col, cols }, by the same sums as the game's FieldLayout, or null when it does not show.
 export function leftPanel(cols) {
-  const { fieldCol, panelCols } = sidePanels(cols);
+  const { fieldCol, panelCols } = fieldLayout(cols);
   return panelCols > 0 ? { col: fieldCol - SIDE_GAP_COLS - panelCols, cols: panelCols } : null;
 }
 
@@ -1167,23 +1188,14 @@ function logButton(doc, e, action, press) {
 
 // The pause menu's Feed log: read() is the game's FeedLog() (JSON text), toggle(uri, action) its Toggle. refresh() rebuilds the
 // list (the pause menu opening); said(message) is what the game just announced: the status line speaks it and the list is rebuilt,
-// since a write's answer changes a button. A game that is not there (or a bad answer) leaves the list as it was, and the first such
-// failure is warned of by `warn`.
-export function createLogList({ els, doc = globalThis.document, read, toggle, warn = console.warn }) {
-  let warned = false;
-  const refresh = () => {
-    let entries;
-    // a game that is not up, or an answer that is not JSON, leaves the list as it was: the next refresh tries again
-    try { entries = JSON.parse(read()); } catch (e) {
-      if (!warned) { warned = true; warn(`the feed log could not be read, later failures are not reported: ${e?.message || e}`); }
-      return;
-    }
-    if (Array.isArray(entries)) renderLog(els, entries, { doc, press });
-  };
+// since a write's answer changes a button. FeedLog() answers a JSON list even before a run ("[]"), so a throw from it or from
+// the parse is a fault and is thrown.
+export function createLogList({ els, doc = globalThis.document, read, toggle }) {
+  const refresh = () => renderLog(els, JSON.parse(read()), { doc, press });
   const press = (uri, action) => { toggle(uri, action); refresh(); };
   return {
     refresh,
     said(message) { els.status.textContent = message; refresh(); },
-    clear() { els.status.textContent = ''; },
+    clearStatus() { els.status.textContent = ''; },
   };
 }

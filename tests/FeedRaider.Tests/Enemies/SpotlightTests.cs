@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using FeedRaider.Engine;
 using FeedRaider.Engine.Raider;
 using Xunit.Abstractions;
@@ -65,10 +66,16 @@ public sealed class SpotlightTests(ITestOutputHelper output)
     /// <summary>The row the boss holds at: on a full field the boss row rounded, plus a half pixel so that its top edge is a whole row.</summary>
     private static double Hold(RaiderGame g) => g.PH < ShortBelow ? ShortHold : Math.Round(EnemyKit.BossRow(g.PH)) + 0.5;
 
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_PX")]
+    private static extern void SetPX(RaiderGame g, double value);
+
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_PY")]
+    private static extern void SetPY(RaiderGame g, double value);
+
     private static void SetShipPosition(RaiderGame g, double x, double y)
     {
-        typeof(RaiderGame).GetProperty("PX")!.GetSetMethod(true)!.Invoke(g, [x]);
-        typeof(RaiderGame).GetProperty("PY")!.GetSetMethod(true)!.Invoke(g, [y]);
+        SetPX(g, x);
+        SetPY(g, y);
     }
 
     /// <summary>Places a spotlight settled at its hold row in column <paramref name="x"/>, and moves the ship under it near the bottom.</summary>
@@ -153,7 +160,7 @@ public sealed class SpotlightTests(ITestOutputHelper output)
     public void It_is_a_gantry_over_two_open_batteries_and_a_lens_that_is_the_only_thing_that_kills_it()
     {
         var g = EnemyKit.Game();
-        var b = g.SpawnKind(EnemyKind.Spotlight, 0.5);
+        var b = g.SpawnKind(EnemyKind.Spotlight, EnemyKit.MidWidth);
         Assert.Equal(["gantry", "mast", "hull", "battery-l", "battery-r", "lens"], b.Parts!.Select(p => p.Name));
         foreach (var n in new[] { "gantry", "mast", "hull" })
         {
@@ -476,7 +483,7 @@ public sealed class SpotlightTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Dropping_below_half_is_cued_once_and_the_fire_runs_fifty_eight_frames_from_then_on()
+    public void Below_half_the_fire_runs_the_sweep_length_on_every_pass()
     {
         var g = EnemyKit.Game();
         var b = PlaceBossAndShip(g);
@@ -693,7 +700,7 @@ public sealed class SpotlightTests(ITestOutputHelper output)
     {
         const int WatchFrames = 700, SidePeriod = 200, SettleFrames = 100;
         var g = EnemyKit.Game(cols, rows);
-        var b = g.SpawnKind(EnemyKind.Spotlight, 0.5);
+        var b = g.SpawnKind(EnemyKind.Spotlight, EnemyKit.MidWidth);
         double floor = EnemyKit.BossFloor(g.PH);
         Assert.True(b.Y < 0, "it enters from above");
         for (int f = 1; f <= WatchFrames; f++)
@@ -722,7 +729,7 @@ public sealed class SpotlightTests(ITestOutputHelper output)
         const int SettleFrames = 80, ShortBatteryHeight = 4, TallBatteryHeight = 6;
         const double HalfShort = ShortHeight / 2.0, HalfTall = TallHeight / 2.0, HalfLens = LensHeight / 2.0;
         var small = EnemyKit.Game(SmallestCols, SmallestRows);
-        var s = small.SpawnKind(EnemyKind.Spotlight, 0.5);
+        var s = small.SpawnKind(EnemyKind.Spotlight, EnemyKit.MidWidth);
         Assert.Equal(ShortHeight, s.Sprite.H);
         Assert.Equal(BodyWidth, s.Sprite.W);
         var lens = PartOf(s, "lens");
@@ -741,7 +748,7 @@ public sealed class SpotlightTests(ITestOutputHelper output)
         foreach (var (c, r) in new[] { (NarrowCols, NarrowRows), (WideCols, WideRows), (EnemyKit.BigCols, EnemyKit.BigRows) })
         {
             var g = EnemyKit.Game(c, r);
-            var b = g.SpawnKind(EnemyKind.Spotlight, 0.5);
+            var b = g.SpawnKind(EnemyKind.Spotlight, EnemyKit.MidWidth);
             Assert.True(g.PH >= ShortBelow);
             Assert.Equal(TallHeight, b.Sprite.H);
             Assert.Equal(TallBatteryHeight, PartOf(b, "battery-l").HH * 2);
@@ -778,15 +785,15 @@ public sealed class SpotlightTests(ITestOutputHelper output)
 
     // ---------------------------------------------------------------- the voice
 
-    private static RudePost Post(string text, long arrived, DarkSource src = DarkSource.Label) => new((ulong)arrived, text, src, "x", arrived);
+    private static RudePost Post(string text, long arrived, DarknessSource src = DarknessSource.Label) => new((ulong)arrived, text, src, "x", arrived);
 
     [Fact]
     public void It_takes_the_loudest_waiting_post_then_the_most_exclamation_marks_then_the_oldest()
     {
         var a = Post("you are all fools", 1);               // quiet, long, the oldest
-        var b = Post("WHO ASKED", 2, DarkSource.Hidden);    // all capitals, no exclamation
+        var b = Post("WHO ASKED", 2, DarknessSource.Hidden);    // all capitals, no exclamation
         var c = Post("LOUD!!! post", 3);                    // half capitals, three marks
-        var d = Post("WHO ASKED!!", 4, DarkSource.Demo);    // all capitals, two marks
+        var d = Post("WHO ASKED!!", 4, DarknessSource.Demo);    // all capitals, two marks
         var store = new List<RudePost> { a, b, c, d };
         var order = new List<RudePost>();
         while (store.Count > 0)
@@ -833,7 +840,7 @@ public sealed class SpotlightTests(ITestOutputHelper output)
         const int FirstWordsLimit = 600;
         var g = AtTheGate(Seed);
         ulong i = 1;
-        foreach (var p in posts) g.OfferDark(new DarkPost(DarknessKind.Rude, i++, p));
+        foreach (var p in posts) g.OfferDarkness(new DarknessPost(DarknessKind.Rude, i++, p));
         for (int f = 0; f < FirstWordsLimit && (g.Boss is null || g.Boss.Text is null); f++) { g.Step(); g.Bullets.RemoveAll(x => !x.Friendly); }
         Assert.NotNull(g.Boss);
         return (g, g.Boss!);
@@ -946,9 +953,9 @@ public sealed class SpotlightTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void A_bot_beats_it_in_eighteen_to_thirty_seconds_at_weapon_level_two()
+    public void A_bot_beats_it_in_eighteen_to_thirty_seconds_with_the_light_laser()
     {
-        const int Seeds = 6, WeaponLevel = 2;
+        const int Seeds = 6, WeaponLevel = 1;
         const int MedianFastestSeconds = 18, MedianSlowestSeconds = 30, AnyFastestSeconds = 15, AnySlowestSeconds = 40;
         var times = new List<int>();
         for (ulong seed = 1; seed <= Seeds; seed++)

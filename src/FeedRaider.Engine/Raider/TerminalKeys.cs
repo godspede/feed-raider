@@ -3,7 +3,7 @@ using System.Text;
 namespace FeedRaider.Engine.Raider;
 
 /// <summary>What a terminal key means to the game, whatever device reported it.</summary>
-public enum TermKey { Up, Down, Left, Right, Fire, AutoFire, Bomb, Like, Repost, MarkUp, MarkDown, Quit, Mute, SlowerFeed, FasterFeed }
+public enum TermKey { Up, Down, Left, Right, Fire, AutoFire, Bomb, LogLike, LogRepost, ShipLike, ShipRepost, MarkUp, MarkDown, Quit, Mute, SlowerFeed, FasterFeed }
 
 public enum KeyAction { Press, Repeat, Release }
 
@@ -56,8 +56,10 @@ public static class Win32Keys
             VkSpace => TermKey.Fire,
             'F' => TermKey.AutoFire,
             'B' => TermKey.Bomb,
-            'E' => TermKey.Like,
-            'R' => TermKey.Repost,
+            'E' => TermKey.LogLike,
+            'R' => TermKey.LogRepost,
+            'Z' => TermKey.ShipLike,
+            'X' => TermKey.ShipRepost,
             VkOemOpenBracket => TermKey.MarkUp,
             VkOemCloseBracket => TermKey.MarkDown,
             'M' => TermKey.Mute,
@@ -188,8 +190,10 @@ public sealed class TerminalKeyParser
         (char)CodeSpace => TermKey.Fire,
         'f' => TermKey.AutoFire,
         'b' => TermKey.Bomb,
-        'e' => TermKey.Like,
-        'r' => TermKey.Repost,
+        'e' => TermKey.LogLike,
+        'r' => TermKey.LogRepost,
+        'z' => TermKey.ShipLike,
+        'x' => TermKey.ShipRepost,
         '[' => TermKey.MarkUp,
         ']' => TermKey.MarkDown,
         'm' => TermKey.Mute,
@@ -238,8 +242,10 @@ public sealed class KeyRouter(InputState input, bool hasReleases, KeyRepeatTimin
         {
             case TermKey.AutoFire: input.ToggleAutoFire(); break;
             case TermKey.Bomb: input.Bomb(); break;
-            case TermKey.Like: input.Like(); break;
-            case TermKey.Repost: input.Repost(); break;
+            case TermKey.LogLike: input.LogLike(); break;
+            case TermKey.LogRepost: input.LogRepost(); break;
+            case TermKey.ShipLike: input.ShipLike(); break;
+            case TermKey.ShipRepost: input.ShipRepost(); break;
             case TermKey.MarkUp: input.MarkUp(); break;
             case TermKey.MarkDown: input.MarkDown(); break;
             case TermKey.Mute: onMute?.Invoke(); break;

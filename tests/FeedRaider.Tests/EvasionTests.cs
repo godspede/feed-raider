@@ -41,7 +41,13 @@ public class EvasionTests
     private static Enemy PlaceAlone(RaiderGame g, EnemyKind kind, double x, double y)
     {
         g.Enemies.Clear();
-        var sprite = kind == EnemyKind.Gunship ? Art.Gunship : kind == EnemyKind.Carrier ? Art.Carrier : kind == EnemyKind.Mine ? Art.Mine : Art.Grunt;
+        var sprite = kind switch
+        {
+            EnemyKind.Gunship => Art.Gunship,
+            EnemyKind.Carrier => Art.Carrier,
+            EnemyKind.Mine => Art.Mine,
+            _ => Art.Grunt,
+        };
         var e = new Enemy { Kind = kind, Sprite = sprite, X = x, BaseX = x, Y = y, Hp = PlacedHp, MaxHp = PlacedHp, Windup = Enemy.WindupNotBegun };
         g.Enemies.Add(e);
         return e;
@@ -64,12 +70,13 @@ public class EvasionTests
     [Fact]
     public void Fire_cadence_is_slow_and_a_held_trigger_makes_one_volley_per_interval()
     {
-        // the trigger stays slow so that aim and timing matter: at most five volleys a second, six with the top gun
-        const int MaxVolleysPerSecond = 5, TopGunMaxVolleysPerSecond = 6;
+        // the first weapon's trigger stays slow so that aim and timing matter: at most five volleys a second, and no kind past
+        // ten, where a gun chatters rather than streams
+        const int MaxVolleysPerSecond = 5, QuickestKindVolleysPerSecond = 10;
         // pixels a frame: a shot slow enough that a moving enemy can slip it
         const double ShotSpeedCeiling = 3.2;
         Assert.True(Tuning.FireInterval >= Tuning.Fps / MaxVolleysPerSecond);
-        Assert.True(Tuning.FireIntervalMax >= Tuning.Fps / TopGunMaxVolleysPerSecond && Tuning.FireIntervalMax <= Tuning.FireInterval);
+        Assert.All(Weapons.Kinds, kind => Assert.True(kind.Interval >= Tuning.Fps / QuickestKindVolleysPerSecond, kind.Name));
         Assert.True(Tuning.ShipShotSpeed < ShotSpeedCeiling);
         var g = NewGame();
         g.Input.Key(GameKey.Fire, true);
@@ -81,29 +88,25 @@ public class EvasionTests
             g.Step();
             int before = seen.Count;
             seen.UnionWith(g.Bullets.Where(b => b.Friendly));
-            if (seen.Count > before) volleys++;   // a frame that made new bullets is a volley
+            if (seen.Count > before) volleys++;
         }
         Assert.Equal(WatchFrames / Tuning.FireInterval, volleys);
     }
 
     [Fact]
-    public void More_streams_add_little_damage_per_second_and_the_top_gun_is_not_a_wall_of_shots()
+    public void The_first_weapon_stays_slow_and_the_spread_is_a_fan_whose_outer_shots_only_chip()
     {
-        const int OneStream = 1, TwoStreams = 2;
-        // a second stream and the top gun multiply one stream's damage a second by at most these, and one stream does at most
-        // the last: a gun upgrade widens the spray more than it adds damage, so dodging still beats firepower
-        const double MaxTwinGain = 1.3, MaxTopGunGain = 1.8, MaxOneStreamDps = 10;
-        // degrees off straight up: a stream wider than the first angle is an outer one, which does at most the damage given,
+        const int FirstLevel = 1;
+        // one stream does at most this much damage a second, so dodging beats firepower at the start of a run
+        const double MaxOneStreamDps = 10;
+        // degrees off straight up: a shot wider than the first angle is an outer one, which does at most the damage given,
         // and the widest flies at least the last angle out
         const double OuterAngle = 15, MaxOuterDmg = 0.5, MinWidestAngle = 20;
-        double Dps(int level) => RaiderGame.WeaponPattern(level).Sum(s => s.Dmg) / RaiderGame.FireIntervalFor(level) * Tuning.Fps;
-        Assert.True(Dps(Tuning.MaxWeaponLevel) <= Dps(OneStream) * MaxTopGunGain, $"five streams do {Dps(Tuning.MaxWeaponLevel):0.0}/s against {Dps(OneStream):0.0}/s for one");
-        Assert.True(Dps(TwoStreams) <= Dps(OneStream) * MaxTwinGain);
-        Assert.True(Dps(OneStream) <= MaxOneStreamDps);
-        // the outer streams are weak and wide: they chip, and a mover slips them
-        var topGun = RaiderGame.WeaponPattern(Tuning.MaxWeaponLevel);
-        Assert.True(topGun.Where(s => Math.Abs(s.Angle) > OuterAngle).All(s => s.Dmg <= MaxOuterDmg));
-        Assert.True(topGun.Max(s => Math.Abs(s.Angle)) >= MinWidestAngle);
+        double firstDps = Weapons.At(FirstLevel).Shots.Sum(s => s.Dmg) / Weapons.At(FirstLevel).Interval * Tuning.Fps;
+        Assert.True(firstDps <= MaxOneStreamDps, $"the first weapon does {firstDps:0.0}/s");
+        var spread = Weapons.Kinds.Single(k => k.Look == ShotLook.Spread).Shots;
+        Assert.True(spread.Where(s => Math.Abs(s.Angle) > OuterAngle).All(s => s.Dmg <= MaxOuterDmg));
+        Assert.True(spread.Max(s => Math.Abs(s.Angle)) >= MinWidestAngle);
     }
 
     [Fact]
@@ -118,7 +121,7 @@ public class EvasionTests
         for (int i = 1; i < Tuning.EvadeWindupFrames - 1; i++)
         {
             StepKeeping(g, e);
-            Assert.Equal(startX, e.BaseX, Places);                    // no instant dodge: the base position holds during the tell
+            Assert.Equal(startX, e.BaseX, Places);
         }
     }
 

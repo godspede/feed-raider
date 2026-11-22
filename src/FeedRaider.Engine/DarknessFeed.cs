@@ -6,10 +6,10 @@ using System.Text.RegularExpressions;
 namespace FeedRaider.Engine;
 
 /// <summary>Where an enemy came from: a moderation label, a thread owner hiding a reply, or the made-up demo.</summary>
-public enum DarkSource { Label, Hidden, Demo }
+public enum DarknessSource { Label, Hidden, Demo }
 
 /// <summary>What the room gets: a kind, a seed (a hash, not the URI) and anonymous clean text. Nothing about the author.</summary>
-public sealed record DarkPost(DarknessKind Kind, ulong Seed, string Text, DarkSource Source = DarkSource.Label, string? Label = null);
+public sealed record DarknessPost(DarknessKind Kind, ulong Seed, string Text, DarknessSource Source = DarknessSource.Label, string? Label = null);
 
 public static partial class DarknessFilter
 {
@@ -73,8 +73,8 @@ public static class PostTextFetcher
 
     // a post view's record text, or null when it carries none; empty when the post is not to be shown
     private static string? TextOf(JsonElement post, bool signedOut, PlayerLanguages? languages) =>
-        post.TryGetProperty("record", out var record) && record.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String
-            ? (FeedMapper.IsAdult(post) || (signedOut && AuthorOptsOut(post)) || (languages is not null && !languages.Reads(LangsOf(record), text.GetString() ?? "")) ? "" : text.GetString())
+        post.TryGetProperty("record", out var record) && record.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String && text.GetString() is { } said
+            ? (FeedMapper.IsAdult(post) || (signedOut && AuthorOptsOut(post)) || (languages is not null && !languages.Reads(LangsOf(record), said)) ? "" : said)
             : null;
 
     // the record's optional BCP-47 tags; null when it has none
@@ -192,7 +192,7 @@ public sealed class DarknessStats
     public int HiddenNew, HiddenFetched;
 }
 
-/// <summary>Subjects in, anonymous <see cref="DarkPost"/>s out. Fetching is paced (one at a time) and the backlog drops its oldest.</summary>
+/// <summary>Subjects in, anonymous <see cref="DarknessPost"/>s out. Fetching is paced (one at a time) and the backlog drops its oldest.</summary>
 public static class DarknessFeed
 {
     private const int SeenCap = 5000;
@@ -201,13 +201,13 @@ public static class DarknessFeed
 
     /// <summary>Labels in. Post-level spam/engagement-farming/rude and account-level spam pass; the subject is fetched, then forgotten.</summary>
     public static Task RunAsync(IAsyncEnumerable<LabelEvent> labels, Func<string, CancellationToken, Task<string?>> fetchText,
-        Action<DarkPost> onPost, DarknessStats stats, CancellationToken ct, int paceMs = DefaultPaceMs, PauseGate? pause = null) =>
-        PumpAsync(Subjects(labels, stats, ct), fetchText, DarkSource.Label, onPost, () => stats.PostsFetched++, () => stats.FetchFailures++, ct, paceMs, pause);
+        Action<DarknessPost> onPost, DarknessStats stats, CancellationToken ct, int paceMs = DefaultPaceMs, PauseGate? pause = null) =>
+        PumpAsync(Subjects(labels, stats, ct), fetchText, DarknessSource.Label, onPost, () => stats.PostsFetched++, () => stats.FetchFailures++, ct, paceMs, pause);
 
     /// <summary>Newly hidden reply URIs in; each becomes a rude enemy.</summary>
     public static Task RunHiddenAsync(IAsyncEnumerable<string> hidden, Func<string, CancellationToken, Task<string?>> fetchText,
-        Action<DarkPost> onPost, DarknessStats stats, CancellationToken ct, int paceMs = DefaultPaceMs, PauseGate? pause = null) =>
-        PumpAsync(HiddenSubjects(hidden, stats, ct), fetchText, DarkSource.Hidden, onPost, () => stats.HiddenFetched++, () => stats.FetchFailures++, ct, paceMs, pause);
+        Action<DarknessPost> onPost, DarknessStats stats, CancellationToken ct, int paceMs = DefaultPaceMs, PauseGate? pause = null) =>
+        PumpAsync(HiddenSubjects(hidden, stats, ct), fetchText, DarknessSource.Hidden, onPost, () => stats.HiddenFetched++, () => stats.FetchFailures++, ct, paceMs, pause);
 
     private static async IAsyncEnumerable<(string Subject, DarknessKind Kind, string? Label)> Subjects(IAsyncEnumerable<LabelEvent> labels, DarknessStats stats,
         [EnumeratorCancellation] CancellationToken ct)
@@ -240,7 +240,7 @@ public static class DarknessFeed
     }
 
     private static async Task PumpAsync(IAsyncEnumerable<(string Subject, DarknessKind Kind, string? Label)> items, Func<string, CancellationToken, Task<string?>> fetchText,
-        DarkSource source, Action<DarkPost> onPost, Action fetched, Action fetchFailed, CancellationToken ct, int paceMs, PauseGate? pause)
+        DarknessSource source, Action<DarknessPost> onPost, Action fetched, Action fetchFailed, CancellationToken ct, int paceMs, PauseGate? pause)
     {
         var backlog = new FetchBacklog();
 
@@ -274,7 +274,7 @@ public static class DarknessFeed
                 if (clean.Length > 0)
                 {
                     fetched();
-                    onPost(new DarkPost(kind, Hashing.MixedFnv64(subject), clean, source, label));
+                    onPost(new DarknessPost(kind, Hashing.MixedFnv64(subject), clean, source, label));
                 }
                 await Task.Delay(paceMs, ct).ConfigureAwait(false);
             }
@@ -286,13 +286,16 @@ public static class DarknessFeed
 
 /// <summary>
 /// The subjects waiting for their text to be fetched. A label stream replays its recent past in one burst, far faster than texts can be
-/// fetched, and most of it is spam; so rude subjects wait apart from the rest, each line holding its newest <see cref="Capacity"/>, and
-/// the two take turns. A rude post in the replay is therefore fetched among the first, and a boss met early has something to say.
+/// fetched, and most of it is spam; so rude subjects wait apart from the rest, and the two take turns. The rude line holds its newest
+/// <see cref="RudeCapacity"/>, enough for the whole hidden-reply replay, the rest its newest <see cref="RestCapacity"/>. A rude post in
+/// the replay is therefore fetched among the first, none of the replay is lost, and a boss met early has several things to say.
 /// </summary>
 internal sealed class FetchBacklog
 {
-    /// <summary>Subjects each line holds before its oldest is dropped.</summary>
-    public const int Capacity = 24;
+    /// <summary>Rude subjects held before the oldest is dropped.</summary>
+    public const int RudeCapacity = Raider.Tuning.HiddenBacklog;
+    /// <summary>Other subjects held before the oldest is dropped.</summary>
+    public const int RestCapacity = 24;
 
     private readonly Queue<(string Subject, DarknessKind Kind, string? Label)> _rude = new(), _rest = new();
     private readonly SemaphoreSlim _held = new(0);
@@ -305,7 +308,7 @@ internal sealed class FetchBacklog
             var line = kind == DarknessKind.Rude ? _rude : _rest;
             line.Enqueue((subject, kind, label));
             // a dropped subject hands its place in the count to the one that pushed it out
-            if (line.Count > Capacity) line.Dequeue();
+            if (line.Count > (line == _rude ? RudeCapacity : RestCapacity)) line.Dequeue();
             else _held.Release();
         }
     }

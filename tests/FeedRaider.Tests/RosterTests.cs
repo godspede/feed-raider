@@ -8,7 +8,7 @@ namespace FeedRaider.Tests;
 /// <summary>
 /// A run from stage 1 past boss 10 meets every kind and every boss in the order the stage
 /// table gives, the kinds wear colours of their own, the colour atlas holds across every boss scene, and no enemy goes over its caps
-/// on parts and bullets. The lesser gunship's rising visits in the last stages are checked here too.
+/// on parts and bolts. The lesser gunship's rising visits in the last stages are checked here too.
 /// </summary>
 public class RosterTests(ITestOutputHelper output)
 {
@@ -133,13 +133,12 @@ public class RosterTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void The_first_boss_returns_as_a_lesser_gunship_from_stage_four_and_stage_ten_sees_it_more_than_stage_nine()
+    public void The_first_boss_returns_as_a_lesser_gunship_in_every_stage_and_stage_ten_sees_it_more_than_stage_nine()
     {
         var run = Play(120, 46, 5);
         var l = run.LessersByStage;
         output.WriteLine("lessers by stage: " + string.Join(" ", l.Select((n, i) => $"{i}:{n}")));
-        for (int s = 1; s < Tuning.LesserFirstStage; s++) Assert.Equal(0, l[s]);
-        for (int s = Tuning.LesserFirstStage; s < BossCount; s++) Assert.True(l[s] >= 1, $"stage {s} has no lesser gunship");
+        for (int s = 1; s < BossCount; s++) Assert.True(l[s] >= 1, $"stage {s} has no lesser gunship");
         Assert.True(l[BossCount] > l[BossCount - 1], $"stage 10 has {l[BossCount]} visits, stage {BossCount - 1} has {l[BossCount - 1]}");
     }
 
@@ -176,12 +175,12 @@ public class RosterTests(ITestOutputHelper output)
         Assert.True(bad.Count == 0, string.Join("; ", bad));
     }
 
-    // ---------------------------------------------------------------- caps on parts and bullets
+    // ---------------------------------------------------------------- caps on parts and bolts
 
     private static int HostileBolts(RaiderGame g) => g.Bullets.Count(b => !b.Friendly);
 
     /// <summary>One boss fought to its end (or to a limit) from its warning, with the screen drawn each frame when an encoder is given;
-    /// reports the most of its own bullets alive and the most parts on one enemy.</summary>
+    /// reports the most of its own bolts alive and the most parts on one enemy.</summary>
     private static (int MaxHostileBolts, int MaxParts, int Frames) Fight(int boss, int cols, int rows, DiffEncoder? enc = null)
     {
         var g = Fresh(cols, rows, 7);
@@ -190,21 +189,21 @@ public class RosterTests(ITestOutputHelper output)
         ArmTo(g, 3);
         var scr = new Screen(cols, rows);
         var view = new RaiderView(7);
-        int bullets = 0, parts = 0, f = 0, end = -1;
+        int bolts = 0, parts = 0, f = 0, end = -1;
         for (; f < MaxBossFightFrames; f++)
         {
             Bot(g);
             g.Step();
             if (g.Gate == GateState.Fighting)
             {
-                bullets = Math.Max(bullets, HostileBolts(g));
+                bolts = Math.Max(bolts, HostileBolts(g));
                 foreach (var e in g.Enemies) parts = Math.Max(parts, e.Parts?.Count ?? 0);
             }
             if (enc is not null) { view.FitAndRender(g, scr); enc.Encode(scr); }
             if (end < 0 && g.BossesBeaten >= boss) end = f;
             if (end >= 0 && f - end > BossEndLingerFrames) break;
         }
-        return (bullets, parts, f);
+        return (bolts, parts, f);
     }
 
     [Theory]
@@ -222,10 +221,10 @@ public class RosterTests(ITestOutputHelper output)
     {
         foreach (var (cols, rows) in new[] { (56, 58), (120, 46), (80, 24) })
         {
-            var (bullets, parts, frames) = Fight(boss, cols, rows);
-            output.WriteLine($"boss {boss} on {cols}x{rows}: {bullets} bullets at most, {parts} parts at most, {frames} frames");
+            var (bolts, parts, frames) = Fight(boss, cols, rows);
+            output.WriteLine($"boss {boss} on {cols}x{rows}: {bolts} bolts at most, {parts} parts at most, {frames} frames");
             Assert.True(parts <= Tuning.MaxParts, $"boss {boss} on {cols}x{rows} has {parts} parts");
-            Assert.True(bullets <= boltCap, $"boss {boss} on {cols}x{rows} had {bullets} bullets alive, the cap is {boltCap}");
+            Assert.True(bolts <= boltCap, $"boss {boss} on {cols}x{rows} had {bolts} bolts alive, the cap is {boltCap}");
         }
     }
 

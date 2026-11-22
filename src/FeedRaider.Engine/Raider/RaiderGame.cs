@@ -2,16 +2,21 @@ namespace FeedRaider.Engine.Raider;
 
 public enum ParticleKind { Spark, Debris, Heart }
 
-/// <summary>Anything fired, by either side, is a bullet. The ship's bullet is a shot and an enemy's is a bolt; a shot an enemy
-/// sends back is still a shot, a returned one, so the hostile bullets are the bolts and the returned shots.</summary>
+/// <summary>Anything fired, by either side: the ship's is a shot and an enemy's is a bolt. A shot an enemy sends back is still
+/// a shot, a returned one, so the hostile ones are the bolts and the returned shots.</summary>
 public sealed class Bullet
 {
     public double X, Y, VX, VY, Dmg;
     public bool Friendly;
-    /// <summary>An enemy bullet fired by a turret: drawn as a diamond in the turret's colour.</summary>
+    /// <summary>A bolt fired by a turret: drawn as a diamond in the turret's colour.</summary>
     public bool Aimed;
     /// <summary>A ship's shot an enemy sent back at the ship (<see cref="RaiderGame.Reflect"/>): hostile from then on, and drawn in the ship's colour.</summary>
     public bool Reflected;
+    /// <summary>How the ship's shot is drawn.</summary>
+    public ShotLook Look;
+    /// <summary>A missile: it gathers speed and bends toward <see cref="Target"/> while that is alive and ahead of it.</summary>
+    public bool Homing;
+    public Enemy? Target;
 }
 
 public enum PartState { Armoured, Open, Dead }
@@ -101,6 +106,10 @@ public sealed class Enemy
     public bool Lesser;
     /// <summary>The enemy that made this one (<see cref="RaiderGame.SpawnAdd"/>).</summary>
     public Enemy? Parent;
+    /// <summary>The card a dead quote's mine sits on: while set the mine keeps its place on the quote box and moves with the card, not
+    /// at its own drift. <see cref="RideThird"/> is which third of the box's width it marks (1 or 2).</summary>
+    public Card? RideCard;
+    public int RideThird;
     /// <summary>What the enemy remembers of its own talking; null until it is found to be a speaker.</summary>
     internal VoiceState? Voice;
     /// <summary>A copy of the enemy as it is, for the box a speaker leaves behind. It shares the lines and parts, so it is not to be updated.</summary>
@@ -122,10 +131,10 @@ public sealed class Popup { public string Text = ""; public double X, Y; public 
 /// <summary>
 /// Feed Raider's simulation: a fixed 30 Hz step, no clock and no network. Time is the number of calls to <see cref="Step"/>;
 /// randomness is a seeded generator, so a run is a pure function of the seed and the inputs. Hosts feed it input
-/// (<see cref="Input"/>), darkness events (<see cref="OfferDark"/>) and feed posts (<see cref="Posts"/>), and read its
+/// (<see cref="Input"/>), darkness events (<see cref="OfferDarkness"/>) and feed posts (<see cref="Posts"/>), and read its
 /// state to draw. Posts wait in <see cref="Posts"/> and become cards of <see cref="Cards"/>, which scroll down the field on every
-/// simulation tick and land in <see cref="Log"/> when they leave. Resting the ship on a card's heart for three seconds likes the post
-/// and three on its loop reposts it (<see cref="Hold"/>): signed in, the game asks the host for the one write through
+/// simulation tick and land in <see cref="Log"/> when they leave. A click on a card's heart likes the post and one on its
+/// loop reposts it; Z and X do the same for the card under the ship (<see cref="KeyCard"/>): signed in, the game asks the host for the one write through
 /// <see cref="OnLike"/> or <see cref="OnRepost"/>.
 /// </summary>
 public sealed partial class RaiderGame
@@ -139,13 +148,12 @@ public sealed partial class RaiderGame
     private const double BombRingStart = 4, BombRingShare = 0.8;
     private const int BombRingFrames = 20, BombDamage = 30;
     private const double BombReachY = -4;   // a bomb reaches enemies whose centre is below this row
-    private const int FillerMaxAlive = 3;   // a filler wave starts only while fewer enemies than this are up
     private const double ShardSpawnOffset = 3;
     private const double BoltHitHalfWidth = 1.8, BoltHitHalfHeight = 2.2;
     private const int ShipHitFlashFrames = 2, ShipHitSparks = 14, SparkLifeMin = 10, SparkLifeSpan = 8;
     private const double SparkSpeed = 3, SparkDrag = 0.92, PopupRise = 0.35;
     private const int DeathScoreDivisor = 4;   // a death costs a quarter of the score
-    private const double BulletMargin = 6;   // how far past the field's edge a bullet flies before it is dropped
+    private const double BulletMargin = 6;   // how far past the field's edge a shot or a bolt flies before it is dropped
     private const double RamDamage = 4, RamHitOffsetY = 2;   // a ship ramming a body: the damage dealt, and how far above the ship the hit lands
     private const int HeavyHitStopEvery = 4;   // every this many hits on a gunship stops the frame
     private const double EnemyTopHitRow = -2;   // an enemy above this row cannot be hit by a shot yet
@@ -182,12 +190,8 @@ public sealed partial class RaiderGame
         Cards.Skip = post => Rude.Holds(Hashing.MixedFnv64(post.Uri));
         Cards.Entered += card => WantAvatar(card.Post);
         Cards.Entered += WantPictures;
-        Cards.Left += card =>
-        {
-            // a button part filled when its card leaves is not carried into the log
-            card.Marks.LikeProgress = card.Marks.RepostProgress = 0;
-            Log.Add(new LogEntry(card.Post, card.Marks));
-        };
+        Cards.Left += card => Log.Add(new LogEntry(card.Post, card.Marks));
+        Cards.Left += DropRiders;
     }
 
     private readonly ulong _seed;
@@ -223,12 +227,17 @@ public sealed partial class RaiderGame
     public InputState Input { get; } = new();
 
     // --- host hooks ---
-    public bool SignedIn { get; set; }
+    public bool SignedIn
+    {
+        get => _signedIn;
+        set { _signedIn = value; Cards.SignedOut = !value; }
+    }
+    private bool _signedIn;
 
     /// <summary>True in Random mode: a thread continuation that carries a moderation label ends the thread, as a labelled feed post is never served.</summary>
     public bool PlainOnly { get; set; }
 
-    /// <summary>The like of a post: called once when a hold on a card's heart finishes and the player is signed in. The host makes
+    /// <summary>The like of a post: called once when a press on a card's heart likes it and the player is signed in. The host makes
     /// the write and answers with <see cref="WriteConfirmed"/> or <see cref="WriteFailed"/>.</summary>
     public Action<FeedPost>? OnLike { get; set; }
     /// <summary>The repost of a post, asked for and answered as a like is.</summary>
@@ -236,7 +245,7 @@ public sealed partial class RaiderGame
     /// <summary>What the player's sign-in may write. A sign-in made before the game could repost may only like: its repost
     /// buttons are locked. The host may change this in the middle of a run, after a fresh sign-in.</summary>
     public Grants Grants { get; set; } = Grants.All;
-    /// <summary>Whether a hold on this kind of button may go ahead: always for a player who is not signed in (nothing is
+    /// <summary>Whether a press on this kind of button may write: always for a player who is not signed in (nothing is
     /// written for them), else only with the grant.</summary>
     public bool MayWrite(PostAction action) => !SignedIn || (action == PostAction.Like ? Grants.Like : Grants.Repost);
     /// <summary>The delete of the player's own like or repost record of a post: called once when a lit button is toggled off in the feed log
@@ -246,7 +255,7 @@ public sealed partial class RaiderGame
 
     /// <summary>The feed log's toggle (E, R, a click, the pause-menu list): turns the post's like or repost on if it is off or marked, off if
     /// it is lit. Signed in, that is one write or delete and the button waits, blinking, for the answer; signed out the mark flips and nothing
-    /// is sent. A button already waiting is left alone, and one the sign-in may not use says so. It never pays the hold's reward.</summary>
+    /// is sent. A button already waiting is left alone, and one the sign-in may not use says so. It never pays a card's reward.</summary>
     public void Toggle(string postUri, PostAction action)
     {
         if (Book.Find(postUri) is not { } m || PostOf(postUri) is not { } post) return;
@@ -307,13 +316,13 @@ public sealed partial class RaiderGame
     {
         if (Input.MarkUpPressed) { Input.MarkUpPressed = false; Log.MoveMark(-1); }
         if (Input.MarkDownPressed) { Input.MarkDownPressed = false; Log.MoveMark(1); }
-        bool like = Input.LikeLatch > 0, repost = Input.RepostLatch > 0;
-        Input.LikeLatch = Input.RepostLatch = 0;
+        bool like = Input.LogLikeLatch > 0, repost = Input.LogRepostLatch > 0;
+        Input.LogLikeLatch = Input.LogRepostLatch = 0;
         if (Log.Marked is not { } e) return;
         if (like) Toggle(e.Post.Uri, PostAction.Like);
         if (repost) Toggle(e.Post.Uri, PostAction.Repost);
     }
-    /// <summary>Called once for a post when a hold finishes its like, signed in or not: asks the host for the author's own next
+    /// <summary>Called once for a post when a press on its card likes it, signed in or not: asks the host for the author's own next
     /// reply to it. The host answers with <see cref="ThreadOpened"/>, or never: no answer shows nothing. A repost and a toggle in
     /// the log do not ask. Never awaited by the game.</summary>
     public Action<FeedPost>? ThreadWanted { get; set; }
@@ -345,11 +354,6 @@ public sealed partial class RaiderGame
     public string PlayerDid { get; set; } = StandInPlayerDid;
     public Sprite Ship { get; private set; } = ShipFactory.Make(StandInPlayerDid);
     private int _fireCd;
-    /// <summary>A power end tick every tick is past: no power runs.</summary>
-    private const long NoPower = -1;
-    private long _powerUntil = NoPower;
-    public int PowerLeft => (int)Math.Max(0, _powerUntil - Tick);
-    public bool Powered => PowerLeft > 0;
 
     public void SetPlayer(string did)
     {
@@ -441,7 +445,7 @@ public sealed partial class RaiderGame
 
     /// <summary>Takes a stranger's post: a spam post is queued as a wave whose carrier shows its text, and a rude post
     /// makes no enemy but waits in <see cref="Rude"/> until a speaker says it.</summary>
-    public void OfferDark(DarkPost post)
+    public void OfferDarkness(DarknessPost post)
     {
         if (post.Kind == DarknessKind.Rude)
         {
@@ -500,12 +504,15 @@ public sealed partial class RaiderGame
             return;
         }
         Tick++;
-        ScrollFrames++;
+        UpdateBurst();
+        ScrollFrames += StarPace;
+        UpdateClick();
+        UpdateShipKeys();
         Cards.Step();
+        MakeDeadQuoteMines();
         UpdateLogKeys();
 
         UpdateShip();
-        UpdateHold();
         UpdateStage();
         UpdateWaves();
         UpdateEnemies();
@@ -531,7 +538,7 @@ public sealed partial class RaiderGame
     {
         if (Music is null) return;
         // with the gates off a gunship on the field is the only boss there is
-        string? boss = BossGates ? BossMusicKey : Enemies.Any(e => e.Kind == EnemyKind.Gunship && e.Y > 0 && !e.Leaving) ? Key(EnemyKind.Gunship) : null;
+        string? boss = BossGates ? BossMusicKey : Enemies.Any(e => e.Kind == EnemyKind.Gunship && e.Y > 0 && !e.Leaving) ? MusicKeyOf(EnemyKind.Gunship) : null;
         Music.Update(new MusicSnapshot(boss, AheadMusicKey));
     }
 
@@ -573,8 +580,8 @@ public sealed partial class RaiderGame
         var inp = Input;
         if (RespawnIn > 0)
         {
-            if (--RespawnIn == 0) { Hp = Tuning.ShipHp; Shield = Tuning.ShieldHits; Bombs = Tuning.ShipBombs; Invuln = Tuning.InvulnFrames; PX = PW / 2.0; PY = PH - Tuning.ShipStartAbove; }
-            inp.BombPressed = false; inp.HasTap = false; inp.DragCols = inp.DragRows = 0;
+            if (--RespawnIn == 0) { Hp = Tuning.ShipHp; Shield = Tuning.ShieldHits; Bombs = Tuning.ShipBombs; Invuln = Tuning.InvulnFrames; PX = PW / 2.0; PY = PH - Tuning.ShipStartAbove; Popup(Weapon.Name, PX, PY - CollectPopupRise, PickupColour(PickupKind.Weapon)); }   // the kind the death left the ship
+            inp.BombPressed = false; inp.HasClick = false; inp.DragCols = inp.DragRows = 0;
             return;
         }
         if (Invuln > 0) Invuln--;
@@ -601,11 +608,6 @@ public sealed partial class RaiderGame
         PX = Math.Clamp(PX, Ship.W / 2.0 + ShipEdgeGap, PW - Ship.W / 2.0 - ShipEdgeGap);
         PY = Math.Clamp(PY, ShipMinY, PH - Ship.H / 2.0 - ShipEdgeGap);
 
-        if (inp.HasTap)
-        {
-            inp.HasTap = false;
-            if (InBombButton(inp.TapCol, inp.TapRow)) inp.BombPressed = true;   // a tap does nothing else
-        }
         if (inp.BombPressed)
         {
             inp.BombPressed = false;
@@ -618,15 +620,39 @@ public sealed partial class RaiderGame
 
     private void Fire()
     {
-        _fireCd = FireIntervalFor(WeaponLevel);
+        var kind = Weapon;
+        _fireCd = kind.Interval;
         MuzzleFrames = Tuning.MuzzleFrames;
-        double mul = Powered ? Tuning.PowerDamageMul : 1;
         double v = Tuning.ShipShotSpeed;
         double y = PY - Ship.H / 2.0;
-        Sound(SfxNames.Shot, PX);
-        foreach (var s in WeaponPattern(WeaponLevel, Powered))
-            Bullets.Add(new Bullet { X = PX + s.Dx, Y = y + s.Dy, VX = s.VX, VY = -v * s.VyMul, Dmg = s.Dmg * mul, Friendly = true });
+        Sound(kind.Sound, PX);
+        Shot[] volley = kind.Alternates ? [kind.Shots[_volleys % kind.Shots.Length]] : kind.Shots;
+        _volleys++;
+        List<Enemy>? targets = null;
+        int missile = 0;
+        foreach (var s in volley)
+        {
+            var b = new Bullet { X = PX + s.Dx, Y = y + s.Dy, VX = s.VX, VY = -v * s.VyMul, Dmg = s.Dmg, Friendly = true, Look = s.Homing ? ShotLook.Missile : kind.Look, Homing = s.Homing };
+            if (s.Homing)
+            {
+                targets ??= MissileTargets(y);
+                if (targets.Count > 0) b.Target = targets[missile++ % targets.Count];
+            }
+            Bullets.Add(b);
+        }
     }
+
+    /// <summary>Volleys fired this run, which picks the barrel of a kind that alternates.</summary>
+    private long _volleys;
+
+    /// <summary>The enemies a volley's missiles go for, nearest first: missile i takes the i-th. A missile goes only for a small enemy
+    /// ahead of the ship and within <see cref="Tuning.MissileLockRange"/>; a thing made of parts, a mine or one that cannot be hurt is
+    /// left to the guns.</summary>
+    private List<Enemy> MissileTargets(double y) =>
+        Enemies.Where(e => MissileMayChase(e) && e.Y < y && y - e.Y <= Tuning.MissileLockRange)
+            .OrderBy(e => (e.X - PX) * (e.X - PX) + (e.Y - y) * (e.Y - y)).ToList();
+
+    private static bool MissileMayChase(Enemy e) => e.Parts is null && e.Kind != EnemyKind.Mine && !e.Untouchable && e.Hp > 0 && e.Y >= EnemyTopHitRow;
 
     private void DetonateBomb()
     {
@@ -667,7 +693,7 @@ public sealed partial class RaiderGame
         bool real = _waves.Count > 0;
         bool empty = _emptyFor >= Tuning.EmptyScreenFrames && _sinceWave >= Tuning.MinWaveGapFrames;
         if (real && (_sinceWave >= Tuning.WaveGapFrames || empty)) Launch(_waves.Dequeue());
-        else if (!real && (empty || _sinceWave >= Ramp.FillerGap(Stage) && Enemies.Count < FillerMaxAlive))
+        else if (!real && (empty || _sinceWave >= Ramp.FillerGap(Stage) && Enemies.Count < Ramp.FillerMaxAlive(Stage)))
             Launch(WaveSpawner.Filler(Hashing.Mix(_seed + (ulong)(++_fillerN)), Stage, _fillerN, Ramp.StageShare(Progress)));
     }
 
@@ -785,7 +811,7 @@ public sealed partial class RaiderGame
 
     /// <summary>Sidestep a ship shot that is lined up on this enemy. The enemy must be on screen, off cooldown and not already moving;
     /// it shivers for <see cref="Tuning.EvadeWindupFrames"/> (the tell), then slides away from the shot, so a shot already close still lands.
-    /// Cheap: one pass over the live bullets, and only for an enemy that is idle.</summary>
+    /// Cheap: one pass over the live shots and bolts, and only for an enemy that is idle.</summary>
     private void Evade(Enemy e)
     {
         if (e.EvadeCd > 0) e.EvadeCd--;
@@ -838,12 +864,45 @@ public sealed partial class RaiderGame
         return col >= b.C && col < b.C + b.W && row >= b.R && row < b.R + b.H;
     }
 
-    // ---------------------------------------------------------------- bullets, collisions
+    // ---------------------------------------------------------------- shots and bolts, collisions
 
     private void UpdateBullets()
     {
-        foreach (var b in Bullets) { b.X += b.VX; b.Y += b.VY; }
+        foreach (var b in Bullets)
+        {
+            if (b.Homing && b.Friendly) Steer(b);
+            b.X += b.VX; b.Y += b.VY;
+        }
         Bullets.RemoveAll(b => b.Y < -BulletMargin || b.Y > PH + BulletMargin || b.X < -BulletMargin || b.X > PW + BulletMargin);
+    }
+
+    /// <summary>A missile's frame of flight: it gathers speed up to the top, and bends toward its target while that is still a fair
+    /// one and ahead; with none it flies on as it was going.</summary>
+    private void Steer(Bullet b)
+    {
+        double speed = Math.Min(Tuning.MissileTopSpeed, Math.Sqrt(b.VX * b.VX + b.VY * b.VY) + Tuning.MissileThrust);
+        if (b.Target is { } t && (!MissileMayChase(t) || t.Y >= b.Y || !Enemies.Contains(t))) b.Target = null;
+        if (b.Target is { } target)
+        {
+            double dx = target.X - b.X, dy = target.Y - b.Y, d = Math.Sqrt(dx * dx + dy * dy);
+            b.VX += Math.Clamp(speed * dx / d - b.VX, -Tuning.MissileTurn, Tuning.MissileTurn);
+        }
+        b.VX = Math.Clamp(b.VX, -speed * MissileMostSideways, speed * MissileMostSideways);
+        b.VY = -Math.Sqrt(speed * speed - b.VX * b.VX);
+    }
+
+    /// <summary>The largest share of a missile's speed that may be sideways, so it never flies flat across the field.</summary>
+    private const double MissileMostSideways = 0.8;
+
+    /// <summary>A missile's blast on a small enemy: a share of its damage to the other small enemies near the one it hit.</summary>
+    private void Blast(Bullet b, Enemy hit)
+    {
+        foreach (var e in Enemies.ToArray())
+        {
+            if (e == hit || !MissileMayChase(e)) continue;
+            double dx = e.X - b.X, dy = e.Y - b.Y;
+            if (dx * dx + dy * dy <= Tuning.BlastRadius * Tuning.BlastRadius && e.ShieldedBy is null) Damage(e, b.Dmg * Tuning.BlastShare, e.X, e.Y);
+        }
     }
 
     private void Collide()
@@ -864,12 +923,16 @@ public sealed partial class RaiderGame
                     {
                         Bullets.Remove(b);
                         if (e.ShieldedBy is not null) Shrug(b.X, b.Y);
-                        else Damage(e, b.Dmg, b.X, b.Y);
+                        else
+                        {
+                            Damage(e, b.Dmg, b.X, b.Y);
+                            if (b.Homing) Blast(b, e);
+                        }
                         break;
                     }
                 }
             }
-            else if (Alive && Invuln == 0 && Math.Abs(b.X - PX) <= BoltHitHalfWidth && Math.Abs(b.Y - PY) <= BoltHitHalfHeight)
+            else if (Alive && Invuln == 0 && !Bursting && Math.Abs(b.X - PX) <= BoltHitHalfWidth && Math.Abs(b.Y - PY) <= BoltHitHalfHeight)
             {
                 Bullets.Remove(b);
                 ShipHit();
@@ -877,7 +940,7 @@ public sealed partial class RaiderGame
         }
         if (Alive && Invuln == 0)
             foreach (var e in Enemies)
-                if (e.Hp > 0 && !e.Untouchable && e.Armed && TouchesShip(e))
+                if (e.Hp > 0 && !e.Untouchable && e.Armed && (!Bursting || HurtsInBurst(e)) && TouchesShip(e))
                 {
                     ShipHit();
                     if (e.Parts is null && BodyTouchesShip(e))   // a part or a beam hurts the ship and is not hurt by it
@@ -890,7 +953,7 @@ public sealed partial class RaiderGame
         foreach (var e in Enemies) e.ShieldedBy = null;   // a warden holds its charge only the frame it shields it
     }
 
-    /// <summary>A mine a bullet pings off flashes for a single frame, shorter than the flash of a hit.</summary>
+    /// <summary>A mine a shot pings off flashes for a single frame, shorter than the flash of a hit.</summary>
     private const int MinePingFlashFrames = 1;
 
     private void Damage(Enemy e, double dmg, double hx, double hy, bool bomb = false, bool ram = false)
@@ -898,7 +961,7 @@ public sealed partial class RaiderGame
         if (e.Hp <= 0) return;
         if (e.Kind == EnemyKind.Mine && !bomb)
         {
-            // armour: a bullet pings off with a spark and no shove, so firing can neither kill a mine nor hold it back
+            // armour: a shot pings off with a spark and no shove, so firing can neither kill a mine nor hold it back
             e.Flash = MinePingFlashFrames;
             PingSpark(hx, hy);
             return;
@@ -983,7 +1046,7 @@ public sealed partial class RaiderGame
 
     private void ShipHit()
     {
-        if (AbsorbWithShield() || Shrug()) return;
+        if (AbsorbWithShield() || AbsorbWithCharm()) return;
         InvulnIsShield = false;
         Hp--;
         Sound(Hp <= 0 ? SfxNames.Death : SfxNames.Hurt, PX);
@@ -996,6 +1059,7 @@ public sealed partial class RaiderGame
         if (Hp <= 0)
         {
             Deaths++;
+            if (Bursting) EndBurst();
             if (Floor() is { } speaker) Cue(speaker, VoiceCue.ShipDied);
             GateDeath();
             if (Score > BestToBeat && Score > _bestSaved) { _bestSaved = Score; OnBest?.Invoke(Score); }
@@ -1009,7 +1073,6 @@ public sealed partial class RaiderGame
                 AddParticle(new Particle { X = PX, Y = PY, VX = Math.Cos(a) * sp, VY = Math.Sin(a) * sp, Life = DeathDebrisMinLife + (int)(R() * DeathDebrisLifeSpan), Colour = R() < CoinFlip ? Palette.Gold : Palette.Ice, Size = DrawDebrisSize(), Kind = ParticleKind.Debris });
             }
             Bullets.RemoveAll(b => !b.Friendly);
-            _powerUntil = NoPower;
             LoseWeaponLevel();
         }
     }

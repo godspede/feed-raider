@@ -7,7 +7,7 @@ public class AutopilotTests
 {
     private static RaiderGame Fresh(ulong seed, int cols = 120, int rows = 46)
     {
-        var g = TourRun.NewGame(seed);
+        var g = new RaiderGame(seed) { SignedIn = false, Charmed = true };
         g.SetLayout(FieldLayout.Compute(cols, rows));
         return g;
     }
@@ -90,7 +90,7 @@ public class AutopilotTests
 
     [Theory]
     [MemberData(nameof(Seeds))]
-    public void The_pilot_holds_a_heart_until_the_like_lands_and_nothing_is_sent(ulong seed)
+    public void The_tour_likes_a_heart_with_a_click_and_nothing_is_sent(ulong seed)
     {
         var tour = new Tour(seed);
         var g = tour.Game;
@@ -104,7 +104,7 @@ public class AutopilotTests
         var liked = new HashSet<string>();
         tour.Fly(Autopilot.MaxRunTicks, _ =>
         {
-            Assert.Equal(0, g.Input.LikeLatch);
+            Assert.Equal(0, g.Input.ShipLikeLatch);
             foreach (var c in g.Cards.Cards)
             {
                 Assert.NotEqual(ButtonState.Pending, c.Marks.Like);
@@ -115,10 +115,41 @@ public class AutopilotTests
             }
             if (liked.Count == 0) Assert.True(tour.Pilot.Ticks <= Autopilot.LikeUntil, "the like lands in the scene written for it");
         });
-        Assert.True(tour.Pilot.Liked, "the pilot held a heart to the end");
+        Assert.True(tour.Pilot.Liked, "the pilot liked a heart");
         Assert.NotEmpty(liked);
         Assert.All(liked, uri => Assert.StartsWith("tour://", uri));
         Assert.True(g.Score > 0, "it scored, and still nothing was saved");
+    }
+
+    [Theory]
+    [MemberData(nameof(Seeds))]
+    public void The_scripted_click_shows_a_pointer_that_reaches_the_heart_before_it_lights(ulong seed)
+    {
+        var tour = new Tour(seed);
+        var g = tour.Game;
+        var path = new List<(double X, double Y)>();
+        bool clicked = false, shownBeforeClick = false;
+        tour.Fly(Autopilot.MaxRunTicks, _ =>
+        {
+            if (g.TourPointer is { } at && !clicked) path.Add(at);
+            if (!clicked && g.Cards.Cards.Any(c => c.Marks.Like == ButtonState.Marked)) { clicked = true; shownBeforeClick = path.Count > 1; }
+        });
+        Assert.True(clicked, "the click lit a heart");
+        Assert.True(shownBeforeClick, "and was on the page for more than a frame before it did");
+        Assert.True(tour.Pilot.Liked, "the pilot's like is the one that lit the heart");
+        Assert.Null(g.TourPointer);
+        double travelled = Math.Abs(path[^1].X - path[0].X) + Math.Abs(path[^1].Y - path[0].Y);
+        Assert.True(travelled > 10, "it glides to the heart rather than appearing on it");
+    }
+
+    [Theory]
+    [MemberData(nameof(Seeds))]
+    public void The_tour_takes_a_speed_burst_before_the_mini_boss(ulong seed)
+    {
+        var tour = new Tour(seed);
+        bool burst = false;
+        tour.Fly(Autopilot.MiniBossAt, t => burst |= t.Game.Bursting);
+        Assert.True(burst);
     }
 
     [Theory]
@@ -194,7 +225,6 @@ public class AutopilotTests
     public void A_played_game_is_not_charmed()
     {
         Assert.False(new RaiderGame(1).Charmed);
-        Assert.True(TourRun.NewGame(1).Charmed);
     }
 
     [Fact]

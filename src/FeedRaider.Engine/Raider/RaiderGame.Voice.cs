@@ -21,12 +21,21 @@ internal sealed class VoiceState
 /// The voice bosses, mini-bosses and lesser gunships speak the feed's rude posts. A rude post makes no
 /// enemy; it waits in <see cref="Rude"/> until a speaker with the floor takes it at a cue, and stays known to every later speaker, who
 /// says it again when nothing waits. Nothing here draws from the random stream:
-/// a run with posts and the same run without put every enemy and bullet in the same place.
+/// a run with posts and the same run without put every enemy, shot and bolt in the same place.
 /// </summary>
 public sealed partial class RaiderGame
 {
     /// <summary>The rude posts waiting for a speaker, and those the run has heard.</summary>
     public RudeStore Rude { get; } = new();
+
+    /// <summary>The rude posts the run knows: those waiting and those heard.</summary>
+    public int VoicesKnown => Rude.Waiting.Count + Rude.Heard.Count;
+
+    /// <summary>The languages a rude post may be in to be kept: the <paramref name="player"/>'s, and English as well while the run knows
+    /// fewer than <see cref="Tuning.VoicesBeforeBoss"/>, so a player whose own languages bring few posts still meets a boss with
+    /// several to say.</summary>
+    public PlayerLanguages VoiceLanguages(PlayerLanguages player) =>
+        VoicesKnown < Tuning.VoicesBeforeBoss ? player.WithFallback() : player;
 
     /// <summary>The one speaker that may take a turn now. While a gate is Warning it is nobody (the boss is not on the field yet), while
     /// it is Fighting the boss; otherwise the oldest living speaker that is not leaving.</summary>
@@ -147,7 +156,7 @@ public sealed partial class RaiderGame
         var floor = Floor();
         if (floor?.Voice is not { Arrived: true } floorVoice) return;
         var floorBehaviour = BehaviourFor(floor.Kind);
-        bool known = Rude.Waiting.Count > 0 || Rude.Heard.Count > 0;
+        bool known = VoicesKnown > 0;
         if (floorVoice.OwesArrive && (known || floorBehaviour.Line(floor, VoiceCue.Arrive) is not null)) Cue(floor, VoiceCue.Arrive);
         if (floorVoice.Held is { } held && !Reading(floor, floorBehaviour))
         {

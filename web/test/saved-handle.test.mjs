@@ -27,7 +27,7 @@ function loadStartPage(localStorage) {
   const reshow = cut('  if (!startHandle.value) startHandle.value = ', '\n');
   const world = {
     localStorage,
-    savedKey: HANDLE_KEY,
+    savedHandleKey: HANDLE_KEY,
     needsStart: true,
     startPage: { classList: { add: () => {} } },
     startHandle: { value: '' },
@@ -82,8 +82,8 @@ test('main.js reaches localStorage only through the guarded helpers and pageStor
   assert.deepEqual(uses, [
     'try { return Number.parseInt(localStorage.getItem(bestKey), 10) || 0; }',
     'try { localStorage.setItem(bestKey, String(n)); }',
-    "try { return localStorage.getItem(savedKey) || ''; }",
-    'try { localStorage.setItem(savedKey, h); }',
+    "try { return localStorage.getItem(savedHandleKey) || ''; }",
+    'try { localStorage.setItem(savedHandleKey, h); }',
     'const pageStorage = { get: (k) => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) };',
   ]);
 });

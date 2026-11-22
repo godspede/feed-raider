@@ -366,7 +366,7 @@ test('sign-in: a callback that failed in the popup rejects with its reason, whic
   const run = signIn(client, 'gus', { open: () => fakeWindow(), channel: bus.channel, watch: fakeReturn().watch, pollMs: 5 });
   await settle();
   assert.equal(await handOff(keyOf(client), { error: 'Issuer mismatch' }, { channel: bus.channel }), true);
-  await assert.rejects(run, (e) => signInFailed(e) === "Sign-in did not finish: something went wrong. Try again.");
+  await assert.rejects(run, (e) => signInFailed(e) === 'Sign-in did not finish: Issuer mismatch. Try again.');
 });
 
 test('sign-in: a restore that throws rejects with its error', async () => {
@@ -395,7 +395,7 @@ test('sign-in: a blocked popup falls back to the redirect with the same target, 
 
 test('sign-in: window.open throwing, iOS standalone, a client without authorize and no window.open all use the redirect', async () => {
   const redirected = async (client, opts) => { await signIn(client, '', opts); return client.calls.map((c) => c[0]); };
-  assert.deepEqual(await redirected(fakeClient(), { open: () => { throw new Error('denied'); } }), ['redirect']);
+  assert.deepEqual(await redirected(fakeClient(), { open: () => { throw new DOMException('denied', 'SecurityError'); } }), ['redirect']);
   const opened = [];
   assert.deepEqual(await redirected(fakeClient(), { standalone: true, open: (...a) => { opened.push(a); return fakeWindow(); } }), ['redirect']);
   assert.equal(opened.length, 0, 'standalone never opens a window');
@@ -483,14 +483,14 @@ test('watchSaved: a session saved by another page while this one is signed out s
   assert.equal(restores, 2, 'stopped');
 });
 
-test('watchSaved: a broken saved session leaves the page signed out; an event during a restore asks again', async () => {
-  const target = new EventTarget(), got = [];
+test('watchSaved: a broken saved session leaves the page signed out and says why; an event during a restore asks again', async () => {
+  const target = new EventTarget(), got = [], failed = [];
   let release, first = true, saved = null;
   const restore = async () => {
     if (first) { first = false; await new Promise((r) => { release = r; }); throw new Error('session was deleted'); }
     return saved;
   };
-  watchSaved({ restore, onSession: (s) => got.push(s), target });
+  watchSaved({ restore, onSession: (s) => got.push(s), onFailure: (e) => failed.push(e.message), target });
   target.dispatchEvent(new Event('storage'));
   await settle();
   saved = { sub: 'did:plc:ned' };
@@ -498,6 +498,7 @@ test('watchSaved: a broken saved session leaves the page signed out; an event du
   release();
   await settle();
   assert.deepEqual(got, [{ sub: 'did:plc:ned' }]);
+  assert.deepEqual(failed, ['session was deleted']);
 });
 
 test('completeCallback: a popup callback hands the account back and closes once the opener answers', async () => {
@@ -557,7 +558,8 @@ test('sign-in report: written with its step and time, read back while recent, go
   assert.equal(readSignIn(s, 1000), null);
   noteSignIn(null, 'started');
   assert.equal(readSignIn(null), null);
-  const broken = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }, removeItem() { throw new Error('denied'); } };
+  const denied = () => { throw new DOMException('denied', 'SecurityError'); };
+  const broken = { getItem: denied, setItem: denied, removeItem: denied };
   noteSignIn(broken, 'started');
   clearSignIn(broken);
   assert.equal(readSignIn(broken), null);
@@ -606,7 +608,7 @@ test('signInLost: the start page says how far the last sign-in got, as one line;
   assert.equal(signInLost(null), null);
   assert.match(signInLost({ step: 'started' }), /^Sign-in did not finish: no answer from Bluesky reached this browser\..*Try again\.$/);
   assert.match(signInLost({ step: 'answered' }), /closed before it saved your session/);
-  assert.equal(signInLost({ step: 'failed', error: 'Issuer mismatch' }), "Sign-in did not finish: something went wrong. Try again.");
+  assert.equal(signInLost({ step: 'failed', error: 'Issuer mismatch' }), 'Sign-in did not finish: Issuer mismatch. Try again.');
   assert.match(signInLost({ step: 'saved', sub: 'did:plc:me' }), /no saved session was found in this browser/);
   assert.equal(signInLost({ step: 'saved', sub: 'did:plc:me' }, new Error('The session was deleted.')),
     "Sign-in did not finish: the sign-in window saved your session, but restoring it here failed (The session was deleted). Try again.");
@@ -642,13 +644,13 @@ test('isOAuthCallback: the answer comes in the fragment (the library default) an
   assert.equal(isOAuthCallback('https://site.example/#state=s'), false);
 });
 
-test('signInFailed: plain words for the known library failures, a generic line otherwise, no library text', () => {
+test("signInFailed: plain words for the known library failures, the error's own message otherwise", () => {
   const unreach = "Sign-in did not finish: could not reach your Bluesky account's server. Check the handle and your connection, then try again.";
   assert.equal(signInFailed(new Error('Failed to resolve OAuth server metadata for resource "https://x"')), unreach);
   assert.equal(signInFailed(new SignInCancelled()), "Sign-in did not finish: the sign-in window was closed. Try again.");
   assert.equal(signInFailed('access_denied'), "Sign-in did not finish: Bluesky did not allow it. Try again when you are ready to approve.");
-  assert.equal(signInFailed(new Error('Unknown authorization session "x".')), "Sign-in did not finish: something went wrong. Try again.");
-  assert.equal(signInFailed(new Error('')), "Sign-in did not finish: something went wrong. Try again.");
+  assert.equal(signInFailed(new Error('Unknown authorization session "x".')), 'Sign-in did not finish: Unknown authorization session "x". Try again.');
+  assert.equal(signInFailed(new Error('')), 'Sign-in did not finish: Error with no message. Try again.');
 });
 
 test('typeahead: onSearching fires when the request goes out, not on each keystroke', async () => {
@@ -673,7 +675,11 @@ test('main.js: the callback is told by the fragment, and a failed sign-in or res
   assert.match(js, /const oauthCallback = page\.isOAuthCallback\(location\.href\)/);
   assert.doesNotMatch(js, /params\.has\('state'\)/);
   assert.match(js, /startFail\(page\.signInFailed\(e\)\)/);
-  assert.match(js, /auth\?\.initError\(\)/);
+  assert.match(js, /auth \? auth\.initError\(\)/);
+  // a sign-in bundle the network could not fetch says so on the page in every mode; any other error is a fault and is rethrown
+  assert.match(js, /if \(!\(e instanceof TypeError\)\) throw e;\s*authFailure = e;/);
+  assert.match(js, /authFailure && `Sign-in could not load/);
+  assert.match(js, /if \(why && needsStart\) startFail\(why\);\s*else if \(why\) showNotice\(why\);/);
 });
 
 test('atproto.js: the callback is finished here, not by the library popup hand-off that revokes a session no opener answered', () => {
@@ -710,7 +716,7 @@ test('main.js: a signed-out start page takes a session another page saved, so a 
   assert.match(js, /page\.watchSaved\(\{\s*restore: \(\) => auth\.adoptSaved\(\)/);
 });
 
-test('index.html: three ways to play and the help, one handle box, no second handle input and no guest or Discover button, nothing needs JS to paint', () => {
+test('index.html: three ways to play and How to play, one handle box, no second handle input and no guest or Discover button, nothing needs JS to paint', () => {
   const html = readFileSync(new URL('../../src/FeedRaider.Web/wwwroot/index.html', import.meta.url), 'utf8');
   assert.equal((html.match(/id="start-handle"/g) || []).length, 1);
   assert.doesNotMatch(html, /start-input|start-discover|Just the Discover feed|Start as guest|Play as guest|public Discover feed/);
@@ -718,6 +724,7 @@ test('index.html: three ways to play and the help, one handle box, no second han
   assert.match(html, /<h2 id="start-h-signin">Sign in with Bluesky<\/h2>/);
   assert.match(html, /<h2 id="start-h-guest">Play as someone<\/h2>/);
   assert.match(html, /<h2 id="start-h-random">Random<\/h2>/);
+  assert.match(html, /<h2 id="start-h-howto">How to play<\/h2>/);
   // one solid first choice (sign in, or Play once signed in); the other ways in are as big, in the quieter fill
   for (const id of ['start-signin', 'start-play']) assert.match(html, new RegExp(`id="${id}" class="primary big"`), `${id} is the first choice`);
   for (const id of ['start-guest', 'start-random']) assert.match(html, new RegExp(`id="${id}" class="ghost big"`), `${id} is a full-size button`);

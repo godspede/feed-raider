@@ -73,6 +73,8 @@ public static class Ramp
     private static double Lerp(double a, double b, int stage) => stage <= 1 ? a : a + (b - a) * Fraction(stage);
 
     public static int FillerGap(int stage) => (int)Math.Round(Lerp(Tuning.FillerGapFrames, Tuning.FillerGapCap, stage));
+    /// <summary>A filler wave starts only while fewer enemies than this are up: more in stage 1, which has only grunts and mines.</summary>
+    public static int FillerMaxAlive(int stage) => stage <= 1 ? Tuning.FillerMaxAliveFirstStage : Tuning.FillerMaxAlive;
     public static int FillerExtra(int stage) => (int)Math.Round(Lerp(0, Tuning.FillerExtraCap, stage));
     public static double HpMul(int stage) => Lerp(1, Tuning.HpMulCap, stage);
     public static double BoltSpeedMul(int stage) => Lerp(1, Tuning.BoltSpeedMulCap, stage);
@@ -172,16 +174,18 @@ public static class Ramp
     }
 
     /// <summary>When lesser gunships visit a stage: a number of visits spread evenly over the stage, or one every so many frames
-    /// with a limit on how many are alive at once.</summary>
-    public readonly record struct LesserPlan(int Visits, int Every, int MaxAlive)
+    /// with a limit on how many are alive at once. <paramref name="Share"/>, above 0, sets the first visit at that share of the
+    /// stage instead of the even spacing.</summary>
+    public readonly record struct LesserPlan(int Visits, int Every, int MaxAlive, double Share = 0)
     {
         /// <summary>The progress into the stage at which the <paramref name="i"/>th visit (from 0) is due.</summary>
-        public int At(int i) => (i + 1) * Tuning.StageFrames / (Visits + 1);
+        public int At(int i) => i == 0 && Share > 0 ? (int)Math.Round(Share * Tuning.StageFrames) : (i + 1) * Tuning.StageFrames / (Visits + 1);
     }
 
     public static LesserPlan Lessers(int stage) => stage switch
     {
         < Tuning.LesserFirstStage => new LesserPlan(0, 0, 0),
+        <= Tuning.LesserOneVisitLastStage => new LesserPlan(1, 0, 0, Tuning.LesserOneVisitShare),
         <= Tuning.LesserTwoVisitsLastStage => new LesserPlan(2, 0, 0),
         <= Tuning.LesserThreeVisitsLastStage => new LesserPlan(3, 0, 0),
         Tuning.LesserRepeatFromStage => new LesserPlan(0, Tuning.LesserRepeatFramesStage9, Tuning.LesserMaxAlive),   // the last stages are meant to see the lesser gunship most

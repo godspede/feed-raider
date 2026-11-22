@@ -17,6 +17,9 @@ public class ColourRuleTests
     /// <summary>Frames a kind is fought for at most: the slowest boss falls to the bot well inside this.</summary>
     private const int FightFrames = 2400;
 
+    /// <summary>The fewest kinds without parts the rule must have judged for the test to mean anything.</summary>
+    private const int KindsJudgedAtLeast = 8;
+
     /// <summary>The hues, in degrees, that read as blue or cyan, and the least saturation at which a pixel has a hue at all:
     /// the three shield blues, ice and teal fall inside, and the silver, frost and plum greys and violets fall outside.</summary>
     private const double BlueFrom = 165, BlueTo = 250, ColouredFrom = 0.2;
@@ -39,10 +42,7 @@ public class ColourRuleTests
         int r = (int)(rgb >> 16 & 0xff), gr = (int)(rgb >> 8 & 0xff), b = (int)(rgb & 0xff);
         int max = Math.Max(r, Math.Max(gr, b)), min = Math.Min(r, Math.Min(gr, b));
         if (max == 0 || (max - min) / (double)max < ColouredFrom) return false;
-        double span = max - min;
-        const double sixth = 60, full = 360;
-        double hue = max == r ? sixth * ((gr - b) / span) : max == gr ? sixth * (2 + (b - r) / span) : sixth * (4 + (r - gr) / span);
-        if (hue < 0) hue += full;
+        double hue = System.Drawing.Color.FromArgb(r, gr, b).GetHue();
         return hue >= BlueFrom && hue <= BlueTo;
     }
 
@@ -136,13 +136,13 @@ public class ColourRuleTests
         int judged = 0;
         foreach (var kind in Enum.GetValues<EnemyKind>().Where(k => k >= EnemyKind.Grunt))
         {
-            if (EnemyKit.Game().SpawnKind(kind, 0.5).Parts is not null) continue;
+            if (EnemyKit.Game().SpawnKind(kind, EnemyKit.MidWidth).Parts is not null) continue;
             judged++;
             var body = RaiderGame.TableBehaviour(kind).Body;
             if (body.Px.Any(px => (px & Sprite.Opaque) != 0 && IsBlue(px & EnemyKit.RgbMask))) breaks.Add(kind.ToString());
         }
         Assert.True(breaks.Count == 0, string.Join(", ", breaks));
-        Assert.True(judged >= 8, $"only {judged} kinds without parts were judged");
+        Assert.True(judged >= KindsJudgedAtLeast, $"only {judged} kinds without parts were judged");
     }
 
     [Fact]
@@ -157,7 +157,7 @@ public class ColourRuleTests
                 foreach (bool fight in new[] { false, true })
                 {
                     var g = EnemyKit.Game(cols, rows);
-                    var first = g.SpawnKind(kind, 0.5);
+                    var first = g.SpawnKind(kind, EnemyKit.MidWidth);
                     if (first.Parts is null) break;
                     var view = new RaiderView(); var scr = new Screen(cols, rows);
                     var lastY = new Dictionary<Enemy, double>();
@@ -236,7 +236,7 @@ public class ColourRuleTests
     private static (List<int> White, List<int> Attacks, List<int> Cuts, int Frames) Watch(EnemyKind kind, bool fight)
     {
         var g = EnemyKit.Game();
-        var boss = g.SpawnKind(kind, 0.5);
+        var boss = g.SpawnKind(kind, EnemyKit.MidWidth);
         var view = new RaiderView(); var scr = new Screen(EnemyKit.BigCols, EnemyKit.BigRows);
         var white = new List<int>(); var attacks = new List<int>(); var cuts = new List<int>();
         var bolts = new HashSet<Bullet>(); var bodies = new HashSet<Enemy>(g.Enemies);

@@ -7,10 +7,11 @@
 // Fetching is lazy, one at a time: no track before the first gesture or the page's
 // allowFetchAhead(), whichever comes first; then a cue is fetched when it is wanted, and only the next gameplay track is fetched ahead
 // (never on a data-saver or slow connection). A gameplay track that has been played through, and a start page, boss or game over track
-// once it has faded out and is not wanted, is dropped and its blob URL revoked. Nothing here may break the game: any failure
-// leaves the page silent and logs once.
+// once it has faded out and is not wanted, is dropped and its blob URL revoked. A track or list that cannot be fetched or
+// played leaves the page silent and tells the player once; any other error is a fault and is thrown.
 // With Web Audio available the elements play through a shared master GainNode (`master.node`, which sfx.js plays through too).
-// iOS ignores element.volume, so without it volume would not work there. The page can run the controls and the master with
+// iOS ignores element.volume, so without it volume would not work there; a browser without Web Audio, or one that refuses
+// it, plays the music at element volume and no sound effects, and the player is told so. The page can run the controls and the master with
 // the music itself off (init without tracks) so that the sound effects keep the speaker button, M and the slider.
 
 const FADE_MS = 1500, CROSSFADE_MS = 2000, WATCH_MS = 250;
@@ -28,20 +29,23 @@ const SLIDER_STEPS = 100;          // the volume slider runs 0 to this
 const DUCK_HOLD_MS = 200;          // how long a duck stays down by default
 const ROLES = ['start', 'gameplay', 'boss', 'gameover'];
 
+// Where there is no localStorage (a worker, a test), or it throws a DOMException because the browser blocks it (or, on a save,
+// because it is full), the defaults stand and a setting holds for this visit only. Any other error is a bug and is thrown.
 const store = {
-  get(k) { try { return localStorage.getItem(k); } catch { return null; /* storage unavailable: the defaults stand */ } },
-  set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode: not persisted */ } },
+  get(k) { try { return globalThis.localStorage?.getItem(k) ?? null; } catch (e) { if (!(e instanceof DOMException)) throw e; return null; } },
+  set(k, v) { try { globalThis.localStorage?.setItem(k, v); } catch (e) { if (!(e instanceof DOMException)) throw e; } },
 };
 const storedVolume = Number.parseFloat(store.get(VOLUME_KEY));
 let volume = Number.isFinite(storedVolume) ? Math.min(1, Math.max(0, storedVolume)) : DEFAULT_VOLUME;
 let muted = store.get(MUTED_KEY) === '1';
 
-let off = true, musicOn = false, unlocked = false, warned = false;   // off: no music and no sound effects either
+let off = true, musicOn = false, unlocked = false;   // off: no music and no sound effects either
+let onTrouble = null, told = false;   // onTrouble: init's trouble; told: it has been called, so a run of failures shows one line
 let tracks = null;       // [{id, role, url}] once the manifest is in
 let requested = null;    // the last state the game asked for, kept until the manifest arrives
 let aheadRequested = null; // the last fetch-ahead hint, kept until the manifest arrives
 let want = null;         // the cue in force: a state, or boss:<key>
-let target = null;       // the track that should be playing
+let wantedTrack = null;  // the track that should be playing
 let rot = { order: [], i: -1, last: null }; // the gameplay rotation; `last` is the track played most recently
 let advancing = false, random = Math.random;
 let tabHidden = false;   // the page is in a background tab: nothing plays or rotates until it is back
@@ -55,10 +59,16 @@ export const master = {
   get node() { return masterNode; },
 };
 
-function warnOnce(what, e) {
-  if (warned) return;
-  warned = true;
-  console.warn(`music: ${what}${e ? ': ' + (e.message || e) : ''}; staying silent`);
+function tellOnce(what, e) {
+  if (told) return;
+  told = true;
+  onTrouble(`Music: ${what}${e ? ` (${e.message || e})` : ''}. The game plays on without it.`);
+}
+
+// Without Web Audio the effects have no context to play in and the volume may not reach the music (iOS), so the player is
+// told.
+function tellNoWebAudio(why) {
+  onTrouble(`Sound: ${why}, so the game plays without sound effects and the volume may not change the music.`);
 }
 
 // ---------------------------------------------------------------- manifest and rotation
@@ -141,7 +151,7 @@ function applyCue(name) {
   }
   if (!next) return; // no track for this role: the music stays as it was
   want = name;
-  target = next;
+  wantedTrack = next;
   positions.delete(next.id);
   reconcile();
   if (aheadAllowed) prefetchTarget();
@@ -165,29 +175,34 @@ let isThin;   // init sets it: true on a data-saver or slow connection, where no
 
 // ---------------------------------------------------------------- fetching
 
-const blobs = new Map(); // track id -> Promise<string | null>
-function fetchTrackBlob(track) {
-  if (!blobs.has(track.id)) {
-    blobs.set(track.id, (async () => {
+// A track's blob: URL, fetched once: a promise per track id of the URL, or of null where the track could not be fetched.
+const trackUrls = new Map();
+function trackUrl(track) {
+  if (!trackUrls.has(track.id)) {
+    trackUrls.set(track.id, (async () => {
+      // null is a track that could not be fetched: the caller plays nothing for it. fetch and the body's read reject with a
+      // TypeError when the network is gone; any other error is a fault and is thrown.
       try {
         const r = await fetch(track.url);
-        if (!r.ok) throw new Error(`${track.id}: HTTP ${r.status}`);
-        return URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: 'audio/mpeg' }));
+        if (r.ok) return URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: 'audio/mpeg' }));
+        tellOnce(`could not fetch a track (${track.id}: HTTP ${r.status})`);
+        return null;
       } catch (e) {
-        warnOnce('could not fetch a track', e);
+        if (!(e instanceof TypeError)) throw e;
+        tellOnce('could not fetch a track', e);
         return null;
       }
     })());
   }
-  return blobs.get(track.id);
+  return trackUrls.get(track.id);
 }
 
 // A track played through in the rotation will not be wanted again soon: drop it once its element has let go of it.
 const spent = new Set();
 function evict(id) {
   spent.delete(id);
-  const url = blobs.get(id);
-  blobs.delete(id);
+  const url = trackUrls.get(id);
+  trackUrls.delete(id);
   url?.then((u) => { if (u) URL.revokeObjectURL(u); });
 }
 
@@ -196,13 +211,13 @@ const queue = [];
 let pumping = false;
 function prefetch(...list) {
   if (isThin()) return;
-  for (const t of list) if (!blobs.has(t.id) && !queue.includes(t)) queue.push(t);
+  for (const t of list) if (!trackUrls.has(t.id) && !queue.includes(t)) queue.push(t);
   pump();
 }
 async function pump() {
   if (pumping) return;
   pumping = true;
-  while (queue.length && !muted && musicOn) await fetchTrackBlob(queue.shift());
+  while (queue.length && !muted && musicOn) await trackUrl(queue.shift());
   pumping = false;
 }
 
@@ -210,7 +225,7 @@ async function pump() {
 
 const slots = [makeSlot(), makeSlot()];
 function makeSlot() {
-  return { el: null, node: null, track: null, level: 0, from: 0, target: 0, t0: 0 };
+  return { el: null, node: null, track: null, level: 0, from: 0, wantedLevel: 0, t0: 0 };
 }
 
 function setLevel(s, v) {
@@ -220,19 +235,19 @@ function setLevel(s, v) {
 }
 
 let ticker = null;
-function fadeTo(s, target, ms = FADE_MS) {
-  s.from = s.level; s.target = target; s.t0 = performance.now(); s.ms = ms;
+function fadeTo(s, level, ms = FADE_MS) {
+  s.from = s.level; s.wantedLevel = level; s.t0 = performance.now(); s.ms = ms;
   ticker ??= setInterval(tick, FADE_TICK_MS);
 }
 function tick() {
   const now = performance.now();
   let busy = false;
   for (const s of slots) {
-    if (!s.el || s.level === s.target) continue;
+    if (!s.el || s.level === s.wantedLevel) continue;
     const p = Math.min(1, (now - s.t0) / s.ms);
-    setLevel(s, s.from + (s.target - s.from) * p);
+    setLevel(s, s.from + (s.wantedLevel - s.from) * p);
     if (p < 1) busy = true;
-    else if (s.target === 0) release(s);
+    else if (s.wantedLevel === 0) release(s);
   }
   if (!busy) { clearInterval(ticker); ticker = null; }
 }
@@ -241,7 +256,7 @@ function release(s) {
   s.el.pause();
   // a start page, boss or game over track comes round again only after a whole run, so its blob is not held meanwhile; while it is
   // still the wanted track (faded out by a mute) it is kept for the unmute
-  const unwanted = s.track && s.track.role !== 'gameplay' && s.track !== target;
+  const unwanted = s.track && s.track.role !== 'gameplay' && s.track !== wantedTrack;
   if (s.track && (spent.has(s.track.id) || unwanted)) evict(s.track.id);
   s.track = null;
 }
@@ -256,7 +271,7 @@ function createAudio() {
   }
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) {
-    console.info('music: Web Audio unavailable, using element volume');
+    tellNoWebAudio('this browser has no Web Audio');
     return;
   }
   try {
@@ -276,11 +291,11 @@ function createAudio() {
     }
   } catch (e) {
     // a browser that refuses a context or a media element source (a DOMException such as NotSupportedError) still plays the
-    // elements on their own, at element volume; any other error is a fault and goes to unlock's warning
+    // elements on their own, at element volume; any other error is a fault and is thrown
     if (!(e instanceof DOMException)) throw e;
     ctx = masterNode = musicBus = null;
     for (const s of slots) s.node = null;
-    console.info('music: Web Audio unavailable, using element volume');
+    tellNoWebAudio(`this browser refused Web Audio (${e.message || e.name})`);
   }
 }
 
@@ -288,86 +303,87 @@ function createAudio() {
  *  once from a gesture) and starts whatever track is wanted. Stays armed until playback really works. */
 function unlock() {
   if (off || unlocked) return;
-  try {
-    if (!ctx && !slots[0].el) createAudio();
-    ctx?.resume();
-    for (const s of musicOn ? slots : []) {
-      if (s.track) continue;
-      s.el.src = SILENT;
-      s.el.play().then(() => { if (!s.track) s.el.pause(); }, () => { /* best effort: the silent clip only primes iOS, and a track's own play() reports its own failure */ });
-    }
-    unlocked = true;
-    for (const ev of GESTURES) window.removeEventListener(ev, unlock, true);
-  } catch (e) {
-    warnOnce('audio would not start', e);
-    return;
+  if (!ctx && !slots[0].el) createAudio();
+  ctx?.resume();
+  for (const s of musicOn ? slots : []) {
+    if (s.track) continue;
+    s.el.src = SILENT;
+    // the silent clip only primes iOS: a refused or cut-off prime leaves a track's own play() to start it or rearm
+    s.el.play().then(() => { if (!s.track) s.el.pause(); }, playRefused);
   }
+  unlocked = true;
+  for (const ev of GESTURES) window.removeEventListener(ev, unlock, true);
   reconcile();
   watcher ??= setInterval(watch, WATCH_MS);
 }
 const GESTURES = ['keydown', 'pointerup', 'touchend', 'click', 'mousedown'];
 
+// A media element's play() rejects with NotAllowedError where the browser wants a gesture first, and with AbortError when a
+// newer src or a pause() cut it off; both are the browser's normal answers and are returned by name. Any other rejection is
+// a fault and is thrown on, so the console shows it as an unhandled rejection.
+function playRefused(e) {
+  if (e?.name === 'NotAllowedError' || e?.name === 'AbortError') return e.name;
+  throw e;
+}
+
 function reconcile() {
   if (!musicOn || !unlocked) return;
-  if (muted || !target) {
-    for (const s of slots) if (s.el && s.target !== 0) fadeTo(s, 0, CUT_FADE_MS);
+  if (muted || !wantedTrack) {
+    for (const s of slots) if (s.el && s.wantedLevel !== 0) fadeTo(s, 0, CUT_FADE_MS);
     return;
   }
-  const active = slots.find((s) => s.target === 1);
-  if (active?.track === target) return;
-  const track = target;
-  fetchTrackBlob(track).then((url) => {
-    if (url && target === track && !muted && !tabHidden) startTrack(track, url);
+  const active = slots.find((s) => s.wantedLevel === 1);
+  if (active?.track === wantedTrack) return;
+  const track = wantedTrack;
+  trackUrl(track).then((url) => {
+    if (url && wantedTrack === track && !muted && !tabHidden) startTrack(track, url);
   });
 }
 
 function startTrack(track, url, ms = FADE_MS) {
-  const active = slots.find((s) => s.target === 1);
+  const active = slots.find((s) => s.wantedLevel === 1);
   if (active?.track === track) return;
-  const incoming = slots.find((s) => s.target === 0 && !s.track) ?? slots.find((s) => s.target === 0);
-  try {
-    incoming.el.src = url;
-    incoming.track = track;
-    // only the gameplay rotation plays once through (a lone gameplay track loops); the rest loop until the state changes
-    incoming.el.loop = track.role !== 'gameplay' || ofRole('gameplay').length < 2;
-    incoming.el.currentTime = track.role === 'gameplay' ? positions.get(track.id) ?? 0 : 0;
-    setLevel(incoming, 0);
-    const started = incoming.el.play();
-    started?.catch((e) => {
-      // a play() refused for lack of a gesture: wait for the next one
-      if (e?.name === 'NotAllowedError') rearm(); else warnOnce('playback failed', e);
-    });
-    fadeTo(incoming, 1, ms);
-    if (active) fadeTo(active, 0, ms);
-  } catch (e) {
-    warnOnce('playback failed', e);
-  }
+  const incoming = slots.find((s) => s.wantedLevel === 0 && !s.track) ?? slots.find((s) => s.wantedLevel === 0);
+  incoming.el.src = url;
+  incoming.track = track;
+  // only the gameplay rotation plays once through (a lone gameplay track loops); the rest loop until the state changes
+  incoming.el.loop = track.role !== 'gameplay' || ofRole('gameplay').length < 2;
+  incoming.el.currentTime = track.role === 'gameplay' ? positions.get(track.id) ?? 0 : 0;
+  setLevel(incoming, 0);
+  incoming.el.play().catch((e) => {
+    // a track this browser cannot decode (NotSupportedError) stays silent while the rest play; refused for lack of a
+    // gesture, the music waits for the next one; cut off by a newer track, that one owns the slot
+    if (e?.name === 'NotSupportedError') tellOnce(`a track would not play (${track.id})`, e);
+    else if (playRefused(e) === 'NotAllowedError') rearm();
+  });
+  fadeTo(incoming, 1, ms);
+  if (active) fadeTo(active, 0, ms);
 }
 
 // Polls the playing rotation track: CROSSFADE_MS before its end the next track fades in as it fades out.
 let watcher = null;
 function watch() {
   if (advancing || muted || tabHidden || !musicOn || want !== 'gameplay') return;
-  const a = slots.find((s) => s.target === 1);
-  if (!a?.track || a.track !== target || a.el.loop) return;
+  const a = slots.find((s) => s.wantedLevel === 1);
+  if (!a?.track || a.track !== wantedTrack || a.el.loop) return;
   const d = a.el.duration;
   if (!Number.isFinite(d) || d <= 0 || d - a.el.currentTime > CROSSFADE_MS / MS_PER_S) return;
   const next = advance();
   if (!next) return;
-  target = next;
+  wantedTrack = next;
   positions.delete(a.track.id);
   spent.add(a.track.id);
   advancing = true;
-  fetchTrackBlob(next).then((url) => {
+  trackUrl(next).then((url) => {
     advancing = false;
-    if (url && target === next && !muted && !tabHidden) startTrack(next, url, CROSSFADE_MS);
+    if (url && wantedTrack === next && !muted && !tabHidden) startTrack(next, url, CROSSFADE_MS);
   });
   prefetch(...rot.order.slice(rot.i + 1, rot.i + 2));
 }
 
 function rearm() {
   unlocked = false;
-  for (const s of slots) { s.target = 0; s.track = null; }
+  for (const s of slots) { s.wantedLevel = 0; s.track = null; }
   for (const ev of GESTURES) window.addEventListener(ev, unlock, true);
 }
 
@@ -397,15 +413,13 @@ const toggleMute = () => setMuted(!muted);
 
 /** Dips the music (not the effects) by `db` for a big sound: DUCK_IN_S down, held `holdMs`, then DUCK_OUT_S back up. */
 export function duck(db, holdMs = DUCK_HOLD_MS) {
-  if (!musicBus || !ctx) return;
-  try {
-    const g = musicBus.gain, t = ctx.currentTime, low = 10 ** (Math.min(0, db) / DB_PER_TENFOLD_AMPLITUDE);
-    g.cancelScheduledValues(t);
-    g.setValueAtTime(g.value, t);
-    g.linearRampToValueAtTime(low, t + DUCK_IN_S);
-    g.setValueAtTime(low, t + DUCK_IN_S + holdMs / MS_PER_S);
-    g.linearRampToValueAtTime(1, t + DUCK_IN_S + holdMs / MS_PER_S + DUCK_OUT_S);
-  } catch { /* best effort: a missed duck leaves the music at full volume, which harms nothing */ }
+  if (!musicBus) return;
+  const g = musicBus.gain, t = ctx.currentTime, low = 10 ** (Math.min(0, db) / DB_PER_TENFOLD_AMPLITUDE);
+  g.cancelScheduledValues(t);
+  g.setValueAtTime(g.value, t);
+  g.linearRampToValueAtTime(low, t + DUCK_IN_S);
+  g.setValueAtTime(low, t + DUCK_IN_S + holdMs / MS_PER_S);
+  g.linearRampToValueAtTime(1, t + DUCK_IN_S + holdMs / MS_PER_S + DUCK_OUT_S);
 }
 
 let button = null, slider = null;
@@ -429,7 +443,8 @@ function installControls() {
     // in the spectator view they sit in the header with no game to disturb, so they stay in the tab order
     if (el.closest('dialog') || el.closest('header')) continue;
     el.tabIndex = -1;
-    el.addEventListener('mousedown', () => setTimeout(() => el.blur(), 0));
+    // out of the tab order, only a click focuses the control, and its focus event is the moment the browser has given it focus
+    el.addEventListener('focus', () => el.blur());
     el.addEventListener('change', () => el.blur());
   }
   button?.addEventListener('click', () => { toggleMute(); if (!button.closest('dialog') && !button.closest('header')) button.blur(); });
@@ -442,14 +457,20 @@ function installControls() {
   syncUi();
 }
 
-document.addEventListener('visibilitychange', () => { if (!document.hidden && ctx?.state === 'suspended') ctx.resume().catch(() => { /* best effort: a suspended context is resumed by the next gesture or the next track start */ }); });
+// resume() rejects only for a closed context, and this one is never closed; a resume the browser holds back stays pending and
+// goes through on the next gesture
+document.addEventListener('visibilitychange', () => { if (!document.hidden && ctx?.state === 'suspended') ctx.resume(); });
 
 // ---------------------------------------------------------------- the page's calls
 
 /** tracks: [{role, url}] with absolute URLs (the single-file bundle), or manifestUrl: the tracks.json of {file, role}, relative
  *  to the page. Neither leaves the music off; thin() says whether the connection is data-saver or slow; sfx: true keeps the controls and the master gain even then.
- *  Returns whether the music is on. */
-export function init({ tracks: given, manifestUrl, sfx = false, thin = () => false } = {}) {
+ *  trouble(line) shows the player why the music is silent, the first time a track or the track list fails, and that the
+ *  browser has no Web Audio where it has none. trouble is required: every caller must say where those lines go, so init
+ *  throws without it rather than fail later at the first trouble. Returns whether the music is on. */
+export function init({ tracks: given, manifestUrl, sfx = false, thin = () => false, trouble } = {}) {
+  if (typeof trouble !== 'function') throw new TypeError('music init needs a trouble(line) callback');
+  onTrouble = trouble;
   isThin = thin;
   musicOn = !!(given || manifestUrl);
   off = !musicOn && !sfx;
@@ -462,16 +483,21 @@ export function init({ tracks: given, manifestUrl, sfx = false, thin = () => fal
     if (requested) applyCue(requested);
     if (aheadRequested) applyAhead(aheadRequested);
   };
-  try {
-    if (given) ready(parseManifest(given));
-    else {
-      const url = new URL(manifestUrl, document.baseURI).href;
-      fetch(url).then((r) => { if (!r.ok) throw new Error(`tracks.json: HTTP ${r.status}`); return r.json(); })
-        .then((j) => ready(parseManifest(j, url)))
-        .catch((e) => warnOnce('could not load the track list', e));
-    }
-  } catch (e) {
-    warnOnce('bad track list', e);
+  // The bundle's list is built with the page, so one parseManifest refuses is a fault and is thrown. The fetched one can fail
+  // on the way: no network (fetch's TypeError), a refusal (its status) or a body that is not JSON (SyntaxError). Each leaves
+  // the music silent and tells the player, and a list that parses but is not a list of tracks is a fault, thrown as well.
+  if (given) ready(parseManifest(given));
+  else {
+    const url = new URL(manifestUrl, document.baseURI).href;
+    fetch(url).then(async (r) => {
+      if (!r.ok) return tellOnce(`could not load the track list (tracks.json: HTTP ${r.status})`);
+      let json;
+      try { json = await r.json(); } catch (e) { if (!(e instanceof SyntaxError || e instanceof TypeError)) throw e; return tellOnce('could not load the track list', e); }
+      ready(parseManifest(json, url));
+    }, (e) => {
+      if (!(e instanceof TypeError)) throw e;
+      tellOnce('could not load the track list', e);
+    });
   }
   return true;
 }
@@ -480,7 +506,7 @@ export function init({ tracks: given, manifestUrl, sfx = false, thin = () => fal
 // the game's own download; from then the cued track is fetched ahead and starts at once on the gesture.
 let aheadAllowed = false;
 function prefetchTarget() {
-  if (target && !muted) prefetch(target);
+  if (wantedTrack && !muted) prefetch(wantedTrack);
 }
 
 /** The game has loaded: the cued track may be fetched ahead of the first gesture (never on a data-saver or slow connection). */
@@ -501,25 +527,22 @@ export function setPaused(hidden) {
   for (const s of slots) {
     if (!s.el || !s.track) continue;
     if (hidden) s.el.pause();
-    else if (!muted) s.el.play()?.catch(() => { /* best effort: a refused resume leaves the music paused, which harms nothing */ });
+    // a resume the browser refuses without a gesture waits for the next one; one cut off by a newer track leaves that one
+    else if (!muted) s.el.play().catch((e) => { if (playRefused(e) === 'NotAllowedError') rearm(); });
   }
   if (!hidden) reconcile();
 }
 
 /** The game says which state it is in: start, gameplay, boss (or boss:<key> for one boss) or gameover; `ahead:boss:<key>` is a hint
- *  to fetch that boss's track, not a state. Never throws. */
+ *  to fetch that boss's track, not a state. A name it does not know is ignored. */
 export function cue(name) {
-  try {
-    if (!musicOn || typeof name !== 'string') return;
-    if (parseCue(name)?.ahead) {
-      aheadRequested = name;
-      if (tracks) applyAhead(name);
-      return;
-    }
-    if (!parseCue(name)) return;
-    requested = name;
-    if (tracks) applyCue(name);
-  } catch (e) {
-    warnOnce('cue failed', e);
+  if (!musicOn || typeof name !== 'string') return;
+  if (parseCue(name)?.ahead) {
+    aheadRequested = name;
+    if (tracks) applyAhead(name);
+    return;
   }
+  if (!parseCue(name)) return;
+  requested = name;
+  if (tracks) applyCue(name);
 }

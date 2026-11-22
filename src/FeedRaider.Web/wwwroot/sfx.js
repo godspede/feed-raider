@@ -2,15 +2,17 @@
 // They play through music.js's master gain, so mute and volume apply, and nothing sounds before the first gesture (the master
 // node and a running context only exist after music.js unlocked). An sfx bus (a gain into a soft limiter, a tanh wave shaper that
 // tops out near -3 dBFS so a pile-up of voices cannot clip) sits under the master.
-// At most MAX_VOICES sounds at once (the oldest is stolen) and a per-sound minimum gap. Nothing here may break the game: any
-// failure leaves the effects silent and logs once.
+// At most MAX_VOICES sounds at once (the oldest is stolen) and a per-sound minimum gap. A sound the browser refuses turns the
+// effects off, and play() returns the line the page shows the player.
 
 const MAX_VOICES = 6;
 const BUS_LEVEL = 0.8;                    // the sfx bus gain under the master
 const DUCK_DB = -6;                       // how far a big sound dips the music
 // per-sound level trim, a multiplier on every tone and noise in the sound, set so each lands near its target loudness
 const TRIM = { shot: 0.4, hit: 0.52, kill: 0.92, boom: 1.51, hurt: 1.37, death: 1, bomb: 1.67, comm: 2.68, like: 1.56, nolike: 1.34, darkness: 2.2, clear: 1.58, pickup_shield: 1.48, pickup_bomb: 1.4, pickup_weapon: 1.85, shield_hit: 0.97,
-  warn: 0.5, ping: 0.9, open: 1.4, shut: 1.4, charge: 1, beam: 0.6, lob: 1, blast: 1.2, hatch: 1.3, tick: 1, part: 1.3, boss_down: 1.3, sting: 2.9, hold: 0.9, repost: 1.5 };
+  warn: 0.5, ping: 0.9, open: 1.4, shut: 1.4, charge: 1, beam: 0.6, lob: 1, blast: 1.2, hatch: 1.3, tick: 1, part: 1.3, boss_down: 1.3, sting: 2.9, repost: 1.5, undo: 1.34,
+  burst: 1.9, burst_end: 1.35,
+  shot_heavy: 0.62, shot_twin: 0.56, shot_missile: 1.78, shot_twin_heavy: 0.55, shot_spread: 1.08, shot_machine_gun: 0.35, shot_gatling: 0.54, shot_swarm: 1.76, shot_storm: 0.8 };
 const MAX_STEP = 7;                       // the combo pitch rise tops out at +7 semitones
 const SEMITONES_PER_OCTAVE = 12;
 const MAX_TICK_STEP = SEMITONES_PER_OCTAVE;   // a fuse's tick rises up to an octave
@@ -18,7 +20,10 @@ const MAX_TICK_STEP = SEMITONES_PER_OCTAVE;   // a fuse's tick rises up to an oc
 const DUCKS = { bomb: 250, boom: 500, death: 400, boss_down: 1500, sting: 500 };
 // the fewest ms between two plays of a sound (the game rate-limits too; this protects the page from any caller)
 export const GAP_MS = { shot: 60, hit: 45, kill: 40, hurt: 90, like: 80, nolike: 150, bomb: 150, comm: 250, clear: 400, darkness: 1500, pickup_shield: 100, pickup_bomb: 100, pickup_weapon: 100, shield_hit: 90,
-  warn: 600, ping: 133, open: 100, shut: 100, charge: 0, beam: 600, lob: 100, blast: 66, hatch: 66, tick: 100, part: 66, boss_down: 1500, sting: 500, hold: 120, repost: 80 };
+  warn: 600, ping: 133, open: 100, shut: 100, charge: 0, beam: 600, lob: 100, blast: 66, hatch: 66, tick: 100, part: 66, boss_down: 1500, sting: 500, repost: 80, undo: 150,
+  burst: 333, burst_end: 333,
+  // the weapons fire from 100 to 333 ms apart; the machine gun and the gatling are heard on every second volley
+  shot_heavy: 60, shot_twin: 60, shot_missile: 60, shot_twin_heavy: 60, shot_spread: 60, shot_machine_gun: 160, shot_gatling: 160, shot_swarm: 60, shot_storm: 60 };
 
 const SILENCE = 0.0001;                   // the floor of an exponential ramp, which cannot reach 0
 const STEAL_FADE_S = 0.012;               // a stolen voice fades out this fast, to avoid a click
@@ -30,7 +35,7 @@ const NOISE_SECONDS = 1.5;                // each noise buffer is this long, and
 const BROWN_STEP = 0.02, BROWN_LEAK = 1.02;   // brown noise integrates white in small steps, leaking so it does not drift
 const BROWN_GAIN = 3.5;                   // makes up the level that integrating takes off
 
-let master = null, duck = null, clock = null, off = true, warned = false;
+let master = null, duck = null, clock = null, off = true;
 let bus = null, busCtx = null, whiteBuf = null, brownBuf = null;
 // soft saturation, slope 1 at zero: also the limiter curve on the bus (it tops out at about -2.8 dBFS)
 const CURVE_POINTS = 1025;           // one more than a power of two, so the middle point sits at exactly 0
@@ -39,11 +44,6 @@ const SATURATE = Float32Array.from({ length: CURVE_POINTS }, (_, i) => CURVE_CEI
 const voices = [];
 const lastAt = new Map();
 
-function warnOnce(what, e) {
-  if (warned) return;
-  warned = true;
-  console.warn(`sfx: ${what}${e ? ': ' + (e.message || e) : ''}; staying silent`);
-}
 
 // ---------------------------------------------------------------- the bus and the noise (built once per context)
 
@@ -86,14 +86,9 @@ function ignoreGone(e) {
 
 /** One playing sound: its own gain (for stealing), pan, and the sources to stop. */
 function makeVoice(ctx, pan, k, trim) {
-  const out = ctx.createGain();
-  let head = out;
-  if (ctx.createStereoPanner) {
-    const p = ctx.createStereoPanner();
-    p.pan.value = Math.max(-1, Math.min(1, Number.isFinite(pan) ? pan : 0));
-    out.connect(p);
-    head = p;
-  }
+  const out = ctx.createGain(), head = ctx.createStereoPanner();
+  head.pan.value = Math.max(-1, Math.min(1, Number.isFinite(pan) ? pan : 0));
+  out.connect(head);
   head.connect(ensureBusAndNoise(ctx));
   const v = {
     ctx, out, head, k, trim, sources: [], live: 0,
@@ -201,6 +196,60 @@ export const sounds = {
     tone(v, { type: 'triangle', f0: 190 * k, f1: 85, dur: 0.1, vol: 0.5 });
     noise(v, { type: 'highpass', f0: 5000, dur: 0.012, vol: 0.2 });
   },
+  // the heavy laser: a lower, fatter zap with a buzzing saw under it and a dull puff
+  shot_heavy(v) {
+    tone(v, { type: 'square', f0: 700, f1: 180, dur: 0.1, vol: 0.45, lp: 2600 });
+    tone(v, { type: 'sawtooth', f0: 140, f1: 60, dur: 0.13, vol: 0.5, lp: 900 });
+    noise(v, { type: 'lowpass', f0: 1800, dur: 0.03, vol: 0.3 });
+  },
+  // the twin laser: two thin zaps a hair apart, one for each gun
+  shot_twin(v) {
+    tone(v, { type: 'square', f0: 1500, f1: 420, dur: 0.05, vol: 0.4, lp: 5000 });
+    tone(v, { type: 'square', f0: 1400, f1: 380, at: 0.022, dur: 0.05, vol: 0.4, lp: 5000 });
+    noise(v, { type: 'highpass', f0: 6000, dur: 0.01, vol: 0.15 });
+  },
+  // a missile launch: a pop, then a rising hiss of exhaust over a soft rising saw
+  shot_missile(v) {
+    noise(v, { type: 'highpass', f0: 4000, dur: 0.015, vol: 0.2 });
+    noise(v, { type: 'bandpass', f0: 900, f1: 2600, q: 1.5, dur: 0.18, vol: 0.5 });
+    tone(v, { type: 'sawtooth', f0: 220, f1: 330, dur: 0.12, vol: 0.25, lp: 1200 });
+  },
+  // the twin heavy: two low zaps a beat apart over one deep thump
+  shot_twin_heavy(v) {
+    tone(v, { type: 'square', f0: 650, f1: 170, dur: 0.09, vol: 0.45, lp: 2400 });
+    tone(v, { type: 'square', f0: 620, f1: 160, at: 0.03, dur: 0.09, vol: 0.45, lp: 2400 });
+    tone(v, { type: 'triangle', f0: 110, f1: 55, dur: 0.14, vol: 0.6 });
+  },
+  // the spread: a falling chord of soft bells, one note after another like the fan opening, and a bright hiss
+  shot_spread(v) {
+    tone(v, { type: 'triangle', f0: 1800, f1: 900, dur: 0.08, vol: 0.3 });
+    tone(v, { type: 'triangle', f0: 1350, f1: 675, at: 0.01, dur: 0.08, vol: 0.3 });
+    tone(v, { type: 'sine', f0: 2400, f1: 1200, at: 0.02, dur: 0.06, vol: 0.2 });
+    noise(v, { type: 'highpass', f0: 7000, dur: 0.02, vol: 0.15 });
+  },
+  // the machine gun: a short hard clack, quick enough to chatter
+  shot_machine_gun(v) {
+    tone(v, { type: 'square', f0: 900, f1: 600, dur: 0.025, vol: 0.45, lp: 3000 });
+    noise(v, { type: 'bandpass', f0: 2500, q: 2, dur: 0.02, vol: 0.5 });
+  },
+  // the gatling: a lower burr of barrels, a buzz, grit and a small thump
+  shot_gatling(v) {
+    tone(v, { type: 'sawtooth', f0: 520, f1: 380, dur: 0.04, vol: 0.35, lp: 2200 });
+    noise(v, { type: 'bandpass', f0: 1600, q: 1.5, dur: 0.03, vol: 0.5 });
+    tone(v, { type: 'triangle', f0: 95, f1: 70, dur: 0.05, vol: 0.4 });
+  },
+  // the swarm: a wide rising hiss and two buzzing rockets a moment apart
+  shot_swarm(v) {
+    noise(v, { type: 'bandpass', f0: 1400, f1: 4000, q: 2, dur: 0.22, vol: 0.45 });
+    tone(v, { type: 'square', f0: 300, f1: 600, dur: 0.1, vol: 0.15, lp: 1500 });
+    tone(v, { type: 'square', f0: 310, f1: 620, at: 0.04, dur: 0.1, vol: 0.15, lp: 1500 });
+  },
+  // the storm: a heavy falling saw on a sub thump, with the missiles' hiss rising through it
+  shot_storm(v) {
+    tone(v, { type: 'sawtooth', f0: 500, f1: 120, dur: 0.12, vol: 0.4, lp: 2000 });
+    tone(v, { type: 'sine', f0: 80, f1: 45, dur: 0.16, vol: 0.7 });
+    noise(v, { type: 'bandpass', f0: 1000, f1: 3000, q: 1.2, dur: 0.15, vol: 0.35 });
+  },
   // a dry tick: a noise click over a short low thump
   hit(v) {
     noise(v, { type: 'bandpass', f0: 3200, q: 1.2, dur: 0.05, vol: 0.7 });
@@ -282,6 +331,10 @@ export const sounds = {
   nolike(v) {
     tone(v, { type: 'triangle', f0: 247, f1: 233, dur: 0.09, vol: 0.45, lp: 700 });
     tone(v, { type: 'triangle', f0: 185, f1: 165, at: 0.09, dur: 0.12, vol: 0.45, lp: 600 });
+  },
+  // a like or repost undone: one short, low tone falling away, below nolike so it never reads as a refusal
+  undo(v) {
+    tone(v, { type: 'triangle', f0: 220, f1: 147, dur: 0.11, vol: 0.4, lp: 650 });
   },
   // a live wave is coming: 2.4 s of slow, low swell: detuned saws and a tritone under an opening filter, with breath
   darkness(v) {
@@ -403,14 +456,6 @@ export const sounds = {
     noise(v, { type: 'bandpass', f0: 4000, q: 3, dur: 0.015, vol: 0.4 });
     tone(v, { type: 'triangle', f0: 1200, f1: 1000, dur: 0.04, vol: 0.5 });
   },
-  // a beat of a held button: a soft round blip with a breath of air on it; `step` (0..7) raises its pitch a semitone a beat
-  // and makes it louder and brighter, so the build-up is heard to climb
-  hold(v, size, step) {
-    const k = step / MAX_STEP;
-    tone(v, { type: 'sine', f0: 620, f1: 700, dur: 0.07, vol: 0.3 + 0.3 * k });
-    tone(v, { type: 'triangle', f0: 1240, f1: 1400, dur: 0.04, vol: 0.08 + 0.2 * k });
-    noise(v, { type: 'bandpass', f0: 5000, q: 2, dur: 0.012, vol: 0.06 + 0.1 * k });
-  },
   // a part destroyed: a mid boom, a dull thud and a crunch, with a metal ring (inharmonic partials) left behind
   part(v) {
     noise(v, { type: 'lowpass', f0: 2500, f1: 200, q: 1, dur: 0.3, vol: 0.7, shape: true });
@@ -430,7 +475,7 @@ export const sounds = {
       tone(v, { type: 'sawtooth', f0: 160 - i * 40, f1: 28, at, dur: dur - 0.1, vol: 0.35, lp: 500 });
     }
   },
-  // a visitor arrives (a lesser gunship or a mini-boss): two low brass-like notes, the second a fourth down (A2, then E2), 0.5 s in all
+  // a visitor arrives (a lesser gunship or a mini-boss): a low brass call, deep and slow so it reads as a warning and never as a hit
   sting(v) {
     const attack = 0.012, first = { dur: 0.2, attack }, second = { at: first.dur, dur: 0.28, attack };
     tone(v, { ...first, type: 'sawtooth', f0: 110, f1: 108, vol: 0.5, lp: 900 });
@@ -439,47 +484,62 @@ export const sounds = {
     tone(v, { ...second, type: 'square', f0: 82.9, f1: 80.5, vol: 0.2, lp: 600 });
     tone(v, { type: 'sine', f0: 41.2, f1: 40, at: second.at, dur: second.dur, vol: 0.4 });
   },
+  // the speed burst taken: a rising whoosh, so the player hears the page gather speed
+  burst(v) {
+    noise(v, { type: 'bandpass', f0: 400, f1: 3000, q: 1.2, dur: 0.35, vol: 0.9, attack: 0.12, hold: 0.12 });
+    tone(v, { type: 'sine', f0: 600, f1: 1800, dur: 0.3, vol: 0.12, attack: 0.03 });
+  },
+  // the speed burst spent: the burst's rise turned down, so its end is heard before the ship can be hurt again
+  burst_end(v) {
+    tone(v, { type: 'sine', f0: 880, f1: 330, dur: 0.3, vol: 0.3, attack: 0.02 });
+    noise(v, { type: 'bandpass', f0: 1800, f1: 400, q: 2, dur: 0.25, vol: 0.25, attack: 0.02 });
+  },
 };
 
 // ---------------------------------------------------------------- the page's calls
 
 /** master: music.js's `master` (volume, mute, context, node); duck: its duck(db, holdMs); clock: the ms that GAP_MS is measured in.
- *  Without master, or with off, the effects are disabled. */
-export function init({ master: m, duck: d, clock: c = () => performance.now(), off: disabled } = {}) {
+ *  Without master the effects are disabled. */
+export function init({ master: m, duck: d, clock: c = () => performance.now() } = {}) {
   duck = typeof d === 'function' ? d : null;
   clock = c;
-  off = !!disabled || !m;
+  off = !m;
   master = m ?? null;
   voices.length = 0; lastAt.clear(); bus = busCtx = null;
   return !off;
 }
 
 /** Plays one effect. name is one of Object.keys(sounds); pan is -1 (left) to 1 (right); step (kill, hit) is the
- *  combo pitch rise in semitones, 0..7, (hold) the beat of the build-up, 0..7, and (tick) the fuse's count, 0..12; size (kill) is the enemy's size, 0..1 and (charge)
- *  the wind-up's length, 0.4 s to 1.6 s. Never throws. */
+ *  combo pitch rise in semitones, 0..7, and (tick) the fuse's count, 0..12; size (kill) is the enemy's size, 0..1 and (charge)
+ *  the wind-up's length, 0.4 s to 1.6 s. A sound the browser cannot make turns the effects off for the visit and returns the line
+ *  that tells the player so; any other call returns undefined, and a fault throws, a name that is no sound's with a RangeError. */
 export function play(name, pan = 0, step = 0, size = 0) {
+  if (!Object.hasOwn(sounds, name)) throw new RangeError(`no sound effect is named ${JSON.stringify(name)}`);
   try {
-    if (off || !Object.hasOwn(sounds, name)) return;
+    if (off) return;
     const ctx = master.context;
     if (!master.node || !ctx || ctx.state !== 'running' || master.gain <= 0) return;
     const now = clock(), gap = GAP_MS[name] ?? 0;
     if (now - (lastAt.get(name) ?? -Infinity) < gap) return;
     lastAt.set(name, now);
     while (voices.length >= MAX_VOICES) voices[0].steal();
-    const cap = name === 'tick' ? MAX_TICK_STEP : name === 'kill' || name === 'hit' || name === 'hold' ? MAX_STEP : 0;
+    const cap = name === 'tick' ? MAX_TICK_STEP : name === 'kill' || name === 'hit' ? MAX_STEP : 0;
     const rise = Math.min(cap, Math.max(0, Math.round(step) || 0));
     const v = makeVoice(ctx, pan, 2 ** (rise / SEMITONES_PER_OCTAVE), TRIM[name]);
     voices.push(v);
     try {
-      sounds[name](v, Math.min(1, Math.max(0, Number(size) || 0)), rise);
-      if (duck && name in DUCKS) { try { duck(DUCK_DB, DUCKS[name]); } catch { /* a failed duck must not cut the sound it was for */ } }
+      sounds[name](v, Math.min(1, Math.max(0, Number(size) || 0)));
     } catch (e) {
       v.steal();
       throw e;
     }
     if (!v.live) v.release();
+    if (duck && name in DUCKS) duck(DUCK_DB, DUCKS[name]);
   } catch (e) {
+    // Web Audio refuses a node or a schedule with a DOMException (NotSupportedError, InvalidStateError) where the browser
+    // cannot make that sound. Any other error is a fault and is thrown.
+    if (!(e instanceof DOMException)) throw e;
     off = true;
-    warnOnce(`could not play ${name}`, e);
+    return `Sound effects are off: this browser could not play the ${name} sound (${e.name}).`;
   }
 }

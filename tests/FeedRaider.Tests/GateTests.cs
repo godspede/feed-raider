@@ -223,7 +223,7 @@ public class GateTests
         var game = AtTheGate();
         StepQuiet(game);
         int waves = game.WavesSpawned;
-        game.OfferDark(new DarkPost(DarknessKind.Spam, 3, "buy followers now cheap"));
+        game.OfferDarkness(new DarknessPost(DarknessKind.Spam, 3, "buy followers now cheap"));
         for (int i = 0; i < ThroughWarningIntoFight; i++)
         {
             StepQuiet(game);
@@ -248,7 +248,7 @@ public class GateTests
         const int HeldFrames = 400;
         var game = AtTheGate();
         StepQuiet(game);
-        for (int i = 0; i < Tuning.MaxPendingWaves + OfferedOverCap; i++) game.OfferDark(new DarkPost(DarknessKind.Spam, (ulong)(10 + i), "post number " + i));
+        for (int i = 0; i < Tuning.MaxPendingWaves + OfferedOverCap; i++) game.OfferDarkness(new DarknessPost(DarknessKind.Spam, (ulong)(10 + i), "post number " + i));
         for (int i = 0; i < HeldFrames; i++) StepQuiet(game);
         Assert.Equal(Tuning.MaxPendingWaves, game.WavesQueued);
     }
@@ -441,7 +441,7 @@ public class GateTests
         const double OnFieldY = 40;
         var game = NewGame(gates: false);
         var cues = AttachCueRecorder(game);
-        game.OfferDark(new DarkPost(DarknessKind.Rude, 4, "some rude words for the gunship"));
+        game.OfferDarkness(new DarknessPost(DarknessKind.Rude, 4, "some rude words for the gunship"));
         for (int i = 0; i < WatchFrames; i++) { game.Step(); Assert.DoesNotContain(game.Enemies, enemy => enemy.Kind == EnemyKind.Gunship); }
         Assert.DoesNotContain(cues, MusicCues.IsBoss);
         var ship = game.SpawnLesser();
@@ -467,7 +467,7 @@ public class GateTests
     [Fact]
     public void The_lesser_schedule_is_the_stated_table()
     {
-        foreach (int stage in new[] { 1, 2, 3 }) Assert.Equal(new Ramp.LesserPlan(0, 0, 0), Ramp.Lessers(stage));
+        foreach (int stage in new[] { 1, 2, 3 }) Assert.Equal([825], Visits(stage));
         foreach (int stage in new[] { 4, 5, 6 }) Assert.Equal([500, 1000], Visits(stage));
         foreach (int stage in new[] { 7, 8 }) Assert.Equal([375, 750, 1125], Visits(stage));
         Assert.Equal((0, 600, 2), (Ramp.Lessers(9).Visits, Ramp.Lessers(9).Every, Ramp.Lessers(9).MaxAlive));
@@ -479,7 +479,7 @@ public class GateTests
     [Fact]
     public void A_lesser_gunship_arrives_at_its_scheduled_progress_once_a_stage()
     {
-        foreach (var (stage, at) in new[] { (4, new[] { 500, 1000 }), (7, new[] { 375, 750, 1125 }) })
+        foreach (var (stage, at) in new[] { (1, new[] { 825 }), (4, new[] { 500, 1000 }), (7, new[] { 375, 750, 1125 }) })
         {
             var game = NewGame(stage);
             var arrivals = Arrivals(game, Tuning.StageFrames * 2);

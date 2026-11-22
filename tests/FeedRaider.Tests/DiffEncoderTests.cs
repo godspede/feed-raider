@@ -118,7 +118,7 @@ public class DiffEncoderTests
         var term = new MiniTerm(cols, rows);
         game.SignedIn = true;
         game.Posts.Offer(new FeedPost("at://did:plc:a/app.bsky.feed.post/1", "c1", "did:plc:a", "a.bsky.social", "just shipped the thing we have been working on for months, tell me what you think", 240, 3, 1, null, null));
-        game.OfferDark(new DarkPost(DarknessKind.Spam, 11, "buy followers cheap click my profile now"));
+        game.OfferDarkness(new DarknessPost(DarknessKind.Spam, 11, "buy followers cheap click my profile now"));
         var inp = game.Input;
         for (int f = 0; f < 500; f++)
         {

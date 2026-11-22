@@ -17,7 +17,7 @@ public sealed partial class RaiderGame
     {
         private const int Enter = 0, Track = 1, Charge = 2, Fire = 3, Cool = 4;
         private const int TrackFrames = 70, ChargeFrames = 40, ChargePerBattery = 8, FireFrames = 18, SweepFrames = 40, CoolFrames = 12;
-        /// <summary>The track frames the batteries fire on, and the count of enemy bullets in flight at which a battery holds its fire.</summary>
+        /// <summary>The track frames the batteries fire on, and the count of enemy bolts in flight at which a battery holds its fire.</summary>
         private const int FirstVolleyAge = 20, SecondVolleyAge = 50, MaxHostileBolts = 24;
         /// <summary>The values of <see cref="Lights.Side"/>: the beam leans toward smaller x, or toward larger x.</summary>
         private const int LeanLeft = -1, LeanRight = 1;

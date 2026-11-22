@@ -18,6 +18,8 @@ public sealed class BulwarkTests(ITestOutputHelper output)
 
     /// <summary>The dark husk's body colour, the strut between a pod and the core.</summary>
     private static readonly uint DarkBody = Art.DarkPal['o'];
+    /// <summary>The names the boss's parts are found by (the engine keeps them private).</summary>
+    private const string PodLeft = "pod-l", PodRight = "pod-r", Core = "core";
     private const int Guarded = 1, Half = 2, Bare = 3;
     private const double PodBolt = 1.15, RingBolt = 0.9;
     private const double DodgeStep = 12, EdgeMargin = 8;
@@ -54,7 +56,7 @@ public sealed class BulwarkTests(ITestOutputHelper output)
     private const uint BodyColour = 0x3f6fd0;
 
     /// <summary>The stage the Bulwark ends, and the weapon level the fight bot plays it at.</summary>
-    private const int BulwarkStage = 2, FightLevel = 2;
+    private const int BulwarkStage = 2, FightLevel = 1;
 
     /// <summary>Mode-age frames between guarded bolts, half-guarded spreads, bare spreads and rings, and the age of the first ring half guarded and bare.</summary>
     private const int PodGap = 40, HalfGap = 50, BareGap = 45, RingGap = 150, HalfRingAt = 85, BareRingAt = 110;
@@ -131,11 +133,11 @@ public sealed class BulwarkTests(ITestOutputHelper output)
     /// <summary>A bulwark put at a spot in a mode, as the machine would have it, with the sway stilled and the ship beneath it.</summary>
     private static Enemy Put(RaiderGame g, int mode, int age = 0, double x = -1, double y = -1)
     {
-        var e = g.SpawnKind(EnemyKind.Bulwark, 0.5);
+        var e = g.SpawnKind(EnemyKind.Bulwark, EnemyKit.MidWidth);
         double px = x < 0 ? g.PW / 2.0 : x;
         e.X = px; e.BaseX = px; e.Y = y < 0 ? Hold(g) : y; e.Grace = 0;
         e.Mode = mode; e.ModeAge = age;
-        if (mode >= Half) Lose(g, e, "pod-l", live: mode == Half ? "pod-r" : null);
+        if (mode >= Half) Lose(g, e, PodLeft, live: mode == Half ? PodRight : null);
         if (mode == Bare) Open(g, e);
         return e;
     }
@@ -150,7 +152,7 @@ public sealed class BulwarkTests(ITestOutputHelper output)
 
     private static void Open(RaiderGame g, Enemy e)
     {
-        PartOf(e, "core").State = PartState.Open;
+        PartOf(e, Core).State = PartState.Open;
         g.SetParts(e, e.Parts!.ToArray());
     }
 
@@ -200,9 +202,9 @@ public sealed class BulwarkTests(ITestOutputHelper output)
     public void It_is_a_shut_core_between_two_open_pods()
     {
         var g = EnemyKit.Game();
-        var e = g.SpawnKind(EnemyKind.Bulwark, 0.5);
-        Assert.Equal(["core", "pod-l", "pod-r"], e.Parts!.Select(p => p.Name));
-        var core = PartOf(e, "core"); var l = PartOf(e, "pod-l"); var r = PartOf(e, "pod-r");
+        var e = g.SpawnKind(EnemyKind.Bulwark, EnemyKit.MidWidth);
+        Assert.Equal([Core, PodLeft, PodRight], e.Parts!.Select(p => p.Name));
+        var core = PartOf(e, Core); var l = PartOf(e, PodLeft); var r = PartOf(e, PodRight);
         Assert.Equal(PartState.Armoured, core.State);
         Assert.Equal(PartState.Open, l.State);
         Assert.Equal(PartState.Open, r.State);
@@ -233,7 +235,7 @@ public sealed class BulwarkTests(ITestOutputHelper output)
         var boss = g.Boss!;
         Assert.Equal(EnemyKind.Bulwark, boss.Kind);
         Assert.Equal(Bulwark.Hp, boss.MaxHp, 6);
-        Assert.Equal(Bulwark.Hp, PartOf(boss, "core").Hp + PartOf(boss, "pod-l").Hp + PartOf(boss, "pod-r").Hp, 6);
+        Assert.Equal(Bulwark.Hp, PartOf(boss, Core).Hp + PartOf(boss, PodLeft).Hp + PartOf(boss, PodRight).Hp, 6);
     }
 
     [Fact]
@@ -246,7 +248,7 @@ public sealed class BulwarkTests(ITestOutputHelper output)
         var boss = g.Boss!;
         for (int i = 0; i < EntranceFrames; i++) { g.Bullets.RemoveAll(b => !b.Friendly); g.Step(); }
         Assert.Equal(Guarded, boss.Mode);
-        foreach (var name in new[] { "pod-l", "pod-r", "core" })
+        foreach (var name in new[] { PodLeft, PodRight, Core })
         {
             var p = PartOf(boss, name);
             EnemyKit.Shot(g, boss.X + p.OX, boss.Y + p.OY, KillingDamage);
@@ -274,7 +276,7 @@ public sealed class BulwarkTests(ITestOutputHelper output)
     public void It_enters_holds_and_sways_across_a_tenth_of_the_field_and_stays_on_the_field(int cols, int rows)
     {
         var g = EnemyKit.Game(cols, rows);
-        var e = g.SpawnKind(EnemyKind.Bulwark, 0.5);
+        var e = g.SpawnKind(EnemyKind.Bulwark, EnemyKit.MidWidth);
         Assert.True(e.Y < 0, "it enters from above");
         Assert.Equal(0, e.Mode);
         double floor = EnemyKit.BossFloor(g.PH);
@@ -351,14 +353,14 @@ public sealed class BulwarkTests(ITestOutputHelper output)
     public void A_shot_at_the_core_pings_and_does_nothing_while_a_pod_lives()
     {
         const double damage = 30;
-        foreach (var live in new[] { "both", "pod-l", "pod-r" })
+        foreach (var live in new[] { "both", PodLeft, PodRight })
         {
             var g = EnemyKit.Game();
             var played = new List<string>();
             g.Sfx = new SfxBus((n, _, _, _) => played.Add(n));
             var e = Put(g, Guarded);
-            if (live != "both") Lose(g, e, live == "pod-l" ? "pod-r" : "pod-l", live);
-            var core = PartOf(e, "core");
+            if (live != "both") Lose(g, e, live == PodLeft ? PodRight : PodLeft, live);
+            var core = PartOf(e, Core);
             double hp = core.Hp;
             EnemyKit.Shot(g, e.X, e.Y, damage);
             StepHoldingPlace(g, e);
@@ -374,7 +376,7 @@ public sealed class BulwarkTests(ITestOutputHelper output)
     {
         var g = EnemyKit.Game();
         var e = Put(g, Guarded);
-        var l = PartOf(e, "pod-l"); var r = PartOf(e, "pod-r"); var core = PartOf(e, "core");
+        var l = PartOf(e, PodLeft); var r = PartOf(e, PodRight); var core = PartOf(e, Core);
         double hp = l.Hp, total = e.Hp;
         const double damage = 5;
         EnemyKit.Shot(g, e.X + l.OX, e.Y, damage);
@@ -394,16 +396,16 @@ public sealed class BulwarkTests(ITestOutputHelper output)
         const int partWay = 25;
         var e = Put(g, Guarded, age: partWay);
         int before = g.Score;
-        EnemyKit.Shot(g, e.X + PartOf(e, "pod-l").OX, e.Y, KillingDamage);
+        EnemyKit.Shot(g, e.X + PartOf(e, PodLeft).OX, e.Y, KillingDamage);
         StepHoldingPlace(g, e);
-        Assert.Equal(PartState.Dead, PartOf(e, "pod-l").State);
+        Assert.Equal(PartState.Dead, PartOf(e, PodLeft).State);
         Assert.Equal(Half, e.Mode);
-        Assert.Equal(0, e.ModeAge);   // the half-guarded clock starts over
-        Assert.Equal(PartState.Armoured, PartOf(e, "core").State);
+        Assert.Equal(0, e.ModeAge);
+        Assert.Equal(PartState.Armoured, PartOf(e, Core).State);
         Assert.Equal(before + PodScore, g.Score);
         Assert.Contains(SfxNames.Part, played);
         Assert.Contains(e, g.Enemies);
-        Assert.Equal(PartOf(e, "core").Hp + PartOf(e, "pod-r").Hp, e.Hp, 6);
+        Assert.Equal(PartOf(e, Core).Hp + PartOf(e, PodRight).Hp, e.Hp, 6);
     }
 
     [Fact]
@@ -412,16 +414,16 @@ public sealed class BulwarkTests(ITestOutputHelper output)
         var g = EnemyKit.Game();
         const int partWay = 60;
         var e = Put(g, Half, age: partWay);
-        var core = PartOf(e, "core");
+        var core = PartOf(e, Core);
         int before = g.Score;
-        EnemyKit.Shot(g, e.X + PartOf(e, "pod-r").OX, e.Y, KillingDamage);
+        EnemyKit.Shot(g, e.X + PartOf(e, PodRight).OX, e.Y, KillingDamage);
         StepHoldingPlace(g, e);
-        Assert.False(Alive(e, "pod-r"));
+        Assert.False(Alive(e, PodRight));
         Assert.Equal(Bare, e.Mode);
         Assert.Equal(PartState.Open, core.State);
         Assert.Equal(core.MaxHp, core.Hp);
         Assert.Equal(before + PodScore, g.Score);
-        Assert.Equal(0, e.ModeAge);   // the new mode's clock starts over
+        Assert.Equal(0, e.ModeAge);
         const double damage = 10;
         EnemyKit.Shot(g, e.X, e.Y, damage);
         StepHoldingPlace(g, e);
@@ -452,8 +454,8 @@ public sealed class BulwarkTests(ITestOutputHelper output)
         const int partWay = 10;
         const double damage = 50;   // more than a pod's hit points, so only the wreck can stop it
         var e = Put(g, Half, age: partWay);
-        var core = PartOf(e, "core");
-        EnemyKit.Shot(g, e.X + PartOf(e, "pod-l").OX, e.Y, damage);
+        var core = PartOf(e, Core);
+        EnemyKit.Shot(g, e.X + PartOf(e, PodLeft).OX, e.Y, damage);
         StepHoldingPlace(g, e);
         Assert.Equal(core.MaxHp, core.Hp);
         Assert.Equal(PartState.Armoured, core.State);
@@ -466,7 +468,7 @@ public sealed class BulwarkTests(ITestOutputHelper output)
         var g = EnemyKit.Game();
         const int partWay = 10;
         var e = Put(g, Guarded, age: partWay);
-        var core = PartOf(e, "core"); var l = PartOf(e, "pod-l");
+        var core = PartOf(e, Core); var l = PartOf(e, PodLeft);
         g.Input.BombPressed = true;
         StepKeeping(g, e);
         Assert.Equal(core.MaxHp, core.Hp);
@@ -483,7 +485,7 @@ public sealed class BulwarkTests(ITestOutputHelper output)
         var log = StepAndRecordBolts(g, e, 3 * PodGap + PastLastBolt);
         Assert.Equal([PodGap, 2 * PodGap, 3 * PodGap], log.Select(s => s.Age));
         Assert.All(log, s => Assert.Single(s.Bolts));
-        double lo = PartOf(e, "pod-l").OX, ro = PartOf(e, "pod-r").OX;
+        double lo = PartOf(e, PodLeft).OX, ro = PartOf(e, PodRight).OX;
         var origins = log.Select(s => Origin(s.Bolts[0]).X - s.X).ToArray();
         Assert.Equal(lo, origins[0], 3);
         Assert.Equal(ro, origins[1], 3);
@@ -502,11 +504,11 @@ public sealed class BulwarkTests(ITestOutputHelper output)
     public void Half_guarded_the_live_pod_fires_a_spread_of_three_every_fifty_frames()
     {
         const double leastFan = 0.3;   // radians between the spread's outer bolts
-        foreach (var live in new[] { "pod-l", "pod-r" })
+        foreach (var live in new[] { PodLeft, PodRight })
         {
             var g = EnemyKit.Game(TallCols, TallRows);
             var e = Put(g, Half);
-            if (live == "pod-l") { PartOf(e, "pod-l").State = PartState.Open; PartOf(e, "pod-l").Hp = PartOf(e, "pod-l").MaxHp; PartOf(e, "pod-r").State = PartState.Dead; PartOf(e, "pod-r").Hp = 0; g.SetParts(e, e.Parts!.ToArray()); }
+            if (live == PodLeft) { PartOf(e, PodLeft).State = PartState.Open; PartOf(e, PodLeft).Hp = PartOf(e, PodLeft).MaxHp; PartOf(e, PodRight).State = PartState.Dead; PartOf(e, PodRight).Hp = 0; g.SetParts(e, e.Parts!.ToArray()); }
             var log = StepAndRecordBolts(g, e, 2 * HalfGap + PastLastBolt).Where(s => s.Bolts.Count == SpreadBolts).ToList();
             Assert.Equal([HalfGap, 2 * HalfGap], log.Select(s => s.Age));
             double podX = PartOf(e, live).OX;
@@ -594,7 +596,7 @@ public sealed class BulwarkTests(ITestOutputHelper output)
         for (int f = 0; f < frames; f++)
         {
             g.Bullets.RemoveAll(b => !b.Friendly);
-            if (f == lossFrame) EnemyKit.Shot(g, e.X + PartOf(e, "pod-l").OX, e.Y, KillingDamage);
+            if (f == lossFrame) EnemyKit.Shot(g, e.X + PartOf(e, PodLeft).OX, e.Y, KillingDamage);
             StepHoldingPlace(g, e);
             if (g.Bullets.Any(b => !b.Friendly)) log.Add(f);
         }
@@ -814,8 +816,8 @@ public sealed class BulwarkTests(ITestOutputHelper output)
 
     // ---------------------------------------------------------------- voice
 
-    private static void Offer(RaiderGame g, ulong seed, string text, DarkSource source = DarkSource.Label) =>
-        g.OfferDark(new DarkPost(DarknessKind.Rude, seed, text, source, source == DarkSource.Label ? "lab" + seed : null));
+    private static void Offer(RaiderGame g, ulong seed, string text, DarknessSource source = DarknessSource.Label) =>
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, seed, text, source, source == DarknessSource.Label ? "lab" + seed : null));
 
     private static void Until(RaiderGame g, Enemy e, Func<bool> done, int frames = SpeechWait)
     {
@@ -829,15 +831,15 @@ public sealed class BulwarkTests(ITestOutputHelper output)
         Assert.Equal(0, Bulwark.Taste(EnemyKit.Speaker(EnemyKind.Bulwark), []));
         var posts = new List<RudePost>
         {
-            new(1, "oldest label", DarkSource.Label, "a", 1),
-            new(2, "label two", DarkSource.Label, "b", 2),
-            new(3, "hidden one", DarkSource.Hidden, null, 3),
-            new(4, "hidden two", DarkSource.Hidden, null, 4),
+            new(1, "oldest label", DarknessSource.Label, "a", 1),
+            new(2, "label two", DarknessSource.Label, "b", 2),
+            new(3, "hidden one", DarknessSource.Hidden, null, 3),
+            new(4, "hidden two", DarknessSource.Hidden, null, 4),
         };
         Assert.Equal(2, Bulwark.Taste(EnemyKit.Speaker(EnemyKind.Bulwark), posts));
         Assert.Equal(1, Bulwark.Taste(EnemyKit.Speaker(EnemyKind.Bulwark), posts.Skip(1).ToList()));
-        Assert.Equal(0, Bulwark.Taste(EnemyKit.Speaker(EnemyKind.Bulwark), posts.Where(p => p.Source == DarkSource.Label).ToList()));
-        Assert.Equal(0, Bulwark.Taste(EnemyKit.Speaker(EnemyKind.Bulwark), posts.Where(p => p.Source == DarkSource.Hidden).ToList()));
+        Assert.Equal(0, Bulwark.Taste(EnemyKit.Speaker(EnemyKind.Bulwark), posts.Where(p => p.Source == DarknessSource.Label).ToList()));
+        Assert.Equal(0, Bulwark.Taste(EnemyKit.Speaker(EnemyKind.Bulwark), posts.Where(p => p.Source == DarknessSource.Hidden).ToList()));
     }
 
     [Fact]
@@ -845,22 +847,21 @@ public sealed class BulwarkTests(ITestOutputHelper output)
     {
         var g = EnemyKit.Game(TallCols, TallRows);
         Offer(g, 1, "oldest label");
-        Offer(g, 2, "hidden one", DarkSource.Hidden);
+        Offer(g, 2, "hidden one", DarknessSource.Hidden);
         Offer(g, 3, "newest label");
-        Offer(g, 4, "hidden two", DarkSource.Hidden);
-        var e = g.SpawnKind(EnemyKind.Bulwark, 0.5);
+        Offer(g, 4, "hidden two", DarknessSource.Hidden);
+        var e = g.SpawnKind(EnemyKind.Bulwark, EnemyKit.MidWidth);
         Until(g, e, () => e.Text is not null, LongSpeechWait);
         Assert.Equal("hidden one", e.Text);
         Assert.Equal(["oldest label", "newest label", "hidden two"], g.Rude.Waiting.Select(p => p.Text).ToArray());
 
-        // lose a pod: a new post cuts in at once (the next hidden reply)
         e.Mode = Guarded;
-        EnemyKit.Shot(g, e.X + PartOf(e, "pod-l").OX, e.Y, KillingDamage);
+        EnemyKit.Shot(g, e.X + PartOf(e, PodLeft).OX, e.Y, KillingDamage);
         StepHoldingPlace(g, e);
         Assert.Equal("hidden two", e.Text);
 
         // the other pod: the core is bared, and one post (the oldest left) cuts in; the loss itself adds no second
-        EnemyKit.Shot(g, e.X + PartOf(e, "pod-r").OX, e.Y, KillingDamage);
+        EnemyKit.Shot(g, e.X + PartOf(e, PodRight).OX, e.Y, KillingDamage);
         StepHoldingPlace(g, e);
         Assert.Equal("oldest label", e.Text);
         Assert.Equal(["newest label"], g.Rude.Waiting.Select(p => p.Text).ToArray());
@@ -870,15 +871,15 @@ public sealed class BulwarkTests(ITestOutputHelper output)
     public void With_the_store_empty_it_says_its_own_words_under_its_name()
     {
         var g = EnemyKit.Game(TallCols, TallRows);
-        var e = g.SpawnKind(EnemyKind.Bulwark, 0.5);
+        var e = g.SpawnKind(EnemyKind.Bulwark, EnemyKit.MidWidth);
         Until(g, e, () => e.Text is not null, LongSpeechWait);
         Assert.Equal("Replies are limited.", e.Text);
         Assert.Equal("BULWARK", e.Header);
         e.Mode = Guarded;
-        EnemyKit.Shot(g, e.X + PartOf(e, "pod-l").OX, e.Y, KillingDamage);
+        EnemyKit.Shot(g, e.X + PartOf(e, PodLeft).OX, e.Y, KillingDamage);
         StepHoldingPlace(g, e);
         Assert.Equal("That was load-bearing.", e.Text);
-        EnemyKit.Shot(g, e.X + PartOf(e, "pod-r").OX, e.Y, KillingDamage);
+        EnemyKit.Shot(g, e.X + PartOf(e, PodRight).OX, e.Y, KillingDamage);
         StepHoldingPlace(g, e);
         Assert.Equal("Fine. Say it to my face.", e.Text);
         Assert.Equal("BULWARK", e.Header);
@@ -904,10 +905,10 @@ public sealed class BulwarkTests(ITestOutputHelper output)
         Assert.Equal(Turn.Wait, Bulwark.TurnFor(g, e, VoiceCue.ShipDied));
         Assert.Equal(Turn.Wait, Bulwark.TurnFor(g, e, VoiceCue.Idle));
         Assert.Equal(ShieldedSeconds * Tuning.Fps, Bulwark.IdleFrames(e));      // behind its shield it is in no hurry
-        Lose(g, e, "pod-l", live: "pod-r");
+        Lose(g, e, PodLeft, live: PodRight);
         Assert.Equal(ShieldedSeconds * Tuning.Fps, Bulwark.IdleFrames(e));
         Assert.Equal(Turn.Cut, Bulwark.TurnFor(g, e, VoiceCue.PartLost));
-        Lose(g, e, "pod-r", live: null);
+        Lose(g, e, PodRight, live: null);
         Open(g, e);
         Assert.Equal(Turn.Wait, Bulwark.TurnFor(g, e, VoiceCue.Idle));
         Assert.Equal(BaredSeconds * Tuning.Fps, Bulwark.IdleFrames(e));         // bared, it talks fast
@@ -921,7 +922,7 @@ public sealed class BulwarkTests(ITestOutputHelper output)
     public void Behind_its_shield_the_next_post_comes_slowly_and_once_bare_it_comes_fast()
     {
         var g = EnemyKit.Game(TallCols, TallRows);
-        var e = g.SpawnKind(EnemyKind.Bulwark, 0.5);
+        var e = g.SpawnKind(EnemyKind.Bulwark, EnemyKit.MidWidth);
         Until(g, e, () => e.Text is not null, LongSpeechWait);
         Offer(g, 9, "late post"); Offer(g, 10, "later post");
         void Step() { g.Bullets.RemoveAll(b => !b.Friendly); StepHoldingPlace(g, e); }
@@ -937,8 +938,8 @@ public sealed class BulwarkTests(ITestOutputHelper output)
         Assert.InRange(Silence("late post"), ShieldedSeconds * Tuning.Fps - PaceSlack, ShieldedSeconds * Tuning.Fps + PaceSlack);
 
         e.Mode = Half;
-        Lose(g, e, "pod-l", live: "pod-r");
-        Lose(g, e, "pod-r", live: null);
+        Lose(g, e, PodLeft, live: PodRight);
+        Lose(g, e, PodRight, live: null);
         Open(g, e);
         e.Mode = Bare;
         Assert.InRange(Silence("later post"), BaredSeconds * Tuning.Fps - PaceSlack, BaredSeconds * Tuning.Fps + PaceSlack);
@@ -1049,7 +1050,7 @@ public sealed class BulwarkTests(ITestOutputHelper output)
         g.SetLayout(FieldLayout.Compute(EnemyKit.BigCols, EnemyKit.BigRows));
         g.StartAtStage(BulwarkStage);
         EnemyKit.Clear(g);
-        var e = g.SpawnKind(EnemyKind.Bulwark, 0.5);
+        var e = g.SpawnKind(EnemyKind.Bulwark, EnemyKit.MidWidth);
         for (int f = 0; f < standStill && g.Deaths == 0; f++) StepKeeping(g, e);
         Assert.True(g.Deaths > 0, "a ship that stays where it is is shot");
     }

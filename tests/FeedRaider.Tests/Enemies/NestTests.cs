@@ -290,7 +290,7 @@ public sealed class NestTests(ITestOutputHelper output)
     public void The_nest_has_seventeen_hit_points_at_stage_one()
     {
         var g = Field();
-        var e = g.SpawnKind(EnemyKind.Nest, 0.5);
+        var e = g.SpawnKind(EnemyKind.Nest, EnemyKit.MidWidth);
         Assert.Equal(NestHp * Ramp.HpMul(1), e.Hp, 9);
     }
 
@@ -454,7 +454,7 @@ public sealed class NestTests(ITestOutputHelper output)
     {
         const int Frames = 600;
         var g = Field(cols, rows);
-        var n = g.SpawnKind(EnemyKind.Nest, 0.5);
+        var n = g.SpawnKind(EnemyKind.Nest, EnemyKit.MidWidth);
         Assert.True(n.Y < 0);
         double floor = EnemyKit.BossFloor(g.PH);
         for (int f = 1; f <= Frames; f++)
@@ -496,8 +496,8 @@ public sealed class NestTests(ITestOutputHelper output)
     public void The_nest_says_the_oldest_waiting_post_else_tell_your_friends()
     {
         var g = Field();
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 1, "first rude post"));
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 2, "second rude post"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 1, "first rude post"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 2, "second rude post"));
         var n = Settled(g);
         for (int i = 0; i < SpeakWithin && n.Text is null; i++) EnemyKit.StepSweeping(g);
         Assert.Equal("first rude post", n.Text);

@@ -158,7 +158,7 @@ stdout.Write(GameHost.LeaveScreen);
 stdout.Flush();
 if (seconds is not null)
 {
-    var dark = spectator.DarkStats;
+    var dark = spectator.DarknessStats;
     Console.Error.WriteLine($"{spectator.PostsSeen} posts seen");
     if (darkness) Console.Error.WriteLine($"darkness: {dark.LabelsSeen} labels arrived, {dark.LabelsPassed} passed the filter, {dark.AccountLabels} of them account-level spam, {dark.PostsFetched} label texts fetched, {dark.FetchFailures} fetches failed");
     if (darkness) Console.Error.WriteLine($"hidden replies: {dark.HiddenNew} newly hidden, {dark.HiddenFetched} texts fetched (threadgate stream {spectator.HiddenState})");

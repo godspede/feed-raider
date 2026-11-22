@@ -1,11 +1,11 @@
 namespace FeedRaider.Engine.Raider;
 
-/// <summary>Where the stage's boss gate is. <see cref="None"/>: progress runs. Then, at the last frame
+/// <summary>Where the stage's boss fight is. <see cref="None"/>: progress runs. Then, at the last frame
 /// of a stage whose boss is unbeaten: the field clears, a banner warns, the boss fights.</summary>
 public enum GateState { None, Clearing, Warning, Fighting }
 
 /// <summary>
-/// The boss gate and the lesser gunships. A stage does not end on a clock: progress stops on its last frame until that stage's
+/// The boss fight and the lesser gunships. A stage does not end on a clock: progress stops on its last frame until that stage's
 /// boss is down, or has stayed <see cref="Tuning.BossStayFrames"/> frames and left. Lesser gunships come
 /// between times, on the schedule <see cref="Ramp.Lessers"/> gives. With <see cref="BossGates"/> false none of this runs
 /// and the game runs without bosses.
@@ -68,16 +68,18 @@ public sealed partial class RaiderGame
     /// <summary>The body of <c>UpdateStage</c>: moves progress, or steps the gate that holds it.</summary>
     private void StepProgress()
     {
-        if (!BossGates) { if (Alive) Progress++; return; }
+        if (!BossGates) { if (Alive) Progress += ProgressPace; return; }
         if (Gate != GateState.None) { StepGate(); return; }
         if (!Alive) return;
         long target = GateTarget;
-        if (Progress < target) Progress++;
+        if (Progress < target) Progress = Math.Min(target, Progress + ProgressPace);
         if (Progress >= target)
         {
             Progress = target;
             Gate = GateState.Clearing;
             GateAge = 0;
+            EaseBurstOut();
+            FadeBurstPickups();
         }
     }
 
@@ -105,6 +107,8 @@ public sealed partial class RaiderGame
 
     private void EnterWarning()
     {
+        if (Bursting) EndBurst();
+        FadeBurstPickups();
         Gate = GateState.Warning;
         GateAge = 0;
         _bossKind = Ramp.LapBoss(GateTarget).Kind;
@@ -191,12 +195,12 @@ public sealed partial class RaiderGame
     private bool BossUp => BossGates && Gate is GateState.Warning or GateState.Fighting;
 
     /// <summary>The music key of the boss that is announced or fighting: its kind's name in lower case. Null when no boss is up.</summary>
-    private string? BossMusicKey => BossUp ? Key(_bossKind) : null;
+    private string? BossMusicKey => BossUp ? MusicKeyOf(_bossKind) : null;
 
     /// <summary>The key of the boss the gate of the stage in progress will bring, for the music's fetch-ahead hint. Null with the gates off.</summary>
-    private string? AheadMusicKey => BossGates ? Key(Ramp.LapBoss(GateTarget).Kind) : null;
+    private string? AheadMusicKey => BossGates ? MusicKeyOf(Ramp.LapBoss(GateTarget).Kind) : null;
 
-    private static string Key(EnemyKind kind) => kind.ToString().ToLowerInvariant();
+    private static string MusicKeyOf(EnemyKind kind) => kind.ToString().ToLowerInvariant();
 
     // ---------------------------------------------------------------- lesser gunships
 

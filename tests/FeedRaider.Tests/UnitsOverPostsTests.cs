@@ -5,7 +5,7 @@ using FeedRaider.Tests.Enemies;
 
 namespace FeedRaider.Tests;
 
-// Ships, enemies, pickups and bullets draw above an enemy's speech box: where their pixels cross a box the cell shows them, not the text.
+// Ships, enemies, pickups, shots and bolts draw above an enemy's speech box: where their pixels cross a box the cell shows them, not the text.
 public class UnitsOverPostsTests
 {
     private const int Cols = 48, Rows = 60;

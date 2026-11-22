@@ -92,7 +92,7 @@ public sealed partial class RaiderGame
         public override int Taste(Enemy e, IReadOnlyList<RudePost> waiting)
         {
             for (int i = 0; i < waiting.Count; i++)
-                if (waiting[i].Source == DarkSource.Hidden) return i;
+                if (waiting[i].Source == DarknessSource.Hidden) return i;
             return 0;
         }
 

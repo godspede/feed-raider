@@ -5,7 +5,7 @@ using FeedRaider.Tests.Enemies;
 namespace FeedRaider.Tests;
 
 // A post with a thousand likes is a gold card: a gold top edge, a star with the like count on its name row, and one bomb
-// for the first hold finished on it.
+// for the first like or repost on it.
 public class GoldCardTests
 {
     private const PostAction Like = PostAction.Like, Repost = PostAction.Repost;
@@ -13,14 +13,14 @@ public class GoldCardTests
     /// <summary>The number of the one post each scene here shows.</summary>
     private const int PostNumber = 1;
 
-    private static FeedPost GoldPost() => HoldRig.Post(PostNumber, likes: Tuning.GoldLikes);
+    private static FeedPost GoldPost() => PressRig.Post(PostNumber, likes: Tuning.GoldLikes);
 
-    private static uint EdgePixel(RaiderGame g, Card c) => HoldRig.Draw(g).Get(g.Cards.CardLeft * CardField.PixelsPerCell, c.Top * CardField.PixelsPerCell);
+    private static uint EdgePixel(RaiderGame g, Card c) => PressRig.Draw(g).Get(g.Cards.CardLeft * CardField.PixelsPerCell, c.Top * CardField.PixelsPerCell);
 
     [Fact]
     public void A_post_with_a_thousand_likes_has_the_gold_edge_and_the_star_with_its_count_at_the_right_of_the_name_row()
     {
-        var (g, c, _) = HoldRig.Scene(post: GoldPost());
+        var (g, c, _) = PressRig.Scene(post: GoldPost());
         Assert.True(c.Gold);
         Assert.Equal(0x8a7020u, CardColours.GoldEdge);
         Assert.Equal(CardColours.GoldEdge, EdgePixel(g, c));
@@ -36,8 +36,8 @@ public class GoldCardTests
     [Fact]
     public void A_post_one_like_short_of_a_thousand_has_the_plain_edge_and_no_star()
     {
-        var plain = HoldRig.Post(PostNumber, likes: Tuning.GoldLikes - 1);
-        var (g, c, _) = HoldRig.Scene(post: plain);
+        var plain = PressRig.Post(PostNumber, likes: Tuning.GoldLikes - 1);
+        var (g, c, _) = PressRig.Scene(post: plain);
         Assert.False(c.Gold);
         Assert.Equal(CardColours.Edge, EdgePixel(g, c));
         Assert.Null(CardLayout.Measure(plain, CardCols, false).Star);
@@ -54,8 +54,8 @@ public class GoldCardTests
     [Fact]
     public void The_star_is_drawn_on_the_screen_in_the_gold_text_colour()
     {
-        var (g, c, _) = HoldRig.Scene(post: GoldPost());
-        var scr = new Screen(HoldRig.ScrCols, HoldRig.ScrRows);
+        var (g, c, _) = PressRig.Scene(post: GoldPost());
+        var scr = new Screen(PressRig.ScrCols, PressRig.ScrRows);
         new RaiderView().FitAndRender(g, scr);
         var star = c.Shape.Star!.Value;
         int col = g.Layout.Col0 + g.Cards.CardLeft + star.Col, row = c.Top + star.Row;
@@ -64,32 +64,32 @@ public class GoldCardTests
     }
 
     [Fact]
-    public void A_finished_hold_on_a_gold_card_with_two_bombs_makes_three_and_shows_the_banger_popup()
+    public void A_key_press_on_a_gold_card_with_two_bombs_makes_three_and_shows_the_banger_popup()
     {
-        var (g, c, played) = HoldRig.Scene(post: GoldPost());
+        var (g, c, played) = PressRig.Scene(post: GoldPost());
         Assert.Equal(Tuning.ShipBombs, g.Bombs);
-        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        PressRig.Press(g, c, Like);
         Assert.Equal(Tuning.ShipBombs + 1, g.Bombs);
         Assert.Contains(g.Popups, p => p.Text == RaiderGame.GoldPopup);
         Assert.Contains(played, cue => cue.Name == SfxNames.PickupBomb);
     }
 
     [Fact]
-    public void A_finished_hold_on_a_gold_card_with_three_bombs_leaves_three_and_promises_no_bomb()
+    public void A_key_press_on_a_gold_card_with_three_bombs_leaves_three_and_promises_no_bomb()
     {
-        var (g, c, _) = HoldRig.Scene(post: GoldPost());
-        HoldRig.Force(g, nameof(RaiderGame.Bombs), Tuning.BombCap);
-        HoldRig.Hold(g, c, Repost, Tuning.HoldFrames);
+        var (g, c, _) = PressRig.Scene(post: GoldPost());
+        PressRig.Force(g, nameof(RaiderGame.Bombs), Tuning.BombCap);
+        PressRig.Press(g, c, Repost);
         Assert.Equal(Tuning.BombCap, g.Bombs);
         Assert.Contains(g.Popups, p => p.Text == RaiderGame.GoldPopupFull);
         Assert.DoesNotContain(g.Popups, p => p.Text.Contains("+BOMB"));
     }
 
     [Fact]
-    public void A_finished_hold_on_a_plain_card_gives_no_bomb_and_no_banger_popup()
+    public void A_key_press_on_a_plain_card_gives_no_bomb_and_no_banger_popup()
     {
-        var (g, c, played) = HoldRig.Scene();
-        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        var (g, c, played) = PressRig.Scene();
+        PressRig.Press(g, c, Like);
         Assert.Equal(Tuning.ShipBombs, g.Bombs);
         Assert.DoesNotContain(g.Popups, p => p.Text.StartsWith(RaiderGame.GoldPopupFull));
         Assert.DoesNotContain(played, cue => cue.Name == SfxNames.PickupBomb);
@@ -98,12 +98,12 @@ public class GoldCardTests
     [Fact]
     public void The_second_button_on_the_same_gold_card_gives_no_second_bomb()
     {
-        var (g, c, _) = HoldRig.Scene(post: GoldPost());
+        var (g, c, _) = PressRig.Scene(post: GoldPost());
         const int startBombs = 1;
-        HoldRig.Force(g, nameof(RaiderGame.Bombs), startBombs);
-        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        PressRig.Force(g, nameof(RaiderGame.Bombs), startBombs);
+        PressRig.Press(g, c, Like);
         Assert.Equal(startBombs + 1, g.Bombs);
-        HoldRig.Hold(g, c, Repost, Tuning.HoldFrames);
+        PressRig.Press(g, c, Repost);
         Assert.Equal(ButtonState.Marked, c.Marks.Repost);
         Assert.Equal(startBombs + 1, g.Bombs);
     }
@@ -111,12 +111,12 @@ public class GoldCardTests
     [Fact]
     public void A_toggle_in_the_log_on_a_gold_post_gives_no_bomb()
     {
-        var (g, c, _) = HoldRig.Scene(post: GoldPost());
+        var (g, c, _) = PressRig.Scene(post: GoldPost());
         g.OnLike = _ => { };
         g.Log.Add(new LogEntry(c.Post, c.Marks));
         g.Toggle(c.Post.Uri, Like);
         const int toggleTicks = 3;
-        HoldRig.Rest(g, toggleTicks);
+        PressRig.Rest(g, toggleTicks);
         Assert.Equal(ButtonState.Pending, c.Marks.Like);
         Assert.Equal(Tuning.ShipBombs, g.Bombs);
         Assert.DoesNotContain(g.Popups, p => p.Text.StartsWith(RaiderGame.GoldPopupFull));
@@ -126,7 +126,7 @@ public class GoldCardTests
     public void A_gold_card_arriving_clears_nothing_and_gives_nothing_by_itself()
     {
         var g = new RaiderGame(EnemyKit.PlainSeed) { SignedIn = true, BossGates = false };
-        g.SetLayout(FieldLayout.Compute(HoldRig.ScrCols, HoldRig.ScrRows));
+        g.SetLayout(FieldLayout.Compute(PressRig.ScrCols, PressRig.ScrRows));
         const double enemyX = 10;
         const int enemyHp = 3;
         var enemy = new Enemy { Kind = EnemyKind.Grunt, Sprite = Art.Grunt, X = enemyX, BaseX = enemyX, Y = g.PH / 2.0, Hp = enemyHp, MaxHp = enemyHp };
@@ -141,11 +141,11 @@ public class GoldCardTests
     }
 
     [Theory]
-    [InlineData(HoldRig.ScrCols, HoldRig.ScrRows)]
+    [InlineData(PressRig.ScrCols, PressRig.ScrRows)]
     [InlineData(34, 60)]
     public async Task The_start_pages_tour_likes_a_gold_post_which_pays_a_bomb_and_brings_in_its_authors_reply(int cols, int rows)
     {
-        var g = TourRun.NewGame(EnemyKit.PlainSeed);
+        var g = new RaiderGame(EnemyKit.PlainSeed) { SignedIn = false, Charmed = true };
         g.SetLayout(FieldLayout.Compute(cols, rows));
         var tourFeed = new TourFeedSource();
         var lookups = new List<Task>();

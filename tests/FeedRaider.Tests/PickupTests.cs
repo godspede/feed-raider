@@ -11,8 +11,8 @@ public class PickupTests
     /// <summary>A loop guard in hits: far more than a ship takes to die, so a loop that reaches it has failed.</summary>
     private const int DeathGuardHits = 10;
     private const FeedRaider.Engine.PostAction Like = FeedRaider.Engine.PostAction.Like;
-    /// <summary>The pop-ups a finished like shows.</summary>
-    internal const string ShieldUp = "SHIELD UP", PowerUp = "POWER UP";
+    /// <summary>The pop-ups a like shows.</summary>
+    internal const string ShieldUp = "SHIELD UP", ShieldFull = "SHIELD FULL", ShieldRecharging = "SHIELD RECHARGING";
     /// <summary>A pop-up's height in pixels: one this far below another does not overlap it.</summary>
     private const int PopupPixelRows = 4;
     /// <summary>The row, in pixels, an enemy is put on to be shot; its hit points, which one shot ends; and that shot's damage.</summary>
@@ -24,7 +24,7 @@ public class PickupTests
     private static (RaiderGame Game, List<string> Played) NewGame(ulong seed = Enemies.EnemyKit.PlainSeed)
     {
         var g = new RaiderGame(seed);
-        g.SetLayout(FieldLayout.Compute(HoldRig.ScrCols, HoldRig.ScrRows));
+        g.SetLayout(FieldLayout.Compute(PressRig.ScrCols, PressRig.ScrRows));
         var played = new List<string>();
         g.Sfx = new SfxBus((sound, _, _, _) => played.Add(sound));
         return (g, played);
@@ -35,7 +35,7 @@ public class PickupTests
     /// <summary>Puts an enemy on the field and shoots it dead on the next step. Returns after that step.</summary>
     private static void Kill(RaiderGame g, EnemyKind kind, double x, bool live = false, bool alone = true)
     {
-        if (alone) g.Enemies.Clear();                          // the waves keep coming; the bullet must hit this one
+        if (alone) g.Enemies.Clear();                          // the waves keep coming; the shot must hit this one
         var sprite = kind == EnemyKind.Gunship ? Art.Gunship : kind == EnemyKind.Carrier ? Art.Carrier : Art.Grunt;
         g.Enemies.Add(new Enemy { Kind = kind, Sprite = sprite, X = x, BaseX = x, Y = KillRow, Hp = OneShotHp, MaxHp = OneShotHp, Live = live });
         g.Bullets.Add(new Bullet { X = x, Y = KillRow + 1, Dmg = KillShotDamage, Friendly = true });
@@ -46,7 +46,7 @@ public class PickupTests
     /// <summary>Steps until the pickup has lived this many sim ticks (hit-stop freezes its clock).</summary>
     private static void AgeTo(RaiderGame g, Pickup pickup, int age) { for (int i = 0; i < PickupAgeGuardSteps && pickup.Age < age; i++) g.Step(); }
 
-    /// <summary>Puts a hostile bullet right on the ship and steps once, so it lands.</summary>
+    /// <summary>Puts a bolt right on the ship and steps once, so it lands.</summary>
     private static void ShootShip(RaiderGame g) { g.Bullets.Add(new Bullet { X = g.PX, Y = g.PY }); g.Step(); }
 
     /// <summary>Spends the shield on a hit and waits out the invulnerability, so the next hit is the ship's own.</summary>
@@ -54,7 +54,7 @@ public class PickupTests
     {
         ShootShip(g);
         Run(g, Tuning.ShieldInvulnFrames + 1);
-        Assert.Equal(LikeHoldTests.NoShield, g.Shield);
+        Assert.Equal(LikePressTests.NoShield, g.Shield);
     }
 
     private static void Collect(RaiderGame g, PickupKind kind)
@@ -163,24 +163,25 @@ public class PickupTests
     {
         var (g, _) = NewGame();
         DropShield(g);
-        var (s0, b0, p0) = g.DropWeights();
-        Assert.True(s0 > 0 && b0 > 0 && p0 > 0);
+        var (s0, b0, p0, z0) = g.DropWeights();
+        Assert.True(s0 > 0 && b0 > 0 && p0 > 0 && z0 > 0);
         for (int i = 0; i < Tuning.BombCap; i++) Collect(g, PickupKind.Bomb);
         for (int i = 1; i < Tuning.MaxWeaponLevel; i++) Collect(g, PickupKind.Weapon);
         Collect(g, PickupKind.Shield);
-        var (s, b, p) = g.DropWeights();
+        var (s, b, p, z) = g.DropWeights();
         Assert.True(s < s0 && b < b0 && p < p0);
         Assert.True(b > 0 && p > 0);                          // fewer, not none
+        Assert.Equal(z0, z);                                  // a burst is never stored, so nothing fills it
         const int samples = 1000;
         const double countSlack = 2;   // a kind's share of evenly spread samples lands within a sample or two of its weight
         var counts = new Dictionary<PickupKind, int>();
         for (int i = 0; i < samples; i++)
         {
-            var kind = RaiderGame.KindFor((i + 0.5) / samples, (s, b, p));
+            var kind = RaiderGame.KindFor((i + 0.5) / samples, (s, b, p, z));
             counts[kind] = counts.GetValueOrDefault(kind) + 1;
         }
-        double total = s + b + p;
-        foreach (var (kind, weight) in new[] { (PickupKind.Shield, s), (PickupKind.Bomb, b), (PickupKind.Weapon, p) })
+        double total = s + b + p + z;
+        foreach (var (kind, weight) in new[] { (PickupKind.Shield, s), (PickupKind.Bomb, b), (PickupKind.Weapon, p), (PickupKind.Burst, z) })
         {
             double expected = weight / total * samples;
             Assert.InRange(counts[kind], expected - countSlack, expected + countSlack);
@@ -228,7 +229,7 @@ public class PickupTests
         var near = g.SpawnPickup(PickupKind.Shield, g.PX + g.Ship.W / 2.0 + Tuning.PickupReach + nearMiss, g.PY);
         g.Step();
         Assert.Contains(far, g.Pickups); Assert.Contains(near, g.Pickups);
-        Assert.Equal(LikeHoldTests.NoShield, g.Shield);
+        Assert.Equal(LikePressTests.NoShield, g.Shield);
         for (int i = 0; i < CollectGuardSteps && g.Pickups.Contains(near); i++) { g.Input.Key(GameKey.Right, true); g.Step(); }
         g.Input.Key(GameKey.Right, false);
         Assert.DoesNotContain(near, g.Pickups);
@@ -252,7 +253,7 @@ public class PickupTests
     [Fact]
     public void Each_pickup_sparkles_floats_its_text_and_plays_its_sound()
     {
-        foreach (var (kind, text, sound) in new[] { (PickupKind.Shield, "+SHIELD", SfxNames.PickupShield), (PickupKind.Bomb, "+BOMB", SfxNames.PickupBomb), (PickupKind.Weapon, "+WEAPON", SfxNames.PickupWeapon) })
+        foreach (var (kind, text, sound) in new[] { (PickupKind.Shield, "+SHIELD", SfxNames.PickupShield), (PickupKind.Bomb, "+BOMB", SfxNames.PickupBomb), (PickupKind.Weapon, "+HEAVY LASER", SfxNames.PickupWeapon) })
         {
             var (g, played) = NewGame();
             if (kind == PickupKind.Shield) DropShield(g);      // a shield that is already up is a wasted pickup, which says something else
@@ -273,17 +274,17 @@ public class PickupTests
         var (g, _) = NewGame();
         Assert.Equal(1, Tuning.ShieldHits);
         Collect(g, PickupKind.Shield);
-        Assert.Equal(Tuning.ShieldHits, g.Shield);                    // already up: it stays at one
+        Assert.Equal(Tuning.ShieldHits, g.Shield);
         ShootShip(g);
-        Assert.Equal(LikeHoldTests.NoShield, g.Shield);
+        Assert.Equal(LikePressTests.NoShield, g.Shield);
         Run(g, Tuning.ShieldInvulnFrames + 1);
         int score = g.Score;
         Collect(g, PickupKind.Shield);
-        Assert.Equal(Tuning.ShieldHits, g.Shield);                    // raised again
-        Assert.Equal(score, g.Score);                                 // a used one is not a wasted one
+        Assert.Equal(Tuning.ShieldHits, g.Shield);
+        Assert.Equal(score, g.Score);
         Collect(g, PickupKind.Shield);
         Assert.Equal(Tuning.ShieldHits, g.Shield);
-        Assert.Equal(score + Tuning.ScorePickupOverflow, g.Score);   // a wasted one is worth score
+        Assert.Equal(score + Tuning.ScorePickupOverflow, g.Score);
     }
 
     [Fact]
@@ -301,16 +302,24 @@ public class PickupTests
     }
 
     [Fact]
-    public void A_weapon_pickup_raises_the_weapon_level_to_four_then_gives_score()
+    public void A_weapon_pickup_moves_up_one_of_ten_kinds_naming_it_then_gives_score_at_the_top()
     {
+        const int kinds = 10;
         var (g, _) = NewGame();
-        Assert.Equal(4, Tuning.MaxWeaponLevel);
+        Assert.Equal(kinds, Tuning.MaxWeaponLevel);
+        Assert.Equal(kinds, Weapons.Kinds.Length);
         Assert.Equal(1, g.WeaponLevel);
-        for (int lvl = 2; lvl <= Tuning.MaxWeaponLevel; lvl++) { Collect(g, PickupKind.Weapon); Assert.Equal(lvl, g.WeaponLevel); }
+        for (int lvl = 2; lvl <= Tuning.MaxWeaponLevel; lvl++)
+        {
+            Collect(g, PickupKind.Weapon);
+            Assert.Equal(lvl, g.WeaponLevel);
+            Assert.Contains(g.Popups, p => p.Text == "+" + Weapons.At(lvl).Name);
+        }
         int score = g.Score;
         Collect(g, PickupKind.Weapon);
         Assert.Equal(Tuning.MaxWeaponLevel, g.WeaponLevel);
         Assert.Equal(score + Tuning.ScorePickupOverflow, g.Score);
+        Assert.Contains(g.Popups, p => p.Text == "+" + Tuning.ScorePickupOverflow);
     }
 
     // ---------------------------------------------------------------- the shield
@@ -331,7 +340,7 @@ public class PickupTests
         int rings = g.Rings.Count;
         ShootShip(g);
         Assert.Equal(Tuning.ShipHp, g.Hp);
-        Assert.Equal(LikeHoldTests.NoShield, g.Shield);
+        Assert.Equal(LikePressTests.NoShield, g.Shield);
         Assert.Equal(0, g.Deaths);
         Assert.True(g.Rings.Count > rings);
         Assert.Equal(1, played.Count(n => n == SfxNames.ShieldHit));
@@ -351,7 +360,7 @@ public class PickupTests
         DropShield(g);
         ShootShip(g);
         Assert.Equal(1, g.Deaths);
-        Assert.Equal(LikeHoldTests.NoShield, g.Shield);
+        Assert.Equal(LikePressTests.NoShield, g.Shield);
         for (int i = 0; i < RespawnGuardSteps && !g.Alive; i++) g.Step();   // a big hit-stop freezes some of the wait
         Assert.True(g.Alive);
         Assert.Equal(Tuning.ShipHp, g.Hp);
@@ -360,7 +369,7 @@ public class PickupTests
         Run(g, Tuning.InvulnFrames + 1);
         ShootShip(g);
         Assert.Equal(deaths, g.Deaths);                               // the first hit on the new ship only drops the shield
-        Assert.Equal(LikeHoldTests.NoShield, g.Shield);
+        Assert.Equal(LikePressTests.NoShield, g.Shield);
     }
 
     [Fact]
@@ -374,10 +383,10 @@ public class PickupTests
         g.Enemies.Add(e);
         double kx = e.KX;
         g.Step();
-        Assert.Equal(LikeHoldTests.NoShield, g.Shield);
+        Assert.Equal(LikePressTests.NoShield, g.Shield);
         Assert.True(e.KX > kx || e.BaseX > x);                // pushed to the right, away from the ship
         Run(g, laterFrames);
-        Assert.Equal(LikeHoldTests.NoShield, g.Shield);       // the invulnerability holds off the next frames
+        Assert.Equal(LikePressTests.NoShield, g.Shield);       // the invulnerability holds off the next frames
         Assert.Equal(0, g.Deaths);
         Assert.Equal(Tuning.ShipHp, g.Hp);
     }
@@ -385,52 +394,46 @@ public class PickupTests
     // ---------------------------------------------------------------- the weapon
 
     [Fact]
-    public void Weapon_patterns_per_level_have_the_right_shots_and_angles()
+    public void Every_weapon_pattern_is_mirrored_about_straight_up_and_only_the_spread_slants()
     {
-        const int top = Tuning.MaxWeaponLevel, angleDigits = 3, pairDigits = 6;
-        const double narrowestDegrees = 5, widestDegrees = 20, modestDamage = 2;
-        var l1 = RaiderGame.WeaponPattern(1); var l2 = RaiderGame.WeaponPattern(2);
-        var l3 = RaiderGame.WeaponPattern(3); var l4 = RaiderGame.WeaponPattern(top);
-        Assert.Equal([1, 2, 4, 5], new[] { l1.Length, l2.Length, l3.Length, l4.Length });
-        Assert.All(l1.Concat(l2), s => Assert.Equal(0, s.Angle));
-        Assert.Equal(2, l2.Select(s => s.Dx).Distinct().Count());     // twin streams, side by side
-        Assert.Equal(2, l3.Count(s => s.Angle != 0));                 // twin plus two angled
-        Assert.Equal(2, l3.Count(s => s.Angle == 0));
-        var angled = l3.Where(s => s.Angle != 0).Select(s => s.Angle).OrderBy(a => a).ToArray();
-        Assert.Equal(-angled[1], angled[0], pairDigits);
-        Assert.InRange(angled[1], narrowestDegrees, widestDegrees);
-        var a4 = l4.Select(s => Math.Round(s.Angle, angleDigits)).OrderBy(a => a).ToArray();
-        Assert.Equal(l4.Length, a4.Distinct().Count());               // every shot its own angle, symmetric about straight up
-        Assert.Equal(0, a4[a4.Length / 2]); Assert.Equal(-a4[0], a4[^1], angleDigits); Assert.Equal(-a4[1], a4[^2], angleDigits);
-        Assert.True(a4[^1] > angled[1]);                              // wider than level 3
-        Assert.True(RaiderGame.FireIntervalFor(top) < RaiderGame.FireIntervalFor(3));
-        Assert.Equal(RaiderGame.FireIntervalFor(1), RaiderGame.FireIntervalFor(3));
-        // damage per volley rises with level but a single bullet stays modest
-        double DamagePerFrame(int lvl) => RaiderGame.WeaponPattern(lvl).Sum(s => s.Dmg) / RaiderGame.FireIntervalFor(lvl);
-        Assert.True(DamagePerFrame(1) < DamagePerFrame(2) && DamagePerFrame(2) < DamagePerFrame(3) && DamagePerFrame(3) < DamagePerFrame(top));
-        Assert.True(l4.Max(s => s.Dmg) <= modestDamage);
-        // a gunship outlasts a second of the best gun even if every bullet lands
-        Assert.True(Tuning.GunshipHp / DamagePerFrame(top) / Tuning.Fps > 1);
+        const int angleDigits = 6, single = 1;
+        for (int lvl = 1; lvl <= Tuning.MaxWeaponLevel; lvl++)
+        {
+            var kind = Weapons.At(lvl);
+            var dx = kind.Shots.Select(s => s.Dx).Order().ToArray();
+            var angles = kind.Shots.Select(s => s.Angle).Order().ToArray();
+            for (int i = 0; i < dx.Length; i++)
+            {
+                Assert.Equal(-dx[^(i + 1)], dx[i], angleDigits);
+                Assert.Equal(-angles[^(i + 1)], angles[i], angleDigits);
+            }
+            Assert.Equal(kind.Look == ShotLook.Spread, angles.Any(a => a != 0));
+            if (kind.Shots.Length == single) Assert.Equal(0, dx[0]);
+        }
+        // a gunship outlasts a second of the best gun even if every shot lands
+        var top = Weapons.At(Tuning.MaxWeaponLevel);
+        Assert.True(Tuning.GunshipHp / (top.Shots.Sum(s => s.Dmg) / top.Interval) / Tuning.Fps > 1);
     }
 
     [Fact]
     public void Firing_makes_the_pattern_of_the_current_level()
     {
         var (g, _) = NewGame();
-        g.Enemies.Clear();
         const int rearmFrames = 10;   // past the slowest gap between volleys, so the next level's first pull fires at once
         for (int lvl = 1; lvl <= Tuning.MaxWeaponLevel; lvl++)
         {
             if (lvl > 1) Collect(g, PickupKind.Weapon);
             g.Bullets.Clear();
+            g.Enemies.Clear();   // a missile steers on its first step, so a wave that came in since would bend it off its pattern
             g.Input.Key(GameKey.Fire, true);
-            // the first volley is the one fired this step; read it before the next pull
             int before = g.Bullets.Count(b => b.Friendly);
             g.Step();
             var shots = g.Bullets.Where(b => b.Friendly).ToList();
             g.Input.Key(GameKey.Fire, false);
-            Assert.Equal(RaiderGame.WeaponPattern(lvl).Length, shots.Count - before);
-            Assert.Equal(RaiderGame.WeaponPattern(lvl).Count(s => s.VX != 0), shots.Count(b => b.VX != 0));
+            var kind = Weapons.At(lvl);
+            Assert.Equal(kind.Alternates ? 1 : kind.Shots.Length, shots.Count - before);
+            Assert.Equal(kind.Shots.Count(s => s.VX != 0), shots.Count(b => b.VX != 0));
+            Assert.All(shots, b => Assert.Equal(b.Homing ? ShotLook.Missile : kind.Look, b.Look));
             Run(g, rearmFrames);
         }
     }
@@ -460,7 +463,7 @@ public class PickupTests
         var (g, _) = NewGame();
         Collect(g, PickupKind.Weapon);
         ShootShip(g);
-        Assert.Equal(LikeHoldTests.NoShield, g.Shield);
+        Assert.Equal(LikePressTests.NoShield, g.Shield);
         Assert.Equal(Tuning.ShipHp, g.Hp);
         Assert.Equal(2, g.WeaponLevel);
     }
@@ -468,7 +471,7 @@ public class PickupTests
     // ---------------------------------------------------------------- sound
 
     [Fact]
-    public void The_new_sound_names_match_the_page_and_the_bus_passes_them()
+    public void The_sound_names_match_the_page_and_the_bus_drops_a_repeat()
     {
         Assert.Equal(["pickup_shield", "pickup_bomb", "pickup_weapon", "shield_hit"],
             [SfxNames.PickupShield, SfxNames.PickupBomb, SfxNames.PickupWeapon, SfxNames.ShieldHit]);
@@ -483,47 +486,94 @@ public class PickupTests
         foreach (var n in got) Assert.Contains($"  {n}(v", js);
     }
 
-    // ---------------------------------------------------------------- the reward of a held like
+    // ---------------------------------------------------------------- the reward of a like
 
     [Fact]
-    public void Finishing_a_hold_with_the_shield_down_raises_it_and_starts_the_power_and_the_popup_names_both()
+    public void A_like_key_with_the_shield_down_raises_it_and_the_popup_says_so()
     {
-        var (g, c, played) = HoldRig.Scene(signedIn: false);
-        HoldRig.Force(g, nameof(RaiderGame.Shield), LikeHoldTests.NoShield);
-        HoldRig.Hold(g, c, Like, LikeHoldTests.LastTickBeforeDone);
-        Assert.Equal(LikeHoldTests.NoShield, g.Shield);
-        Assert.False(g.Powered);
-        HoldRig.Hold(g, c, Like, LikeHoldTests.FinishingTicks);
+        var (g, c, played) = PressRig.Scene(signedIn: false);
+        PressRig.Force(g, nameof(RaiderGame.Shield), LikePressTests.NoShield);
+        PressRig.RestOn(g, c, Like, Tuning.Fps);
+        Assert.Equal(LikePressTests.NoShield, g.Shield);
+        PressRig.Park(g, c, Like);
+        PressRig.PressKey(g, Like);
+        PressRig.Step(g);
         Assert.Equal(Tuning.ShieldHits, g.Shield);
-        Assert.Equal(Tuning.PowerFrames, g.PowerLeft);
         Assert.Equal(g.Frame, g.ShieldHitFrame);               // the rings snap on with the white flash of a shield hit
-        var said = g.Popups.Where(p => p.Text is ShieldUp or PowerUp).ToList();
-        Assert.Equal([ShieldUp, PowerUp], said.Select(p => p.Text));
-        Assert.True(said[1].Y >= said[0].Y + PopupPixelRows, "two lines, not one on the other");
+        Assert.Equal([ShieldUp], g.Popups.Where(p => p.Text.StartsWith("SHIELD")).Select(p => p.Text));
+        Assert.DoesNotContain(g.Popups, p => p.Text.Contains("POWER"));
         Assert.DoesNotContain(played, p => p.Name is SfxNames.PickupShield or SfxNames.PickupWeapon);
     }
 
     [Fact]
-    public void Finishing_a_hold_with_the_shield_up_gives_only_the_power_and_says_so()
+    public void A_like_key_with_the_shield_up_leaves_it_and_says_shield_full()
     {
-        var (g, c, _) = HoldRig.Scene(signedIn: false);
+        var (g, c, _) = PressRig.Scene(signedIn: false);
         long flash = g.ShieldHitFrame;
         Assert.Equal(Tuning.ShieldHits, g.Shield);
-        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        PressRig.Press(g, c, Like);
         Assert.Equal(Tuning.ShieldHits, g.Shield);
-        Assert.Equal(Tuning.PowerFrames, g.PowerLeft);
         Assert.Equal(flash, g.ShieldHitFrame);
-        Assert.Contains(g.Popups, p => p.Text == PowerUp);
+        Assert.Contains(g.Popups, p => p.Text == ShieldFull);
         Assert.DoesNotContain(g.Popups, p => p.Text == ShieldUp);
     }
 
-    [Fact]
-    public void A_power_already_running_starts_again_from_five_seconds()
+    private const int SecondPost = 2, CardGapRows = 2;
+
+    private static Card SecondCardBelow(RaiderGame g, Card first)
     {
-        var (g, c, _) = HoldRig.Scene(signedIn: false);
-        const long powerLeft = Tuning.PowerFrames / 2;   // part spent, so starting again from the full power shows
-        HoldRig.Force(g, LikeHoldTests.PowerUntilField, g.Tick + powerLeft);
-        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
-        Assert.Equal(Tuning.PowerFrames, g.PowerLeft);
+        g.Posts.Offer(PressRig.Post(SecondPost));
+        PressRig.Until(g, () => g.Cards.Cards.Count >= SecondPost);
+        var second = g.Cards.Cards[SecondPost - 1];
+        second.Top = first.Top + first.Shape.Rows + CardGapRows;
+        return second;
+    }
+
+    [Fact]
+    public void A_second_like_inside_the_cooldown_leaves_a_spent_shield_down_and_says_recharging()
+    {
+        var (g, c, _) = PressRig.Scene(signedIn: false);
+        PressRig.Force(g, nameof(RaiderGame.Shield), LikePressTests.NoShield);
+        PressRig.Press(g, c, Like);
+        Assert.Equal(Tuning.ShieldHits, g.Shield);
+        var c2 = SecondCardBelow(g, c);
+        PressRig.Force(g, nameof(RaiderGame.Shield), LikePressTests.NoShield);
+        g.Popups.Clear();
+        PressRig.Press(g, c2, Like);
+        Assert.True(c2.Marks.Paid);
+        Assert.Equal(LikePressTests.NoShield, g.Shield);
+        Assert.Contains(g.Popups, p => p.Text == ShieldRecharging);
+    }
+
+    [Fact]
+    public void A_like_once_the_cooldown_has_run_out_refills_a_spent_shield_again()
+    {
+        var (g, c, _) = PressRig.Scene(signedIn: false);
+        PressRig.Force(g, nameof(RaiderGame.Shield), LikePressTests.NoShield);
+        PressRig.Press(g, c, Like);
+        var c2 = SecondCardBelow(g, c);
+        PressRig.Force(g, nameof(RaiderGame.Shield), LikePressTests.NoShield);
+        PressRig.Force(g, LikePressTests.ShieldReadyField, g.Tick);
+        PressRig.Press(g, c2, Like);
+        Assert.Equal(Tuning.ShieldHits, g.Shield);
+    }
+
+    [Fact]
+    public void A_volley_after_a_like_does_the_damage_of_one_before_it()
+    {
+        var (g, c, _) = PressRig.Scene(signedIn: false);
+        g.Enemies.Clear();
+        double Volley()
+        {
+            g.Bullets.Clear();
+            g.Input.Key(GameKey.Fire, true);
+            g.Step();
+            g.Input.Key(GameKey.Fire, false);
+            return g.Bullets.Where(b => b.Friendly).Sum(b => b.Dmg);
+        }
+        double before = Volley();
+        PressRig.Press(g, c, Like);
+        PressRig.Rest(g, LikePressTests.PastFrozenTicks);
+        Assert.Equal(before, Volley());
     }
 }

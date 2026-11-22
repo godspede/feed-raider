@@ -62,6 +62,9 @@ public static partial class Host
     [JSImport("fetchPicture", "main.js")]
     private static partial Task<string?> FetchPicture(string did, string url, int width, int height);
 
+    [JSImport("fetchVideoThumb", "main.js")]
+    private static partial Task<string?> FetchVideoThumb(string did, string cid, int width, int height);
+
     [JSExport]
     public static void SetSize(int cols, int rows)
     {
@@ -73,15 +76,15 @@ public static partial class Host
     public static async Task StartSpectator(string handle, string darkness)
     {
         _cts?.Cancel();
-        _cts = new CancellationTokenSource();
+        var cts = _cts = new CancellationTokenSource();
         using var http = new HttpClient { Timeout = HttpTimeout };
-        SafeCue(MusicCues.Gameplay);
+        MusicCue(MusicCues.Gameplay);
         var spectator = new Spectator(http, () => (_cols, _rows), new JsSink()) { Darkness = darkness != DarknessOff, DarknessDemo = darkness == DarknessDemoMode };
         try
         {
-            await spectator.RunAsync(handle, _cts.Token);
+            await spectator.RunAsync(handle, cts.Token);
         }
-        catch (OperationCanceledException) { }   // cancelling is how this ends
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }   // cancelling is how this ends
         catch (Exception ex)
         {
             ShowError(Plain.FeedFailureText(ex, "@" + handle));
@@ -98,7 +101,7 @@ public static partial class Host
         var cts = _tour = new CancellationTokenSource();
         _tourPause.Hold(TabHold, _hidden);
         try { await TourRun.RunAsync(() => (_cols, _rows), new JsSink(), (ulong)(uint)seed, cts.Token, TermBusy, _tourPause, slow ? TourSlowScale : 1); }
-        catch (OperationCanceledException) { }   // cancelling is how this ends
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }   // cancelling is how this ends
     }
 
     /// <summary>Ends the start page's tour; nothing of it is left running or drawing.</summary>
@@ -116,7 +119,7 @@ public static partial class Host
 
     /// <summary>Runs Feed Raider. Signed in, posts come from the account's feed and a like goes out through the session;
     /// signed out they come from the public Discover feed (or the follows of <paramref name="handle"/>) and the prompt only
-    /// says to sign in. <paramref name="stage"/> above 1 starts the difficulty ramp there: a development aid (<c>?stage=</c>). <paramref name="bossGates"/> false (<c>?gates=off</c>) runs without boss gates.</summary>
+    /// says to sign in. <paramref name="stage"/> above 1 starts the difficulty ramp there: a development aid (<c>?stage=</c>). <paramref name="bossGates"/> false (<c>?gates=off</c>) runs without boss fights.</summary>
     [JSExport]
     public static async Task StartGame(string handle, string feed, string darkness, bool showFps, bool adaptive, int stage, int boss, bool bossGates)
     {
@@ -124,66 +127,52 @@ public static partial class Host
         _cts?.Cancel();
         var cts = _cts = new CancellationTokenSource();
         using var http = new HttpClient { Timeout = HttpTimeout };
-        var game = new RaiderGame((ulong)Environment.TickCount64) { BossGates = bossGates };
-        var me = Bridge.SessionSource.Current;
+        var game = new RaiderGame((ulong)Environment.TickCount64) { BossGates = bossGates, OpeningBurst = true };
+        var me = Bridge.Session.Current;
         game.SignedIn = me is not null;
         game.Grants = _grants;
         if (boss >= 1) game.StartAtBoss(boss);   // development aid: ?boss=4 opens on the warning of stage 4's boss
         else if (stage > 1) game.StartAtStage(stage);
         if (me is not null) game.SetPlayer(me.Did);
-        // The only writes the game makes here: the player held the ship on one post's heart, or its repost loop, for three seconds.
-        game.OnLike = post => _ = RaiderFeeds.WriteAsync(game, Bridge.LikeActions, post, PostAction.Like, cts.Token);
-        game.OnRepost = post => _ = RaiderFeeds.WriteAsync(game, Bridge.LikeActions, post, PostAction.Repost, cts.Token);
-        game.OnDelete = (post, action) => _ = RaiderFeeds.WriteAsync(game, Bridge.LikeActions, post, action, cts.Token, undo: true);
+        // The only writes the game makes here: the player pressed one post's heart or repost loop, by a click, Z or X.
+        game.OnLike = post => _ = RaiderFeeds.WriteAsync(game, Bridge.Actions, post, PostAction.Like, cts.Token);
+        game.OnRepost = post => _ = RaiderFeeds.WriteAsync(game, Bridge.Actions, post, PostAction.Repost, cts.Token);
+        game.OnDelete = (post, action) => _ = RaiderFeeds.WriteAsync(game, Bridge.Actions, post, action, cts.Token, undo: true);
         // A read, never a write: the author's own next reply to a post the player liked, through the session when signed in
         // and from the public AppView when signed out or when the session may not read it.
-        IThreadSource threads = me is not null ? new FallbackThreadSource(Bridge.ThreadSource, new PublicThreadSource(http)) : new PublicThreadSource(http);
+        IThreadSource threads = me is not null ? new FallbackThreadSource(Bridge.Thread, new PublicThreadSource(http)) : new PublicThreadSource(http);
         game.ThreadWanted = post => _ = RaiderFeeds.ThreadAsync(game, threads, post, cts.Token);
         game.AvatarWanted = post => _ = AvatarAsync(game, post);
-        game.PictureWanted = (post, index, width, height) => _ = PictureAsync(game, post, index, width, height);
-        game.BestToBeat = Safe(BestScore) ?? 0;   // no readable best: the run has nothing to beat
-        game.OnBest = score => Safe(() => SaveBestScore(score));
-        game.Said = message => Safe(() => Announce(message));
-        game.Music = new MusicDirector(SafeCue);
-        game.Sfx = new SfxBus((name, pan, step, size) => Safe(() => SfxPlay(name, pan, step, size)));
+        game.PictureWanted = ask => _ = PictureAsync(game, ask);
+        // The page answers these without throwing for what a browser may refuse: storage it may not use reads as no best and keeps
+        // none, and a sound the browser cannot make turns that sound off (music.js, sfx.js). Only a fault throws.
+        game.BestToBeat = BestScore();
+        game.OnBest = SaveBestScore;
+        game.Said = Announce;
+        game.Music = new MusicDirector(MusicCue);
+        game.Sfx = new SfxBus(SfxPlay);
         lock (game) _game = game;
         var pause = _pause = new PauseGate();
         pause.Hold(TabHold, _hidden);
         pause.Hold(MenuHold, _menu);
 
         // Signed in, the posts are the player's Following timeline unless ?feed= names another; see FeedPlan.
-        var plan = FeedPlan.Choose(feed, me is not null, handle, Bridge.TimelineSource, Bridge.FeedSource, new PublicFeedSource(http), h => new FollowsFeedSource(http, h, onTrouble: ShowNotice), m => { lock (game) game.Say(m); });
+        var plan = FeedPlan.Choose(feed, me is not null, handle, Bridge.Timeline, Bridge.Feed, new PublicFeedSource(http), h => new FollowsFeedSource(http, h, onTrouble: ShowNotice), m => { lock (game) game.Say(m); });
         if (plan is null) { ShowError("Unknown feed. Use following, discover, foryou, random or an at:// feed generator URI."); return; }
         game.PlainOnly = plan.FeedUri == Feeds.Random;
         var runner = _runner = new RaiderRunner(game, () => (_cols, _rows), new JsSink()) { ShowFps = showFps, Adaptive = adaptive, Pause = pause };
         var tasks = new List<Task> { runner.RunAsync(cts.Token, TermBusy), RaiderFeeds.PostsAsync(game, plan.Primary, plan.Fallback, plan.FeedUri, cts.Token, onFallback: ShowNotice, sourceName: plan.Name, onTrouble: ShowNotice, pause: pause, onStatus: message => { lock (game) game.Say(message); }) };
         if (darkness != DarknessOff) tasks.Add(RaiderFeeds.DarknessAsync(game, http, ReadPlayerLanguages(), cts.Token, pause: pause));
         try { await Task.WhenAll(tasks); }
-        catch (OperationCanceledException) { }   // cancelling is how this ends
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }   // cancelling is how this ends
         catch (Exception ex) { ShowError(Plain.FeedFailureText(ex, plan.Name)); }
     }
 
-    // Music and sound effects are never allowed to break the game: a JS error from a cue or the best-score store is written to the
-    // browser console (the first one only, since a cue fires often) and the game plays on. Not a toast: Said itself goes through Safe.
-    private static void SafeCue(string cue) => Safe(() => MusicCue(cue));
-    private static bool _jsFailureReported;
-    private static void ReportJsFailure(JSException e)
-    {
-        if (_jsFailureReported) return;
-        _jsFailureReported = true;
-        Console.Error.WriteLine($"a call into the page failed: {e.Message}");
-    }
-    // navigator.languages as the page's list of tags; a failed read is reported like any call into the page, and the player reads English
-    private static PlayerLanguages ReadPlayerLanguages()
-    {
-        try { return PlayerLanguages.FromList(PlayerLanguageList()); }
-        catch (JSException e) { ReportJsFailure(e); return PlayerLanguages.FromList(null); }
-    }
+    // navigator.languages as the page's list of tags, which the page reads without throwing (an empty list reads as English)
+    private static PlayerLanguages ReadPlayerLanguages() => PlayerLanguages.FromList(PlayerLanguageList());
 
-    private static void Safe(Action act) { try { act(); } catch (JSException e) { ReportJsFailure(e); } }
-    private static int? Safe(Func<int> get) { try { return get(); } catch (JSException e) { ReportJsFailure(e); return null; } }
-
-    // The avatar is fetched and downsampled to 8x8 in JS (canvas); a CORS failure leaves the tinted fallback and is noted in the console.
+    // The avatar is fetched and downsampled to 8x8 in JS (canvas). The page answers null for an avatar it could not fetch, which
+    // leaves the tinted fallback; nothing waits on this task, so anything else is said in the notice line rather than lost.
     private static async Task AvatarAsync(RaiderGame game, FeedPost post)
     {
         try
@@ -192,21 +181,23 @@ public static partial class Host
             if (csv is null) return;
             if (AvatarCsv.Parse(csv) is { } px) lock (game) game.SetAvatar(post.AuthorDid, px);
         }
-        catch (Exception ex) when (ex is JSException or FormatException or OverflowException) { Console.Error.WriteLine($"avatar not drawn: {ex.Message}"); }
+        catch (Exception ex) when (ex is JSException or FormatException or OverflowException) { ShowNotice($"An avatar could not be drawn ({ex.Message}), so its card keeps its plain colour."); }
     }
 
-    // A post's picture is fetched and downsampled to the size of its box in JS; a failure leaves the empty box on the card.
-    private static async Task PictureAsync(RaiderGame game, FeedPost post, int index, int width, int height)
+    // A card's picture (a post's picture, a link card's thumbnail or a video's) is fetched and downsampled to the size of its box in JS.
+    // The page answers null for one it could not fetch, which leaves the empty box; as with the avatar, anything else is a notice.
+    private static async Task PictureAsync(RaiderGame game, PictureAsk ask)
     {
         try
         {
-            if (post.Pictures is not { } pictures || index >= pictures.Count) return;
-            string? csv = await FetchPicture(post.AuthorDid, pictures[index].Thumb, width, height);
+            string? csv = ask.Source == PictureSource.VideoService
+                ? await FetchVideoThumb(ask.Did, ask.Address, ask.W, ask.H)
+                : await FetchPicture(ask.Did, ask.Address, ask.W, ask.H);
             if (csv is null) return;
             var px = csv.Split(',').Select(uint.Parse).ToArray();
-            lock (game) game.SetPicture(pictures[index].Thumb, width, height, px);
+            lock (game) game.SetPicture(ask.Key, ask.W, ask.H, px);
         }
-        catch (Exception ex) when (ex is JSException or FormatException or OverflowException) { Console.Error.WriteLine($"picture not drawn: {ex.Message}"); }
+        catch (Exception ex) when (ex is JSException or FormatException or OverflowException) { ShowNotice($"A picture could not be drawn ({ex.Message}), so its box stays empty."); }
     }
 
     /// <summary>The page's tab went to the background (or came back): the game loop, feed paging and both sockets stop, then resume.</summary>
@@ -263,15 +254,17 @@ public static partial class Host
     [JSExport] public static void Pointer(double col, double row) => WithGame(g => g.Input.Pointer(col, row));
     [JSExport] public static void PointerGone() => WithGame(g => g.Input.PointerGone());
     [JSExport] public static void Drag(double dCols, double dRows) => WithGame(g => g.Input.Drag(dCols, dRows));
-    [JSExport] public static void Tap(double col, double row) => WithGame(g => g.Input.Tap(col, row));
+    [JSExport] public static void Click(double col, double row, bool touch) => WithGame(g => g.Input.Click(col, row, touch));
     [JSExport] public static void Bomb() => WithGame(g => g.Input.Bomb());
+    /// <summary>The <c>?debug=weapon</c> page's 0 key: the ship's next weapon kind, round from the top to the first.</summary>
+    [JSExport] public static void DebugWeapon() => WithGame(g => g.DebugStepWeapon());
 
     private static RaiderRunner? _runner;
 
-    /// <summary>A click or tap on a cell of the screen: on a button of the feed log's last drawn frame it toggles that like or repost,
+    /// <summary>A log click: a click on a cell of the screen, on a button of the feed log's last drawn frame it toggles that like or repost,
     /// anywhere else it does nothing.</summary>
     [JSExport]
-    public static void Click(int col, int row) => WithGame(g =>
+    public static void LogClick(int col, int row) => WithGame(g =>
     {
         if (_runner is { } r) r.View.ToggleLogButtonAt(g, col, row);
     });

@@ -1,19 +1,16 @@
+using FeedRaider.Engine;
 using FeedRaider.Engine.Raider;
 using FeedRaider.Tests.Enemies;
 
 namespace FeedRaider.Tests;
 
-// The score line, the power bar, the stage colour and the text a carrier hauls, read off the screen the view draws.
+// The score line, the stage colour and the text a carrier hauls, read off the screen the view draws.
 public class HudAndCarrierTextTests
 {
     private const uint HudBg = RaiderView.HudBg, Pink = Palette.Pink, Ice = Palette.Ice, PostText = RaiderView.PostText, CarrierTextBg = RaiderView.PostBg;
-    // the bar sits this far from the right edge of the HUD, and the text read runs on over the rail cell beside the field
-    private const int PowerBarOffset = RaiderView.PowerLabelWidth, PowerBarWidth = PowerBarOffset + 1;
-    private static readonly string PowerLabel = RaiderView.PowerHeart + " POWER ";
-    private const int OneFrameLeft = 1;
 
-    // the HUD's two rows: the score and the stage on top, the power bar under them
-    private const int ScoreRow = 0, PowerBarRow = 1;
+    // the HUD's two rows: the score and the stage on top, the wave and the weapon under them
+    private const int ScoreRow = 0, WaveRow = 1;
     // the score starts one cell in from the HUD's left edge, and the stage readout ends two in from its right edge
     private const int ScoreCol = 1, StageEndFromRight = 2;
 
@@ -24,16 +21,16 @@ public class HudAndCarrierTextTests
     private static RaiderGame EmptyGame()
     {
         var game = new RaiderGame(EnemyKit.PlainSeed) { SignedIn = true };
-        game.SetLayout(FieldLayout.Compute(HoldRig.ScrCols, HoldRig.ScrRows));
+        game.SetLayout(FieldLayout.Compute(PressRig.ScrCols, PressRig.ScrRows));
         game.Enemies.Clear(); game.Bullets.Clear(); game.Particles.Clear(); game.Rings.Clear(); game.Pickups.Clear();
         return game;
     }
 
     private static Screen Render(RaiderGame game, out FieldLayout lay)
     {
-        var scr = new Screen(HoldRig.ScrCols, HoldRig.ScrRows);
+        var scr = new Screen(PressRig.ScrCols, PressRig.ScrRows);
         new RaiderView().FitAndRender(game, scr);
-        lay = FieldLayout.Compute(HoldRig.ScrCols, HoldRig.ScrRows);
+        lay = FieldLayout.Compute(PressRig.ScrCols, PressRig.ScrRows);
         return scr;
     }
 
@@ -44,11 +41,11 @@ public class HudAndCarrierTextTests
     {
         var game = EmptyGame();
         const int smallScore = 42, bigScore = 987654;
-        HoldRig.Force(game, nameof(RaiderGame.Score), smallScore);
+        PressRig.Force(game, nameof(RaiderGame.Score), smallScore);
         var scr = Render(game, out var lay);
         string small = $"SCORE {smallScore:000000}", big = $"SCORE {bigScore}";
         Assert.Equal(small, TextAt(scr, ScoreRow, lay.Col0 + ScoreCol, small.Length));
-        HoldRig.Force(game, nameof(RaiderGame.Score), bigScore);
+        PressRig.Force(game, nameof(RaiderGame.Score), bigScore);
         scr = Render(game, out lay);
         Assert.Equal(big, TextAt(scr, ScoreRow, lay.Col0 + ScoreCol, big.Length));
     }
@@ -68,34 +65,17 @@ public class HudAndCarrierTextTests
         Assert.Equal(HudBg, scr.Bg[col]);
     }
 
-    private static string PowerRow(int framesLeft, out Screen scr, out FieldLayout lay)
+    [Fact]
+    public void A_like_leaves_the_wave_label_on_the_second_hud_row()
     {
         var game = EmptyGame();
-        HoldRig.Force(game, LikeHoldTests.PowerUntilField, game.Tick + framesLeft);
-        Assert.Equal(framesLeft, game.PowerLeft);
-        scr = Render(game, out lay);
-        return TextAt(scr, PowerBarRow, lay.Col0 + lay.PCols - PowerBarOffset, PowerBarWidth);
-    }
-
-    [Fact]
-    public void The_power_bar_is_full_at_the_start_and_shortens_with_the_time_left()
-    {
-        Assert.Equal($"{PowerLabel}████████", PowerRow(Tuning.PowerFrames, out _, out _));
-        Assert.Equal($"{PowerLabel}████   │", PowerRow(Tuning.PowerFrames / 2, out _, out _));
-        Assert.Equal($"{PowerLabel}█      │", PowerRow(OneFrameLeft, out _, out _));
-    }
-
-    [Fact]
-    public void The_power_bar_is_pink_and_shows_one_block_when_nearly_out_and_nothing_when_out()
-    {
-        string row = PowerRow(OneFrameLeft, out var scr, out var lay);
-        Assert.StartsWith($"{PowerLabel}█ ", row);
-        int col = lay.Col0 + lay.PCols - PowerBarOffset;
-        Assert.Equal(Pink, scr.Fg[PowerBarRow * scr.Cols + col]);
-        Assert.Equal(HudBg, scr.Bg[PowerBarRow * scr.Cols + col]);
-        var game = EmptyGame();
-        scr = Render(game, out lay);
-        Assert.DoesNotContain("POWER", TextAt(scr, PowerBarRow, lay.Col0, lay.PCols));
+        PressRig.Force(game, nameof(RaiderGame.Shield), LikePressTests.NoShield);
+        game.Posts.Offer(PressRig.Post(1));
+        PressRig.Until(game, () => game.Cards.Cards.Count >= 1);
+        PressRig.Press(game, game.Cards.Cards[0], PostAction.Like);
+        var scr = Render(game, out var lay);
+        string wave = game.WaveLabel();
+        Assert.Equal(wave, TextAt(scr, WaveRow, lay.Col0 + ScoreCol, wave.Length));
     }
 
     /// <summary>Spawns a carrier hauling <paramref name="text"/> at this pixel spot, already settled: no grace, wind-up or flash.</summary>

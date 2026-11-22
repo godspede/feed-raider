@@ -12,19 +12,41 @@ public enum AttachmentKind { None, Picture, Video, Link, Quote, Other }
 /// <summary>One picture attached to a post: the address of its thumbnail, and its shape in pixels (0 by 0 when the post does not say).</summary>
 public sealed record PostPicture(string Thumb, int Width = 0, int Height = 0);
 
+/// <summary>A link card: the title, the host of its address, a description (empty when none) and the address of its thumbnail (null when none).</summary>
+public sealed record LinkCard(string Title, string Host, string Description, string? ThumbUrl);
+
+/// <summary>A video whose thumbnail the game may read: the author's DID, the video's CID, its shape (width over height) when the post says it, and its alt text.</summary>
+public sealed record VideoRef(string Did, string Cid, double? AspectRatio, string? Alt);
+
+/// <summary>What a quote shows: the quoted post, or the notice Bluesky gives for one that is gone.</summary>
+public enum QuoteState { Shown, Deleted, Blocked, Detached, Hidden, Other }
+
+/// <summary>A quoted post. <see cref="Text"/> and the author are set only when <see cref="State"/> is Shown; <see cref="OtherLabel"/> only for Other
+/// (a feed, list, labeler or starter pack, such as "a feed: Name"). <see cref="AuthorOptOut"/>: the quoted author opted out of signed-out viewers.
+/// <see cref="Pictures"/>, <see cref="Link"/> and <see cref="Video"/> are the quoted post's own media (one kind at most); <see cref="HasMedia"/> says
+/// whether it has any. <see cref="AuthorDid"/> is the quoted author's DID, which a card's ask for the quoted post's pictures names. A quote
+/// inside the quoted post is not read: <see cref="QuotesAnother"/> only says there is one.</summary>
+public sealed record PostQuote(
+    QuoteState State, string? AuthorName, string? AuthorHandle, string Text, bool HasMedia, string? OtherLabel,
+    bool AuthorOptOut = false, IReadOnlyList<PostPicture>? Pictures = null, LinkCard? Link = null, VideoRef? Video = null, string? AuthorDid = null,
+    bool QuotesAnother = false);
+
 /// <summary>A post from a feed. <see cref="ReplyRoot"/> and <see cref="ReplyParent"/> are null for a top-level post.
 /// <see cref="AuthorOptOut"/>: the author carries the <c>!no-unauthenticated</c> label (no signed-out viewers).
 /// <see cref="Adult"/>: the post or its author carries an adult or graphic label.
 /// <see cref="Labelled"/>: the post or its author carries any other label, bar <see cref="FeedMapper.HarmlessLabels"/>.
 /// <see cref="LinkText"/>: the text is only a link, or points at another bsky.app post (a quote without the embed).
-/// <see cref="Pictures"/>: the pictures attached to the post itself, at most <see cref="FeedMapper.MaxPictures"/>; null when there are none.</summary>
+/// <see cref="Pictures"/>: the pictures attached to the post itself, at most <see cref="FeedMapper.MaxPictures"/>; null when there are none.
+/// <see cref="Link"/>: the post's own link card. <see cref="Video"/>: the post's own video, null when the view gave no thumbnail that names the author and the video.
+/// <see cref="Quote"/>: the post it quotes. For a quote with media (<c>recordWithMedia</c>) the own media are in <see cref="Pictures"/>, <see cref="Link"/> or <see cref="Video"/> while <see cref="Attachment"/> stays Quote.</summary>
 public sealed record FeedPost(
     string Uri, string Cid, string AuthorDid, string AuthorHandle, string Text,
     int LikeCount, int RepostCount, int ReplyCount, PostRef? ReplyRoot, PostRef? ReplyParent,
     string? AvatarUrl = null, bool HasEmbed = false, bool AlreadyLiked = false, bool AuthorOptOut = false, bool Adult = false,
     bool Labelled = false, bool LinkText = false,
     string? DisplayName = null, bool AlreadyReposted = false, string? LikeUri = null, string? RepostUri = null,
-    AttachmentKind Attachment = AttachmentKind.None, string? AttachmentText = null, IReadOnlyList<PostPicture>? Pictures = null)
+    AttachmentKind Attachment = AttachmentKind.None, string? AttachmentText = null, IReadOnlyList<PostPicture>? Pictures = null,
+    LinkCard? Link = null, VideoRef? Video = null, PostQuote? Quote = null)
 {
     public PostRef Ref => new(Uri, Cid);
 }
@@ -83,6 +105,11 @@ public static class Feeds
 
 public static partial class FeedMapper
 {
+    // An embed's $type is one of these lexicon ids followed by #view (or #main in a record); each is matched as a prefix. The
+    // record id is itself a prefix of recordWithMedia, so a match on it takes both.
+    private const string EmbedImages = "app.bsky.embed.images", EmbedExternal = "app.bsky.embed.external", EmbedVideo = "app.bsky.embed.video";
+    private const string EmbedRecord = "app.bsky.embed.record", EmbedRecordWithMedia = "app.bsky.embed.recordWithMedia";
+
     /// <summary>Maps an <c>app.bsky.feed.getFeed</c> response body to a page. Items without uri, cid or author DID are skipped, and so
     /// are reposts (the post belongs to another author, who was not asked for) and adult posts. With <paramref name="signedOut"/> (the page was read without signing in) so are authors who opted out of signed-out viewers.</summary>
     public static FeedPage ParsePage(string json, bool skipReposts = true, bool signedOut = false)
@@ -122,13 +149,15 @@ public static partial class FeedMapper
         }
         var viewer = ViewerOf(p);
         var (kind, attText) = AttachmentOf(p);
+        var media = OwnMediaOf(p, did);
         return new FeedPost(uri, cid, did, Str(author, "handle") ?? did, text,
             Int(p, "likeCount"), Int(p, "repostCount"), Int(p, "replyCount"), rootRef, parentRef,
-            Str(author, "avatar"), HasEmbed(p) || HasRecordEmbed(p), AlreadyLiked(p),
+            Str(author, "avatar"), HasEmbed(p) || HasRecordEmbed(p), viewer.Like is not null,
             HasLabel(author, OptOutLabel), IsAdult(p),
             HasOtherLabel(p) || HasOtherLabel(author) || HasSelfLabel(p, null),
             IsLinkOrQuotedPost(p, text),
-            Clean(Str(author, "displayName")), viewer.Repost is not null, viewer.Like, viewer.Repost, kind, attText, kind == AttachmentKind.Picture ? PicturesOf(p) : null);
+            Clean(Str(author, "displayName")), viewer.Repost is not null, viewer.Like, viewer.Repost, kind, attText, kind == AttachmentKind.Picture ? PicturesOf(p) : media.Pictures,
+            media.Link, media.Video, QuoteOf(p));
     }
 
     /// <summary>The most pictures a post may carry.</summary>
@@ -136,10 +165,12 @@ public static partial class FeedMapper
 
     /// <summary>The pictures of the post's own embed view (<c>app.bsky.embed.images#view</c>): each one's thumbnail address and, where
     /// the post gives it, its shape. Null when there is none: a quoted post's pictures, a video's poster and a link card's are not read.</summary>
-    public static IReadOnlyList<PostPicture>? PicturesOf(JsonElement p)
+    public static IReadOnlyList<PostPicture>? PicturesOf(JsonElement p) =>
+        p.TryGetProperty("embed", out var e) && e.ValueKind == JsonValueKind.Object ? PicturesOfEmbed(e) : null;
+
+    private static IReadOnlyList<PostPicture>? PicturesOfEmbed(JsonElement e)
     {
-        if (!p.TryGetProperty("embed", out var e) || e.ValueKind != JsonValueKind.Object
-            || Str(e, "$type") is not { } type || !type.StartsWith("app.bsky.embed.images", StringComparison.Ordinal)
+        if (Str(e, "$type") is not { } type || !type.StartsWith(EmbedImages, StringComparison.Ordinal)
             || !e.TryGetProperty("images", out var imgs) || imgs.ValueKind != JsonValueKind.Array) return null;
         var list = new List<PostPicture>();
         foreach (var img in imgs.EnumerateArray())
@@ -156,6 +187,118 @@ public static partial class FeedMapper
             list.Add(new PostPicture(thumb, w, h));
         }
         return list.Count > 0 ? list : null;
+    }
+
+    private readonly record struct Media(IReadOnlyList<PostPicture>? Pictures, LinkCard? Link, VideoRef? Video)
+    {
+        public bool Any => Pictures is not null || Link is not null || Video is not null;
+    }
+
+    // the media view itself: images#view, external#view or video#view; the author's DID checks a video's thumbnail
+    private static Media MediaOfEmbed(JsonElement e, string did)
+    {
+        if (e.ValueKind != JsonValueKind.Object || Str(e, "$type") is not { } type) return default;
+        if (type.StartsWith(EmbedImages, StringComparison.Ordinal)) return new Media(PicturesOfEmbed(e), null, null);
+        if (type.StartsWith(EmbedExternal, StringComparison.Ordinal)) return new Media(null, LinkOf(e), null);
+        if (type.StartsWith(EmbedVideo, StringComparison.Ordinal)) return new Media(null, null, VideoOf(e, did));
+        return default;
+    }
+
+    // the post's own media: its embed, or for a quote with media (recordWithMedia) the media half of it
+    private static Media OwnMediaOf(JsonElement p, string did)
+    {
+        if (!p.TryGetProperty("embed", out var e) || e.ValueKind != JsonValueKind.Object) return default;
+        if (Str(e, "$type") is { } t && t.StartsWith(EmbedRecordWithMedia, StringComparison.Ordinal))
+            return e.TryGetProperty("media", out var m) ? MediaOfEmbed(m, did) : default;
+        return MediaOfEmbed(e, did);
+    }
+
+    private static LinkCard? LinkOf(JsonElement e)
+    {
+        var ext = e.TryGetProperty("external", out var x) && x.ValueKind == JsonValueKind.Object ? x : e;
+        if (Str(ext, "uri") is not { } u || !Uri.TryCreate(u, UriKind.Absolute, out var uri) || uri.Host.Length == 0) return null;
+        string title = Clean(Str(ext, "title")) ?? uri.Host;
+        return new LinkCard(title, uri.Host, Clean(Str(ext, "description")) ?? "", Str(ext, "thumb") is { Length: > 0 } t ? t : null);
+    }
+
+    /// <summary>The host the video service answers a thumbnail request on, before it redirects to the CDN.</summary>
+    public const string VideoServiceHost = "video.bsky.app";
+
+    // null unless the thumbnail is video.bsky.app/watch/<author did>/<embed cid>/thumbnail.jpg: the game builds the address it fetches from the DID and CID, never from the view
+    private static VideoRef? VideoOf(JsonElement e, string did)
+    {
+        if (Str(e, "cid") is not { Length: > 0 } cid || Str(e, "thumbnail") is not { } thumb
+            || !Uri.TryCreate(thumb, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps
+            || !string.Equals(uri.Host, VideoServiceHost, StringComparison.OrdinalIgnoreCase)) return null;
+        var parts = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 4 || parts[0] != "watch" || Uri.UnescapeDataString(parts[1]) != did || Uri.UnescapeDataString(parts[2]) != cid) return null;
+        double? ratio = null;
+        if (e.TryGetProperty("aspectRatio", out var ar) && ar.ValueKind == JsonValueKind.Object && Int(ar, "width") is > 0 and var w && Int(ar, "height") is > 0 and var h)
+            ratio = (double)w / h;
+        return new VideoRef(did, cid, ratio, Clean(Str(e, "alt")));
+    }
+
+    /// <summary>The quote a post carries, from its embed view (<c>record</c> or <c>recordWithMedia</c>); null when the post quotes nothing.</summary>
+    public static PostQuote? QuoteOf(JsonElement p)
+    {
+        if (!p.TryGetProperty("embed", out var e) || e.ValueKind != JsonValueKind.Object || Str(e, "$type") is not { } type
+            || !type.StartsWith(EmbedRecord, StringComparison.Ordinal)) return null;
+        JsonElement view = default;
+        if (type.StartsWith(EmbedRecordWithMedia, StringComparison.Ordinal))
+        {
+            if (e.TryGetProperty("record", out var outer) && outer.ValueKind == JsonValueKind.Object && outer.TryGetProperty("record", out var inner)) view = inner;
+        }
+        else if (e.TryGetProperty("record", out var direct)) view = direct;
+        if (view.ValueKind != JsonValueKind.Object) return new PostQuote(QuoteState.Other, null, null, "", false, null);
+        string vt = Str(view, "$type") ?? "";
+        if (vt.EndsWith("#viewRecord", StringComparison.Ordinal)) return ShownQuote(view);
+        if (vt.EndsWith("#viewNotFound", StringComparison.Ordinal)) return Dead(QuoteState.Deleted);
+        if (vt.EndsWith("#viewBlocked", StringComparison.Ordinal)) return Dead(QuoteState.Blocked);
+        if (vt.EndsWith("#viewDetached", StringComparison.Ordinal)) return Dead(QuoteState.Detached);
+        return new PostQuote(QuoteState.Other, null, null, "", false, OtherLabelOf(view, vt));
+
+        static PostQuote Dead(QuoteState s) => new(s, null, null, "", false, null);
+    }
+
+    private static PostQuote ShownQuote(JsonElement view)
+    {
+        var author = view.TryGetProperty("author", out var a) && a.ValueKind == JsonValueKind.Object ? a : default;
+        bool hasAuthor = author.ValueKind == JsonValueKind.Object;
+        string? did = hasAuthor ? Str(author, "did") : null;
+        var value = view.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.Object ? v : default;
+        bool adult = hasAuthor && HasLabel(author, AdultLabels) || HasLabel(view, AdultLabels)
+            || value.ValueKind == JsonValueKind.Object && RecordHasSelfLabel(value, AdultLabels);
+        if (adult) return new PostQuote(QuoteState.Hidden, null, null, "", false, null);
+        string text = value.ValueKind == JsonValueKind.Object ? Clean(Str(value, "text")) ?? "" : "";
+        var media = default(Media);
+        bool quotesAnother = false;
+        if (view.TryGetProperty("embeds", out var all) && all.ValueKind == JsonValueKind.Array)
+            foreach (var em in all.EnumerateArray())
+                quotesAnother |= em.ValueKind == JsonValueKind.Object && Str(em, "$type") is { } et && et.StartsWith(EmbedRecord, StringComparison.Ordinal);
+        if (did is not null && view.TryGetProperty("embeds", out var embeds) && embeds.ValueKind == JsonValueKind.Array)
+            foreach (var em in embeds.EnumerateArray())
+            {
+                media = MediaOfEmbed(em, did);
+                if (!media.Any && em.ValueKind == JsonValueKind.Object && Str(em, "$type") is { } t
+                    && t.StartsWith(EmbedRecordWithMedia, StringComparison.Ordinal) && em.TryGetProperty("media", out var m))
+                    media = MediaOfEmbed(m, did);
+                if (media.Any) break;
+            }
+        return new PostQuote(QuoteState.Shown, hasAuthor ? Clean(Str(author, "displayName")) : null, hasAuthor ? Str(author, "handle") ?? did : null, text, media.Any, null,
+            hasAuthor && HasLabel(author, OptOutLabel), media.Pictures, media.Link, media.Video, did, quotesAnother);
+    }
+
+    // "a feed: Name" and the like, for a record that is not a post
+    private static string OtherLabelOf(JsonElement view, string type)
+    {
+        string kind = type.EndsWith("#generatorView", StringComparison.Ordinal) ? "a feed"
+            : type.EndsWith("#listView", StringComparison.Ordinal) ? "a list"
+            : type.EndsWith("#labelerView", StringComparison.Ordinal) ? "a labeler"
+            : type.Contains("starterPack", StringComparison.Ordinal) ? "a starter pack" : "a record";
+        string? name = Clean(Str(view, "displayName") ?? Str(view, "name"))
+            ?? (view.TryGetProperty("record", out var r) && r.ValueKind == JsonValueKind.Object ? Clean(Str(r, "name")) : null)
+            ?? (view.TryGetProperty("creator", out var c) && c.ValueKind == JsonValueKind.Object ? Clean(Str(c, "displayName")) : null);
+        return name is null ? kind : $"{kind}: {name}";
     }
 
     private static string? Clean(string? s) => string.IsNullOrWhiteSpace(s) ? null : CellText.Clean(s) is { Length: > 0 } c ? c : null;
@@ -176,16 +319,16 @@ public static partial class FeedMapper
         else if (p.TryGetProperty("record", out var r) && r.ValueKind == JsonValueKind.Object && r.TryGetProperty("embed", out var er) && er.ValueKind == JsonValueKind.Object) e = er;
         else return (AttachmentKind.None, null);
         string type = Str(e, "$type") ?? "";
-        if (type.StartsWith("app.bsky.embed.record", StringComparison.Ordinal)) return (AttachmentKind.Quote, null);
-        if (type.StartsWith("app.bsky.embed.images", StringComparison.Ordinal))
+        if (type.StartsWith(EmbedRecord, StringComparison.Ordinal)) return (AttachmentKind.Quote, null);
+        if (type.StartsWith(EmbedImages, StringComparison.Ordinal))
         {
             string? alt = null;
             if (e.TryGetProperty("images", out var imgs) && imgs.ValueKind == JsonValueKind.Array && imgs.GetArrayLength() > 0 && imgs[0].ValueKind == JsonValueKind.Object)
                 alt = Str(imgs[0], "alt");
             return (AttachmentKind.Picture, Clean(alt));
         }
-        if (type.StartsWith("app.bsky.embed.video", StringComparison.Ordinal)) return (AttachmentKind.Video, Clean(Str(e, "alt")));
-        if (type.StartsWith("app.bsky.embed.external", StringComparison.Ordinal))
+        if (type.StartsWith(EmbedVideo, StringComparison.Ordinal)) return (AttachmentKind.Video, Clean(Str(e, "alt")));
+        if (type.StartsWith(EmbedExternal, StringComparison.Ordinal))
         {
             var ext = e.TryGetProperty("external", out var x) && x.ValueKind == JsonValueKind.Object ? x : e;
             string? title = Clean(Str(ext, "title"));
@@ -246,10 +389,6 @@ public static partial class FeedMapper
             if (v.ValueKind == JsonValueKind.Object && Str(v, "val") is { } s && (vals is null ? IsUnlistedLabel(s) : Array.IndexOf(vals, s) >= 0)) return true;
         return false;
     }
-
-    /// <summary>True when the signed-in viewer already liked the post (<c>viewer.like</c> is the viewer's like record).</summary>
-    public static bool AlreadyLiked(JsonElement p) =>
-        p.TryGetProperty("viewer", out var v) && v.ValueKind == JsonValueKind.Object && Str(v, "like") is { Length: > 0 };
 
     /// <summary>True when the post has any embed: images, video, an external link card, a quoted post or a quote with media.</summary>
     public static bool HasEmbed(JsonElement p) =>

@@ -21,6 +21,9 @@ internal static class EnemyKit
     /// <summary>The seed a test game uses when the run's luck is not what it checks.</summary>
     public const ulong PlainSeed = 5;
 
+    /// <summary>The share of the field's width a test spawns an enemy at when where it comes in is not what it checks: the middle.</summary>
+    public const double MidWidth = 0.5;
+
     /// <summary>A game with the field emptied, so a test places exactly what it checks. Signed in.</summary>
     public static RaiderGame Game(int cols = BigCols, int rows = BigRows, ulong seed = PlainSeed)
     {
@@ -31,7 +34,7 @@ internal static class EnemyKit
     }
 
     /// <summary>One enemy of a kind, alone in a fresh game: the speaker to hand a behaviour that is asked for its words or its taste.</summary>
-    public static Enemy Speaker(EnemyKind kind) => Game().SpawnKind(kind, 0.5);
+    public static Enemy Speaker(EnemyKind kind) => Game().SpawnKind(kind, MidWidth);
 
     /// <summary>Takes every unit and pop-up off the field, leaving the ship, the cards and the sky.</summary>
     public static void Clear(RaiderGame game)
@@ -121,7 +124,7 @@ internal static class EnemyKit
     /// <summary>The damage of a test's shot when the test does not say.</summary>
     public const double PlainShotDamage = 10;
 
-    /// <summary>A friendly shot that will be exactly at (x, y) when this frame's bullets have moved, with this damage.</summary>
+    /// <summary>A friendly shot that will be exactly at (x, y) when this frame's shots and bolts have moved, with this damage.</summary>
     public static Bullet Shot(RaiderGame game, double x, double y, double dmg = PlainShotDamage)
     {
         var shot = new Bullet { X = x, Y = y + Tuning.ShipShotSpeed, VX = 0, VY = -Tuning.ShipShotSpeed, Dmg = dmg, Friendly = true };

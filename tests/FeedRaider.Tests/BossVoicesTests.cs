@@ -22,14 +22,14 @@ public class BossVoicesTests
     {
         var g = new RaiderGame(EnemyKit.PlainSeed) { SignedIn = true, BossGates = gates };
         g.SetLayout(FieldLayout.Compute(EnemyKit.BigCols, EnemyKit.BigRows));
-        g.OfferDark(new DarkPost(DarknessKind.Rude, ShortId, Short, DarkSource.Label, Rude));
-        g.OfferDark(new DarkPost(DarknessKind.Rude, LoudId, Loud, DarkSource.Hidden, null));
-        g.OfferDark(new DarkPost(DarknessKind.Rude, LongId, Long, DarkSource.Label, Rude));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, ShortId, Short, DarknessSource.Label, Rude));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, LoudId, Loud, DarknessSource.Hidden, null));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, LongId, Long, DarknessSource.Label, Rude));
         while (g.Rude.Waiting.Count > 0) g.Rude.Take(0);
         return g;
     }
 
-    /// <summary>Steps a frame and clears the hostile bullets, so the ship lives through the fight.</summary>
+    /// <summary>Steps a frame and clears the bolts, so the ship lives through the fight.</summary>
     private static void StepUnharmed(RaiderGame g)
     {
         g.Step();
@@ -106,7 +106,7 @@ public class BossVoicesTests
         var g = new RaiderGame(EnemyKit.PlainSeed) { SignedIn = true, BossGates = true };
         g.SetLayout(FieldLayout.Compute(cols, rows));
         for (int i = 0; i < CycledReplies; i++)
-            g.OfferDark(new DarkPost(DarknessKind.Rude, (ulong)(i + 1), $"reply number {i} says its few words", DarkSource.Label, Rude));
+            g.OfferDarkness(new DarknessPost(DarknessKind.Rude, (ulong)(i + 1), $"reply number {i} says its few words", DarknessSource.Label, Rude));
         while (g.Rude.Waiting.Count > 0) g.Rude.Take(0);
         g.StartAtBoss(stage);
         var said = new List<string>();
@@ -259,9 +259,9 @@ public class BossVoicesTests
     {
         var g = SignedOutAt(1);
         Assert.Equal(["Nobody asked. I answered."], Openings(g, SceneFrames));
-        g.OfferDark(new DarkPost(DarknessKind.Rude, ShortId, Short, DarkSource.Hidden));
-        g.OfferDark(new DarkPost(DarknessKind.Rude, LoudId, Loud, DarkSource.Hidden));
-        g.OfferDark(new DarkPost(DarknessKind.Rude, LongId, Long, DarkSource.Label, Rude));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, ShortId, Short, DarknessSource.Hidden));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, LoudId, Loud, DarknessSource.Hidden));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, LongId, Long, DarknessSource.Label, Rude));
         var said = Openings(g, TakeUpFrames);
         Assert.Equal([Loud, Short, Long], said.Distinct().Order().ToArray());
     }
@@ -273,12 +273,12 @@ public class BossVoicesTests
         var g = SignedOutAt(7);
         var before = Openings(g, FirstPostFrames);
         Assert.DoesNotContain(Short, before);
-        g.OfferDark(new DarkPost(DarknessKind.Rude, ShortId, Short, DarkSource.Hidden));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, ShortId, Short, DarknessSource.Hidden));
         var one = Openings(g, SceneFrames - FirstPostFrames);
         Assert.All(one, text => Assert.Equal(Short, text));
         Assert.InRange(one.Count, 2, int.MaxValue);
-        g.OfferDark(new DarkPost(DarknessKind.Rude, LoudId, Loud, DarkSource.Hidden));
-        g.OfferDark(new DarkPost(DarknessKind.Rude, LongId, Long, DarkSource.Label, Rude));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, LoudId, Loud, DarknessSource.Hidden));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, LongId, Long, DarknessSource.Label, Rude));
         var three = Openings(g, TakeUpFrames);
         Assert.Equal([Loud, Short, Long], three.Distinct().Order().ToArray());
     }
@@ -315,11 +315,85 @@ public class BossVoicesTests
         var said = new List<string>();
         for (int number = 0; number < ReplayPosts; number++)
         {
-            g.OfferDark(new DarkPost(DarknessKind.Rude, (ulong)number + 1, ReplayPost(number), DarkSource.Hidden));
+            g.OfferDarkness(new DarknessPost(DarknessKind.Rude, (ulong)number + 1, ReplayPost(number), DarknessSource.Hidden));
             said.AddRange(Openings(g, fetchFrames));
         }
         said.AddRange(Openings(g, SceneFrames - ReplayPosts * fetchFrames));
         int different = said.Distinct().Count(text => text.StartsWith(ReplyMark, StringComparison.Ordinal));
         Assert.True(different >= FewestDifferent, $"boss {stage} said {different} different posts in {said.Count}");
+    }
+
+    /// <summary>The hidden replies a German player's run brings in its first seconds, as one measured run's 90 s gave: few in German, many in English.</summary>
+    private const int GermanReplies = 2, EnglishReplies = 20;
+
+    private static string HiddenReplyUri(int number) =>
+        $"at://did:plc:{(char)('a' + number / 26)}{(char)('a' + number % 26)}{new string('r', 22)}/app.bsky.feed.post/3kreply{number}";
+
+    private static string GetPostsBody(string language, string text) =>
+        $$$"""{"posts":[{"uri":"at://did:plc:replier/app.bsky.feed.post/3k","cid":"bafy","author":{"did":"did:plc:replier","handle":"r.example.social"},"record":{"text":"{{{text}}}","langs":["{{{language}}}"]}}]}""";
+
+    private static async IAsyncEnumerable<string> Stream(IEnumerable<string> uris)
+    {
+        foreach (var uri in uris) { yield return uri; await Task.Yield(); }
+    }
+
+    [Fact]
+    public async Task A_run_whose_languages_bring_few_hidden_replies_meets_its_first_boss_knowing_enough_in_english_and_hears_that_many_different()
+    {
+        var g = new RaiderGame(EnemyKit.PlainSeed) { SignedIn = false, BossGates = true };
+        g.SetLayout(FieldLayout.Compute(EnemyKit.BigCols, EnemyKit.BigRows));
+        var bodies = new Dictionary<string, string>();
+        var german = new List<string>();
+        void Reply(string language, string words)
+        {
+            string text = $"{ReplyMark}{bodies.Count}: {words}";
+            bodies[HiddenReplyUri(bodies.Count)] = GetPostsBody(language, text);
+            if (language == "de") german.Add(text);
+        }
+        Reply("de", "das ist eine Antwort");
+        for (int i = 0; i < EnglishReplies; i++) Reply("en", "this is a reply");
+        for (int i = 1; i < GermanReplies; i++) Reply("de", "noch eine Antwort");
+        var fetch = RaiderFeeds.VoiceFetch(g, PlayerLanguages.FromList("de"),
+            (uri, readable, _) => Task.FromResult(PostTextFetcher.ParseGetPosts(bodies[uri], signedOut: true, readable)));
+
+        await DarknessFeed.RunHiddenAsync(Stream(bodies.Keys), fetch, post => { lock (g) g.OfferDarkness(post); }, new DarknessStats(), CancellationToken.None, paceMs: 0);
+
+        Assert.True(g.VoicesKnown >= Tuning.VoicesBeforeBoss, $"the run knows {g.VoicesKnown} posts before its first boss");
+        Assert.True(g.VoicesKnown < bodies.Count, "every English reply was kept, also once the run knew enough");
+        Assert.All(german, text => Assert.Contains(g.Rude.Waiting, post => post.Text == text));
+        g.StartAtBoss(1);
+        var said = Openings(g, SceneFrames);
+        Assert.All(said, text => Assert.StartsWith(ReplyMark, text, StringComparison.Ordinal));
+        Assert.True(said.Distinct().Count() >= Tuning.VoicesBeforeBoss, $"boss 1 said {said.Distinct().Count()} different posts in {said.Count}");
+    }
+
+    [Fact]
+    public void A_boss_says_no_post_again_while_one_it_has_not_said_is_waiting()
+    {
+        const int TrickleFrames = 30 * Tuning.Fps;
+        var g = SignedOutAt(1);
+        var said = new HashSet<string>();
+        int offered = 0, repeats = 0;
+        bool open = false;
+        string? last = null;
+        for (int frame = 0; frame < SceneFrames; frame++)
+        {
+            if (frame % TrickleFrames == 0)
+                g.OfferDarkness(new DarknessPost(DarknessKind.Rude, (ulong)++offered, $"{ReplyMark}{offered}", DarknessSource.Hidden));
+            bool unheardWaiting = g.Rude.Waiting.Count > 0;
+            StepUnharmed(g);
+            bool speaking = g.Boss is { } boss && EnemySpeechBox.IsOpen(boss);
+            if (speaking && (!open || g.Boss!.Text != last))
+            {
+                last = g.Boss!.Text!;
+                if (!said.Add(last))
+                {
+                    Assert.False(unheardWaiting, $"frame {frame}: said \"{last}\" again with a post unsaid");
+                    repeats++;
+                }
+            }
+            open = speaking;
+        }
+        Assert.True(repeats > 0, "the boss never had to say a post again, so the fight did not test it");
     }
 }

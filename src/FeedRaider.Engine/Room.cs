@@ -22,8 +22,8 @@ public sealed class FigureAction
 }
 
 /// <summary>
-/// Room state and simulation. Feed it posts with <see cref="Handle"/>, ask it for ANSI frames with
-/// <see cref="Render"/>. Time is always passed in (ms), never read, so it is testable and the
+/// Room state and simulation. Feed it posts with <see cref="Handle"/>, move it on and ask it for ANSI frames with
+/// <see cref="AdvanceAndRender"/>. Time is always passed in (ms), never read, so it is testable and the
 /// wandering is the same everywhere.
 /// </summary>
 public sealed class Room
@@ -68,7 +68,7 @@ public sealed class Room
 
     public string Status { get; set; } = "";
     /// <summary>The forces of darkness. Always present; it stays empty unless something calls <see cref="Darkness.Offer"/>.</summary>
-    public Darkness Dark { get; } = new();
+    public Darkness Darkness { get; } = new();
 
     public int FigureCount => _figures.Count;
 
@@ -264,11 +264,11 @@ public sealed class Room
             return c != 0 ? c : string.CompareOrdinal(a.Figure.Follow.Did, b.Figure.Follow.Did);
         });
 
-        Dark.Update(ms, drawn.Select(d => (d.Figure.Follow.Did, d.Pos)).ToList(), cols, pixelHeight);
+        Darkness.Update(ms, drawn.Select(d => (d.Figure.Follow.Did, d.Pos)).ToList(), cols, pixelHeight);
 
         foreach (var (g, rawPos) in drawn)
         {
-            var flinch = Dark.Flinch(rawPos.X, rawPos.Y, ms);
+            var flinch = Darkness.Flinch(rawPos.X, rawPos.Y, ms);
             var pos = (X: rawPos.X + flinch.X, Y: rawPos.Y + flinch.Y);
             shown[g] = pos;
             var phase = PhaseOf(g, ms);
@@ -292,10 +292,10 @@ public sealed class Room
         }
 
         // enemies and their text are the top layer: in front of the figures and their speech boxes, whatever the draw order
-        foreach (var m in Dark.Enemies)
-            if (DarkEnemySprites.Build(m, ms) is { } sprite)
+        foreach (var m in Darkness.Enemies)
+            if (DarknessEnemySprites.Build(m, ms) is { } sprite)
                 frame.BlitTop(sprite, (int)Math.Round(m.X), (int)Math.Round(m.Y));
-        foreach (var m in Dark.Enemies)
+        foreach (var m in Darkness.Enemies)
         {
             if (m.Dissolving && ms - m.DissolveStartMs > Darkness.DissolveMs / 2) continue;
             int cx = (int)Math.Round(m.X) + m.Width / 2, top = (int)Math.Round(m.Y) / PixelsPerCell;

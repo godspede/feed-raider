@@ -28,9 +28,6 @@ public sealed class LobberTests
 
     private static EnemyBehaviour Lob => RaiderGame.TableBehaviour(EnemyKind.Lobber)!;
 
-    /// <summary>The share of the field's width a new lobber comes in at: the middle.</summary>
-    private const double MidWidth = 0.5;
-
     /// <summary>Decimal places a position or hit points must match to.</summary>
     private const int Precision = 6;
 
@@ -71,13 +68,14 @@ public sealed class LobberTests
     /// <summary>The steps of a run of sounds: the first, then one every <paramref name="gap"/> steps.</summary>
     private static int[] Every(int first, int gap, int count) => Enumerable.Range(0, count).Select(i => first + i * gap).ToArray();
 
-    private static void Ship(RaiderGame g, double x, double y)
+    private static void PlaceShip(RaiderGame g, double x, double y)
     {
         typeof(RaiderGame).GetProperty("PX")!.GetSetMethod(true)!.Invoke(g, [x]);
         typeof(RaiderGame).GetProperty("PY")!.GetSetMethod(true)!.Invoke(g, [y]);
     }
 
-    private static void StepClearingHostiles(RaiderGame g)
+    /// <summary>One step, then the enemies of every kind before the Gnat and every hostile bolt removed; the Lobber and the later kinds stay.</summary>
+    private static void StepDroppingKindsBeforeGnat(RaiderGame g)
     {
         g.Step();
         g.Enemies.RemoveAll(e => e.Kind < EnemyKind.Gnat);
@@ -96,7 +94,7 @@ public sealed class LobberTests
         public Rig()
         {
             G.Sfx = new SfxBus((n, _, _, _) => Sounds.Add((n, Steps)));
-            Ship(G, ShipX, G.PH - ShipRise);
+            PlaceShip(G, ShipX, G.PH - ShipRise);
         }
         public Enemy Add(double x)
         {
@@ -116,7 +114,7 @@ public sealed class LobberTests
                 }
                 Steps++;
                 int lobs = Sounds.Count(x => x.Name == SfxNames.Lob);
-                StepClearingHostiles(G);
+                StepDroppingKindsBeforeGnat(G);
                 if (Dodge && Sounds.Count(x => x.Name == SfxNames.Lob) > lobs) { _walk = DodgeFrames; _dir = -_dir; }
             }
         }
@@ -149,7 +147,7 @@ public sealed class LobberTests
         var g = new RaiderGame(RampSeed) { SignedIn = true, BossGates = false };
         g.SetLayout(FieldLayout.Compute(EnemyKit.BigCols, EnemyKit.BigRows));
         g.StartAtStage(LobberStage);
-        var e = g.SpawnKind(EnemyKind.Lobber, MidWidth);
+        var e = g.SpawnKind(EnemyKind.Lobber, EnemyKit.MidWidth);
         Assert.Equal(LobberHp * Ramp.HpMul(LobberStage), e.Hp, Precision);
     }
 
@@ -173,12 +171,12 @@ public sealed class LobberTests
     public void It_comes_down_from_the_top_at_a_walk_and_settles_on_its_row()
     {
         var g = EnemyKit.Game();
-        var e = g.SpawnKind(EnemyKind.Lobber, MidWidth);
+        var e = g.SpawnKind(EnemyKind.Lobber, EnemyKit.MidWidth);
         Assert.Equal(-e.Sprite.H, e.Y, Precision);
-        for (int i = 0; i < MaxSettleSteps && e.Y < Hold(g); i++) StepClearingHostiles(g);
+        for (int i = 0; i < MaxSettleSteps && e.Y < Hold(g); i++) StepDroppingKindsBeforeGnat(g);
         Assert.Equal(Hold(g), e.Y, Precision);
         double before = e.Y;
-        for (int i = 0; i < HoldWatchSteps; i++) StepClearingHostiles(g);
+        for (int i = 0; i < HoldWatchSteps; i++) StepDroppingKindsBeforeGnat(g);
         Assert.Equal(before, e.Y, Precision);
     }
 
@@ -204,9 +202,9 @@ public sealed class LobberTests
         var e = r.Add(LobberX);
         r.Tick(ThrowStep);
         double sx = r.G.PX, sy = r.G.PY;
-        Ship(r.G, AsideX, sy);
+        PlaceShip(r.G, AsideX, sy);
         r.Tick(count - 1);
-        Ship(r.G, sx + dx, sy + dy);
+        PlaceShip(r.G, sx + dx, sy + dy);
         r.Tick();
         return Lob.Touches(r.G, e);
     }
@@ -371,6 +369,20 @@ public sealed class LobberTests
     /// <summary>How much redder that point must grow between the early and the late look.</summary>
     private const int FillRedRise = 20;
 
+    /// <summary>The fill point's shift right of the landing spot: <see cref="FillDX"/>, or a column nearer the spot if a star crosses
+    /// the sky under it between the early look and the late one, so the change measured is the ring's and not the star's.</summary>
+    private static int StarFreeFillDX(RaiderGame game, double earlyScroll, int sx, int sy)
+    {
+        var sky = new Background(game.PW, game.PH, RaiderView.DefaultBackgroundSeed);
+        var (early, late) = (new Surface(game.PW, game.PH), new Surface(game.PW, game.PH));
+        sky.Draw(early, earlyScroll);
+        sky.Draw(late, game.ScrollFrames);
+        for (int dx = FillDX; dx > 1; dx--)
+            if (early.Get(sx + dx, sy - FillDY) == late.Get(sx + dx, sy - FillDY)) return dx;
+        Assert.Fail("a star crosses every column of the fill");
+        return FillDX;
+    }
+
     [Fact]
     public void The_landing_is_shown_by_a_rust_ring_that_fills_and_turns_white_for_the_last_16_frames()
     {
@@ -379,15 +391,17 @@ public sealed class LobberTests
         r.Tick(ThrowStep);
         int sx = (int)Math.Round(r.G.PX), sy = (int)Math.Round(r.G.PY);
         r.Tick(EarlyRingAge);
+        double earlyScroll = r.G.ScrollFrames;
         var early = EnemyKit.ClearPickupsAndDraw(r.G);
         Assert.Equal(Rust, early.Get(sx + Radius, sy));
         Assert.Equal(Rust, early.Get(sx - Radius, sy));
-        int redEarly = Red(early.Get(sx + FillDX, sy - FillDY));
         r.Tick(LateRingAge - EarlyRingAge);
         var late = EnemyKit.ClearPickupsAndDraw(r.G);
         Assert.Equal(White, late.Get(sx + Radius, sy));
         Assert.Equal(White, late.Get(sx - Radius, sy));
-        int redLate = Red(late.Get(sx + FillDX, sy - FillDY));
+        int fx = sx + StarFreeFillDX(r.G, earlyScroll, sx, sy);
+        int redEarly = Red(early.Get(fx, sy - FillDY));
+        int redLate = Red(late.Get(fx, sy - FillDY));
         Assert.True(redLate > redEarly + FillRedRise, $"{redEarly} -> {redLate}");
     }
 
@@ -427,8 +441,8 @@ public sealed class LobberTests
         var g = EnemyKit.Game();
         var e = EnemyKit.Place(g, EnemyKind.Lobber, BodyLobberX, Hold(g));
         e.VY = 0;
-        Ship(g, BodyShipX, g.PH - ShipRise);
-        StepClearingHostiles(g);
+        PlaceShip(g, BodyShipX, g.PH - ShipRise);
+        StepDroppingKindsBeforeGnat(g);
         var s = EnemyKit.ClearPickupsAndDraw(g);
         int x0 = (int)Math.Round(e.X - e.Sprite.W / 2.0), y0 = (int)Math.Round(e.Y - e.Sprite.H / 2.0);
         Assert.Equal(Rust, s.Get(x0 + RustCol, y0 + EyeRow));
@@ -447,12 +461,12 @@ public sealed class LobberTests
         foreach (var (cols, rows) in EnemyKit.FieldSizes)
         {
             var g = EnemyKit.Game(cols, rows);
-            foreach (double fx in new[] { 0.0, MidWidth, 1.0 })
+            foreach (double fx in new[] { 0.0, EnemyKit.MidWidth, 1.0 })
             {
                 var e = g.SpawnKind(EnemyKind.Lobber, fx);
                 for (int f = 0; f < FitSteps; f++)
                 {
-                    StepClearingHostiles(g);
+                    StepDroppingKindsBeforeGnat(g);
                     Assert.True(EnemyKit.InsideWidth(g, e), $"{cols}x{rows} at {fx}: width");
                 }
                 double floor = EnemyKit.BossFloor(g.PH);

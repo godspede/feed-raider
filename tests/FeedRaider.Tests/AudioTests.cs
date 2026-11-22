@@ -42,7 +42,20 @@ public class AudioTests
     }
 
     private static AudioMixer MixerWith(List<string> opened, float level = 0.5f, long frames = SfxSynth.SampleRate * 10)
-        => new(new MusicRotation(Tracks, new Random(1)), f => { opened.Add(f); return new FakeStream(level, frames); }, new Random(2));
+        => new(new MusicRotation(Tracks, new Random(1)), f => { opened.Add(f); return MusicOpen.Opened(new FakeStream(level, frames)); }, new Random(2));
+
+    [Fact]
+    public void ATrackThatCannotBePlayedIsReportedAndLeavesTheMusicAsItWas()
+    {
+        var m = new AudioMixer(new MusicRotation(Tracks, new Random(1)),
+            f => f == "boss.mp3" ? MusicOpen.Failed("boss.mp3 is unreadable") : MusicOpen.Opened(new FakeStream(0.5f, SfxSynth.SampleRate * 10)), new Random(2));
+        m.Cue(MusicCues.Gameplay);
+        Assert.Null(m.Pump());
+        Mix(m, 2);
+        m.Cue(MusicCues.Boss);
+        Assert.Equal("boss.mp3 is unreadable", m.Pump());
+        Assert.True(Peak(Mix(m, 0.5)) > 0);                                       // the gameplay track plays on
+    }
 
     [Fact]
     public void ManifestKeepsKnownRolesOnly()
@@ -133,7 +146,7 @@ public class AudioTests
         Assert.Equal(0, Peak(Mix(m, 0.1)));
         m.Cue(MusicCues.Gameplay); m.Pump();
         Assert.Equal(0, Peak(Mix(m, 0.1)));
-        m.Play("boom", 1, 0, 1);
+        m.Play(SfxNames.Boom, 1, 0, 1);
         var b = Mix(m, 0.5);
         float l = 0, r = 0;
         for (int i = 0; i < b.Length; i += 2) { l = Math.Max(l, Math.Abs(b[i])); r = Math.Max(r, Math.Abs(b[i + 1])); }
@@ -150,7 +163,7 @@ public class AudioTests
         Assert.True(Peak(b, 0, 2000) < Peak(b, b.Length - 2000), "fades in");
         Assert.True(Peak(b, b.Length - 2000) > 0.1f);
         m.Muted = true;
-        m.Play("shot", 0, 0, 0);
+        m.Play(SfxNames.Shot, 0, 0, 0);
         Mix(m, 0.2);   // the master eases to zero
         Assert.Equal(0, Peak(Mix(m, 0.2)));
         m.Muted = false;
@@ -162,7 +175,7 @@ public class AudioTests
     public void TenSoundsAtOnceLeaveOnlySixVoices()
     {
         var m = new AudioMixer(null, null, new Random(1));
-        foreach (string n in new[] { "boom", "bomb", "death", "darkness", "hurt", "kill", "clear", "like", "comm", "nolike" }) m.Play(n, 0, 0, 0);
+        foreach (string n in new[] { SfxNames.Boom, SfxNames.Bomb, SfxNames.Death, SfxNames.Darkness, SfxNames.Hurt, SfxNames.Kill, SfxNames.Clear, SfxNames.Like, SfxNames.SpeechBox, SfxNames.NoLike }) m.Play(n, 0, 0, 0);
         Mix(m, 0.05);   // the stolen ones finish their short fade
         Assert.Equal(6, m.VoiceCount);   // the literal cap, not the constant: raising MaxVoices must fail this
     }
@@ -171,8 +184,8 @@ public class AudioTests
     public void ARepeatInsideTheGapIsDropped()
     {
         var m = new AudioMixer(null, null, new Random(1));
-        m.Play("darkness", 0, 0, 0);
-        m.Play("darkness", 0, 0, 0);
+        m.Play(SfxNames.Darkness, 0, 0, 0);
+        m.Play(SfxNames.Darkness, 0, 0, 0);
         Assert.Equal(1, m.VoiceCount);
     }
 
@@ -192,12 +205,14 @@ public class AudioTests
     }
 
     [Fact]
-    public void ThePageCueNamesAreTheSynthNames()
+    public void EverySfxNameIsASynthName()
     {
         string[] bus = [SfxNames.Shot, SfxNames.Hit, SfxNames.Kill, SfxNames.Boom, SfxNames.Hurt, SfxNames.Death, SfxNames.Bomb, SfxNames.SpeechBox,
             SfxNames.Like, SfxNames.NoLike, SfxNames.Darkness, SfxNames.Clear, SfxNames.PickupShield, SfxNames.PickupBomb, SfxNames.PickupWeapon, SfxNames.ShieldHit,
             SfxNames.Warn, SfxNames.Ping, SfxNames.Open, SfxNames.Shut, SfxNames.Charge, SfxNames.Beam, SfxNames.Lob, SfxNames.Blast, SfxNames.Hatch,
-            SfxNames.Tick, SfxNames.Part, SfxNames.BossDown, SfxNames.Sting, SfxNames.Hold, SfxNames.Repost];
+            SfxNames.Tick, SfxNames.Part, SfxNames.BossDown, SfxNames.Sting, SfxNames.Repost, SfxNames.Undo, SfxNames.Burst, SfxNames.BurstEnd,
+            SfxNames.ShotHeavy, SfxNames.ShotTwin, SfxNames.ShotMissile, SfxNames.ShotTwinHeavy, SfxNames.ShotSpread, SfxNames.ShotMachineGun,
+            SfxNames.ShotGatling, SfxNames.ShotSwarm, SfxNames.ShotStorm];
         Assert.Equal(bus.Order(), SfxSynth.Names.Order());
     }
 
@@ -280,7 +295,7 @@ public class AudioTests
     {
         var t = MusicRotation.ParseManifest(File.ReadAllText(Path.Combine(RepoMusicDir(), "tracks.json")));
         var seen = new SortedSet<string>(StringComparer.Ordinal);
-        for (int seed = 0; seed < 200; seed++) seen.Add(new MusicRotation(t, new Random(seed)).ForCue("boss:" + boss, false)!.File);
+        for (int seed = 0; seed < 200; seed++) seen.Add(new MusicRotation(t, new Random(seed)).ForCue(MusicCues.ForBoss(boss), false)!.File);
         Assert.Equal(expected.Order(StringComparer.Ordinal), seen);                // every kept theme can play, no other track does
     }
 
@@ -289,21 +304,21 @@ public class AudioTests
     {
         var all = MusicRotation.ParseManifest(KeyedManifest);
         var r = new MusicRotation(all, new Random(1));
-        Assert.Equal("bulwark.mp3", r.ForCue("boss:bulwark", false)!.File);
-        Assert.Equal("thread.mp3", r.ForCue("boss:thread", false)!.File);
-        Assert.Equal("shared.mp3", r.ForCue("boss:gunship", false)!.File);          // no keyed track: the shared track
-        Assert.Equal("shared.mp3", r.ForCue("boss:doomscroll", false)!.File);
+        Assert.Equal("bulwark.mp3", r.ForCue(MusicCues.ForBoss("bulwark"), false)!.File);
+        Assert.Equal("thread.mp3", r.ForCue(MusicCues.ForBoss("thread"), false)!.File);
+        Assert.Equal("shared.mp3", r.ForCue(MusicCues.ForBoss("gunship"), false)!.File);          // no keyed track: the shared track
+        Assert.Equal("shared.mp3", r.ForCue(MusicCues.ForBoss("doomscroll"), false)!.File);
 
         var noShared = new MusicRotation(all.Where(x => x.File != "shared.mp3").ToList(), new Random(1));
-        Assert.Contains(noShared.ForCue("boss:gunship", false)!.File, new[] { "bulwark.mp3", "thread.mp3" });   // neither: any boss track
-        Assert.Equal("thread.mp3", noShared.ForCue("boss:thread", false)!.File);
+        Assert.Contains(noShared.ForCue(MusicCues.ForBoss("gunship"), false)!.File, new[] { "bulwark.mp3", "thread.mp3" });   // neither: any boss track
+        Assert.Equal("thread.mp3", noShared.ForCue(MusicCues.ForBoss("thread"), false)!.File);
 
         var noBoss = new MusicRotation(all.Where(x => x.Role != MusicCues.Boss).ToList(), new Random(1));
-        Assert.Null(noBoss.ForCue("boss:bulwark", false));                         // never a gameplay track
+        Assert.Null(noBoss.ForCue(MusicCues.ForBoss("bulwark"), false));                         // never a gameplay track
         for (int seed = 0; seed < 20; seed++)
         {
             var any = new MusicRotation(all, new Random(seed));
-            Assert.Equal(MusicCues.Boss, any.ForCue("boss:mirror", false)!.Role);
+            Assert.Equal(MusicCues.Boss, any.ForCue(MusicCues.ForBoss("mirror"), false)!.Role);
         }
     }
 
@@ -312,7 +327,7 @@ public class AudioTests
     {
         var t = new List<MusicTrack> { new("h1.mp3", "boss"), new("h2.mp3", "boss"), new("k.mp3", "boss", "bulwark"), new("g.mp3", "gameplay") };
         for (int seed = 0; seed < 20; seed++)
-            Assert.Contains(new MusicRotation(t, new Random(seed)).ForCue("boss:gunship", false)!.File, new[] { "h1.mp3", "h2.mp3" });
+            Assert.Contains(new MusicRotation(t, new Random(seed)).ForCue(MusicCues.ForBoss("gunship"), false)!.File, new[] { "h1.mp3", "h2.mp3" });
     }
 
     [Fact]
@@ -321,7 +336,7 @@ public class AudioTests
         var all = MusicRotation.ParseManifest(KeyedManifest);
         var r = new MusicRotation(all, new Random(4));
         var first = r.ForCue(MusicCues.Gameplay, false)!;
-        Assert.Equal("bulwark.mp3", r.ForCue("boss:bulwark", false)!.File);
+        Assert.Equal("bulwark.mp3", r.ForCue(MusicCues.ForBoss("bulwark"), false)!.File);
         var back = r.ForCue(MusicCues.Gameplay, true)!;
         Assert.NotEqual(first, back);                                              // the other gameplay track of two, not a restart
         Assert.Equal(MusicCues.Gameplay, back.Role);
@@ -332,13 +347,13 @@ public class AudioTests
     {
         var opened = new List<string>();
         var m = new AudioMixer(new MusicRotation(MusicRotation.ParseManifest(KeyedManifest), new Random(1)),
-            f => { opened.Add(f); return new FakeStream(0.5f, SfxSynth.SampleRate * 10); }, new Random(2));
+            f => { opened.Add(f); return MusicOpen.Opened(new FakeStream(0.5f, SfxSynth.SampleRate * 10)); }, new Random(2));
         m.Cue(MusicCues.Gameplay); m.Pump();
         string rotation = opened[0];
-        m.Cue("ahead:boss:thread"); m.Pump();
+        m.Cue(MusicCues.AheadPrefix + "thread"); m.Pump();
         Assert.Single(opened);                                                     // fetched nowhere, played nowhere
         Assert.Equal(MusicCues.Gameplay, m.CurrentCue);
-        m.Cue("boss:thread"); m.Pump();
+        m.Cue(MusicCues.ForBoss("thread")); m.Pump();
         Assert.Equal(["thread.mp3"], opened.Skip(1));
         m.Cue(MusicCues.Gameplay); m.Pump();
         Assert.Equal(3, opened.Count);

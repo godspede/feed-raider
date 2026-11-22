@@ -38,10 +38,10 @@ public static class EnemySpeechBox
     public const uint BoxBg = 0x140608, Edge = 0xff2a2a, HeaderFg = 0xff5050, TextFg = 0xffe4e4, UnreadFg = 0xc08a8a;
 
     /// <summary>The header for a label value (blank falls back to <see cref="HiddenReplyHeader"/> for a hidden reply, else the kind's name).</summary>
-    public static string Header(string? label, DarknessKind kind, DarkSource source)
+    public static string Header(string? label, DarknessKind kind, DarknessSource source)
     {
         string text = CellText.Clean(label);   // what the terminal cannot draw is dropped, so a label of only that falls back too
-        if (text.Length == 0) text = source == DarkSource.Hidden ? HiddenReplyHeader : kind.ToString();
+        if (text.Length == 0) text = source == DarknessSource.Hidden ? HiddenReplyHeader : kind.ToString();
         return CellText.Clip(text.ToUpperInvariant(), MaxLabel, ellipsis: true);
     }
 

@@ -20,12 +20,9 @@ public sealed class RaiderView
     internal const int TooSmallCol = 1, TooSmallRow = 1;
     internal const uint TooSmallText = 0xd8cba3;
     internal const uint ShotGlow = 0xffe29a, Flame = 0xffb347, LiveWaveColour = 0xff6b9a;
-    private const uint ChargeTrack = 0x4a2038;
     internal const uint PostText = 0xe3c8ff, PostBg = 0x1a1030;
     private const uint EnemySpeechBoxText = 0xffd0e0;
     private const uint ShipDownBg = 0x5a1030, ToastBg = 0x3a1030, BombReady = 0x1a3a6a, BombSpent = 0x16202e;
-    /// <summary>The ring round the ship while it holds a button: this many dots, this many pixels out.</summary>
-    public const int HoldRingDots = 48, HoldRingRadius = 13;
     /// <summary>How far a flashing sprite is blended toward white.</summary>
     internal const double FlashWhite = 0.85;
     private const int DragHintSeconds = 5, KeysHintSeconds = 10;
@@ -39,14 +36,11 @@ public sealed class RaiderView
     /// <summary>The cell rows the HUD takes at the top of the field.</summary>
     internal const int HudRows = CardPainter.HudPixelRows / CardField.PixelsPerCell;
     private const int FirstHealthBarRow = CardPainter.HudPixelRows, BoxesTopRow = HudRows;
-    private const double HoldRingStartAngle = -Math.PI / 2;   // the ring lights from the top
     internal const int FlameFlicker = 3;
     private const int PickupBlinkPhaseFrames = 3;
     internal const double PickupDarken = 0.55, PickupLighten = 0.6, PickupGlowBase = 5, PickupGlowSwing = 2;
     internal const double ShieldRadius = 8.5, ShieldInnerGap = 1, ShieldBaseAlpha = 0.37, ShieldPulseAlpha = 0.1, ShieldInnerAlpha = 0.4;
     internal const int ShieldHitFlashFrames = 6;
-    internal const double PowerRingBase = 9, PowerRingSwing = 2, PowerRingAlpha = 0.5, PowerWarnRadius = 12, PowerWarnAlpha = 0.4;
-    internal const int PowerWarnFrames = 6, PowerWarnOn = 3;
     private const int SpeechBoxMaxWidth = 20, WrapMargin = 6;
     /// <summary>The most lines a boss's name or a speech box's words wrap to, and a hint, which on a narrow field wraps onto a second line, never a third.</summary>
     internal const int WrapMaxLines = 3, HintWrapLines = 2;
@@ -54,21 +48,34 @@ public sealed class RaiderView
     private const int WordsFromPixelRow = CardPainter.HudPixelRows;
     /// <summary>The cells a gunship's speech box pads its longest line by: one edge cell on each side.</summary>
     private const int SpeechBoxPad = 2;
-    private const int PopupTopRow = HudRows, PowerBarMaxCells = 8;
-    /// <summary>The columns from the field's right edge the power readout starts at.</summary>
-    internal const int PowerLabelWidth = 15;
+    private const int PopupTopRow = HudRows;
     /// <summary>The columns from the field's left the shield pips and, below the bombs, the weapon pips start at.</summary>
     internal const int HudShieldCol = 15, HudBombCol = 20;
     private const int ToastRowsFromBottom = 4, HintRowsFromBottom = 2;
     internal const int FastBlinkFrames = 2, MineGlintFrames = 8, StrobeFrames = 3;
     private const int BannerBlinkFrames = 6, BannerBlinkCycle = 4;
     private const int BannerRowTopParts = 2, BannerRowWholeParts = 5;
-    private const int WideHintCols = 50;
-    internal const double PickupPulseRate = 0.3, PickupAgePulseRate = 0.1, ShieldPulseRate = 0.2, PowerPulseRate = 0.6;
+    /// <summary>The keys hint at its widest, shorter, and shortest: each is shown on a screen with a few cells to spare round it.</summary>
+    private const string WideKeysHint = " WASD move  SPACE fire  B bomb  Z like  X repost  F auto ";
+    private const string KeysHintWithLike = " WASD SPACE B  Z like  X repost ";
+    private const string ShortKeysHint = " WASD SPACE B Z X ";
+    private const int HintSpareCols = 4;
+
+    /// <summary>The keys hint for a screen <paramref name="cols"/> wide: the widest that fits with <see cref="HintSpareCols"/> to spare.</summary>
+    internal static string KeysHint(int cols) =>
+        cols >= WideKeysHint.Length + HintSpareCols ? WideKeysHint : cols >= KeysHintWithLike.Length + HintSpareCols ? KeysHintWithLike : ShortKeysHint;
+    internal const double PickupPulseRate = 0.3, PickupAgePulseRate = 0.1, ShieldPulseRate = 0.2;
     /// <summary>A banner holds steady for the first half of its time, then blinks as it fades.</summary>
     private const int BannerSteadyFrames = Tuning.StageBannerFrames / 2;
     internal const int SplitterCrackInner = 2, SplitterCrackOuter = 3;   // columns out from the centre that each crack's two pixels sit at
     internal const int HostileBoltSize = 2, ShotLength = 4;
+    /// <summary>The looks of the heavier shots: a heavy line is wider and longer, a slug short, a missile a body with a nose and a
+    /// flickering flame, the fan's shots a little longer than a slug. None is the colour of a bolt (crimson, the turret's green), a
+    /// lobber's rust or its white shell.</summary>
+    internal const int HeavyLength = 6, HeavyWidth = 3, SlugLength = 2, MissileLength = 3, SpreadLength = 3, FlameBlinkFrames = 2;
+    internal const uint HeavyRim = 0x5ff0ff, SlugBrass = 0xf2c14e, MissileBody = 0xc8d2e0, MissileFlame = 0xffa040, SpreadViolet = 0xc49bff;
+    /// <summary>The weapon's short name sits this many cells after its pips.</summary>
+    internal const int HudWeaponNameGap = 1;
     internal const double ParticleFadeRate = 1.6;   // the fade runs this much faster than the life, so a particle holds full colour at first
     internal const double ScreenFlashMaxWhite = 0.5;
     internal const double RingAlphaMin = 0.35, RingAlphaFade = 0.65, RingInnerAlpha = 0.25;
@@ -93,12 +100,10 @@ public sealed class RaiderView
     /// <summary>The feed log's colours, each made legible on its ground: the post text and name, the handle, and the counts and note.</summary>
     private static readonly uint LogPostText = Surface.Legible(Surface.Mix(PanelText, PanelBg, LogTextDim), PanelBg),
         LogHandle = Surface.Legible(Ice, PanelBg), LogDim = Surface.Legible(Dim, PanelBg);
-    /// <summary>The glyphs of the rails either side of the field, of a full HUD cell (a pip that is had, a cell of the power bar), of
+    /// <summary>The glyphs of the rails either side of the field, of a full HUD cell (a pip that is had), of
     /// a pip that is not had, of a bomb in hand, and of the mark <see cref="RaiderGame.WaveLabel"/> opens a live or boss wave with.</summary>
     internal const char RailGlyph = '│', PipFull = '█', PipEmpty = Dot, BombDot = Dot, LiveWaveMark = '◉';
     private const char Dot = '•';
-    /// <summary>The heart the power readout opens with.</summary>
-    internal const char PowerHeart = '\u2665';
     /// <summary>The half blocks the edges of a gunship's speech box alternate between, row by row, so its sides read as a zigzag.</summary>
     private const char SpeechBoxEdgeLeft = '▌', SpeechBoxEdgeRight = '▐';
     /// <summary>The rule above each feed-log entry, and the pointer beside the marked one.</summary>
@@ -127,6 +132,9 @@ public sealed class RaiderView
     /// enemies say are drawn as ever.</summary>
     public bool Backdrop { get; set; }
 
+    /// <summary>The mark the start page's scripted click is drawn with: an arrow head whose tip is the cell it presses.</summary>
+    private const char TourPointerMark = '◤';
+
     // the field just after the background and the card slabs: the world is drawn over it, and card text goes only where it did not
     private uint[] _under = [];
 
@@ -150,7 +158,7 @@ public sealed class RaiderView
         }
         var field = _field;
         var (shakeX, shakeY) = game.ShakeOffset();
-        _bg!.Draw(field, game.ScrollFrames);
+        _bg!.Draw(field, game.ScrollFrames, game.BurstStrength);
         // the cards shake a whole cell at a time, so a slab never cuts a cell: draw them by the difference between the shake
         // rounded to an even number of pixels and the shake, and the shift of the whole field lands them on that
         CardPainter.DrawCards(field, game, CardPainter.EvenShake(shakeX) - shakeX, CardPainter.EvenShake(shakeY) - shakeY, Math.Max(0, CardPainter.HudPixelRows - shakeY));
@@ -230,8 +238,8 @@ public sealed class RaiderView
     private Surface? _units;
     private const uint NoUnit = Surface.None;
 
-    /// <summary>Puts the units and bullets back over the speech boxes. The boxes are text cells drawn after the pixel field, so where a ship or
-    /// a bullet passes behind one, the cell is rebuilt from the unit pixels (quadrants, as the field is) and the box colour fills the rest
+    /// <summary>Puts the units, shots and bolts back over the speech boxes. The boxes are text cells drawn after the pixel field, so where a ship or
+    /// a shot or a bolt passes behind one, the cell is rebuilt from the unit pixels (quadrants, as the field is) and the box colour fills the rest
     /// of that cell. Only the cells of boxes are looked at, and nothing is drawn when no box is up.</summary>
     private void LayUnitsOverSpeechBoxes(RaiderGame game, Screen scr, FieldLayout lay, int shakeX, int shakeY)
     {
@@ -362,15 +370,14 @@ public sealed class RaiderView
 
     private void DrawWorld(RaiderGame game, Surface field)
     {
-        // the build-up of a held button is part of the card: under every ship and bullet, and it shakes with the card
+        // a press's glow and the keys' outline are part of the card: under every ship, shot and bolt, and they shake with the card
         var (shakeX, shakeY) = game.ShakeOffset();
-        CardPainter.DrawHoldGlow(field, game, CardPainter.EvenShake(shakeX) - shakeX, CardPainter.EvenShake(shakeY) - shakeY, Math.Max(0, CardPainter.HudPixelRows - shakeY));
+        CardPainter.DrawPressGlow(field, game, CardPainter.EvenShake(shakeX) - shakeX, CardPainter.EvenShake(shakeY) - shakeY, Math.Max(0, CardPainter.HudPixelRows - shakeY));
         DrawUnits(game, field);
-        HoldRing(game, field);
         DrawEffects(game, field);
     }
 
-    /// <summary>The things that must stay readable over a speech box: enemies, pickups, the ship and every bullet.</summary>
+    /// <summary>The things that must stay readable over a speech box: enemies, pickups, the ship and every shot and bolt.</summary>
     private void DrawUnits(RaiderGame game, Surface field)
     {
         foreach (var enemy in game.Enemies)
@@ -398,7 +405,34 @@ public sealed class RaiderView
             }
             else if (bullet.Reflected) { field.Rect(x - HostileBoltSize / 2, y - HostileBoltSize / 2, HostileBoltSize, HostileBoltSize, Palette.Ice); field.Set(x, y, Palette.White); }   // the ship's own shot, come back
             else if (!bullet.Friendly) { field.Rect(x - HostileBoltSize / 2, y - HostileBoltSize / 2, HostileBoltSize, HostileBoltSize, Palette.Crimson); field.Set(x, y, Palette.White); }
-            else { field.Rect(x, y - ShotLength / 2, 1, ShotLength, Palette.Ice); field.Set(x, y - ShotLength / 2 - 1, Palette.White); }
+            else DrawShot(field, bullet, x, y, game.Frame);
+        }
+    }
+
+    private static void DrawShot(Surface field, Bullet shot, int x, int y, long frame)
+    {
+        switch (shot.Look)
+        {
+            case ShotLook.Heavy:
+                field.Rect(x - HeavyWidth / 2, y - HeavyLength / 2, HeavyWidth, HeavyLength, HeavyRim);
+                field.Rect(x, y - HeavyLength / 2, 1, HeavyLength, Palette.White);
+                break;
+            case ShotLook.Slug:
+                field.Rect(x, y - SlugLength / 2, 1, SlugLength, SlugBrass);
+                break;
+            case ShotLook.Missile:
+                field.Rect(x, y - 1, 1, MissileLength, MissileBody);
+                field.Set(x, y - 2, Palette.White);
+                if (BlinkOn(frame, FlameBlinkFrames)) field.Set(x, y + MissileLength - 1, MissileFlame);
+                break;
+            case ShotLook.Spread:
+                field.Rect(x, y - 1, 1, SpreadLength, SpreadViolet);
+                field.Set(x, y - 2, Palette.White);
+                break;
+            default:
+                field.Rect(x, y - ShotLength / 2, 1, ShotLength, Palette.Ice);
+                field.Set(x, y - ShotLength / 2 - 1, Palette.White);
+                break;
         }
     }
 
@@ -433,23 +467,6 @@ public sealed class RaiderView
         }
     }
 
-    /// <summary>The hold's ring round the ship: a dim track, and dots that light clockwise from the top in the colour of the step
-    /// as the hold goes on, and go out again as it drains.</summary>
-    private static void HoldRing(RaiderGame game, Surface field)
-    {
-        if (game.Hold.Shown(game) is not { } shown) return;
-        int progress = shown.Marks.Progress(shown.Action);
-        uint colour = HoldBeats.Colours(shown.Action)[HoldBeats.StepAt(progress)];
-        int lit = (int)Math.Round(progress / (double)Tuning.HoldFrames * HoldRingDots);
-        for (int i = 0; i < HoldRingDots; i++)
-        {
-            double angle = HoldRingStartAngle + i / (double)HoldRingDots * Math.Tau;
-            int x = (int)Math.Round(game.PX + Math.Cos(angle) * HoldRingRadius), y = (int)Math.Round(game.PY + Math.Sin(angle) * HoldRingRadius);
-            if (i < lit) field.Set(x, y, colour);
-            else if (i % 2 == 0) field.Set(x, y, ChargeTrack);
-        }
-    }
-
     private static void FlameAndMuzzle(Surface field, double shipX, double shipY, Sprite ship, bool muzzle, long frame)
     {
         int x = (int)Math.Round(shipX), y = (int)Math.Round(shipY);
@@ -474,9 +491,10 @@ public sealed class RaiderView
     {
         if (pickup.Blinking && BlinkOn(game.Frame, PickupBlinkPhaseFrames)) return;
         uint colour = RaiderGame.PickupColour(pickup.Kind), dark = Surface.Mix(colour, Palette.SkyTop, PickupDarken), light = Surface.Mix(colour, Palette.White, PickupLighten);
-        double pulse = Pulse(game.Frame, PickupPulseRate, pickup.Age * PickupAgePulseRate);
+        double rate = pickup.Kind == PickupKind.Burst ? PickupPulseRate * BurstPickupPulseMul : PickupPulseRate;
+        double pulse = Pulse(game.Frame, rate, pickup.Age * PickupAgePulseRate);
         field.Ring(pickup.X, pickup.Y, PickupGlowBase + pulse * PickupGlowSwing, colour, PickupGlowAlphaBase + PickupGlowAlphaSwing * pulse);
-        var art = pickup.Kind == PickupKind.Bomb ? PickupBombArt : PickupCrossArt;
+        var art = pickup.Kind switch { PickupKind.Bomb => PickupBombArt, PickupKind.Burst => PickupChevronArt, _ => PickupCrossArt };
         DrawArt(field, art, (int)Math.Round(pickup.X) - art[0].Length / 2, (int)Math.Round(pickup.Y) - art.Length / 2, dark, colour, light);
     }
 
@@ -501,6 +519,20 @@ public sealed class RaiderView
         "o----o",
         " oooo ",
     ];
+
+    /// <summary>The speed burst: two chevrons pointing up the page.</summary>
+    private static readonly string[] PickupChevronArt =
+    [
+        " oooo ",
+        "o-##-o",
+        "o#--#o",
+        "o-##-o",
+        "o#--#o",
+        " oooo ",
+    ];
+
+    /// <summary>The burst pickup's glow beats this much faster than the others', so it reads as something that will not wait.</summary>
+    private const double BurstPickupPulseMul = 2;
 
     /// <summary>A heart particle, with its point at the bottom.</summary>
     private static readonly string[] HeartParticleArt =
@@ -537,17 +569,43 @@ public sealed class RaiderView
 
     private static void DrawShip(RaiderGame game, Surface field)
     {
-        if (game.Powered)
-        {
-            double pulse = Pulse(game.Frame, PowerPulseRate);
-            field.Ring(game.PX, game.PY, PowerRingBase + pulse * PowerRingSwing, Pink, PowerRingAlpha);
-            if (game.PowerLeft < Tuning.Fps && game.Frame % PowerWarnFrames < PowerWarnOn) field.Ring(game.PX, game.PY, PowerWarnRadius, Palette.White, PowerWarnAlpha);
-        }
         if (game.Shield > 0) DrawShield(game, field);
         if (game.Invuln > 0 && !game.InvulnIsShield && BlinkOn(game.Frame, StrobeFrames)) return;
+        if (game.Bursting) DrawBurstTrail(game, field);
         field.Draw(game.Ship, Corner(game.PX, game.Ship.W), Corner(game.PY, game.Ship.H));
         FlameAndMuzzle(field, game.PX, game.PY, game.Ship, game.MuzzleFrames > 0, game.Frame);
     }
+
+    /// <summary>The burst's afterimages: how many, the pixels between each, and the first one's strength (each next one is fainter
+    /// by as much again); and the strength of the cyan-white outline. All scale with <see cref="RaiderGame.BurstStrength"/>.</summary>
+    private const int BurstEchoes = 3, BurstEchoStep = 2;
+    private const double BurstEchoAlpha = 0.45, BurstOutlineAlpha = 0.85;
+    /// <summary>How far an afterimage is tinted from the ship's colours to the burst's.</summary>
+    private const double BurstEchoTint = 0.5;
+
+    /// <summary>Drawn under the ship while a burst runs: its afterimages trailing below, then a one-pixel outline in the burst
+    /// pickup's colour round it.</summary>
+    private static void DrawBurstTrail(RaiderGame game, Surface field)
+    {
+        var ship = game.Ship;
+        int left = Corner(game.PX, ship.W), top = Corner(game.PY, ship.H);
+        double strength = game.BurstStrength;
+        uint glow = RaiderGame.PickupColour(PickupKind.Burst);
+        for (int echo = BurstEchoes; echo >= 1; echo--)
+        {
+            double alpha = BurstEchoAlpha * (BurstEchoes + 1 - echo) / BurstEchoes * strength;
+            for (int y = 0; y < ship.H; y++)
+                for (int x = 0; x < ship.W; x++)
+                    if (ship.Px[y * ship.W + x] is var px and not 0)
+                        field.Blend(left + x, top + y + echo * BurstEchoStep, Surface.Mix(px & Sprite.ColourMask, glow, BurstEchoTint), alpha);
+        }
+        for (int y = -1; y <= ship.H; y++)
+            for (int x = -1; x <= ship.W; x++)
+                if (!Solid(ship, x, y) && (Solid(ship, x - 1, y) || Solid(ship, x + 1, y) || Solid(ship, x, y - 1) || Solid(ship, x, y + 1)))
+                    field.Blend(left + x, top + y, glow, BurstOutlineAlpha * strength);
+    }
+
+    private static bool Solid(Sprite s, int x, int y) => (uint)x < (uint)s.W && (uint)y < (uint)s.H && s.Px[y * s.W + x] != 0;
 
     // ---------------------------------------------------------------- text
 
@@ -558,6 +616,30 @@ public sealed class RaiderView
         int pipsCol = col + 1;
         scr.Text(pipsCol, row, new string(PipFull, have), colour, HudBg);
         scr.Text(pipsCol + have, row, new string(PipEmpty, max - have), Dim, HudBg);
+    }
+
+    /// <summary>Whether the weapon's pips and its short name fit on a field of <paramref name="cols"/> columns.</summary>
+    public static bool WeaponNameFits(int cols, string shortName) =>
+        HudBombCol + WeaponPipsWidth + HudWeaponNameGap + shortName.Length <= cols - HudInset;
+
+    /// <summary>A label cell and a pip per weapon level.</summary>
+    internal const int WeaponPipsWidth = 1 + Tuning.MaxWeaponLevel;
+    /// <summary>The column the HUD keeps clear at the field's left and right edges.</summary>
+    private const int HudInset = 1;
+
+    /// <summary>The weapon's pips under the bombs, then the kind's short name when the field is wide enough; on a narrow field the
+    /// pips alone, moved left as far as they must be to stay inside it.</summary>
+    private static void DrawWeaponRow(RaiderGame game, Screen scr, int col0, int cols, int row)
+    {
+        uint colour = RaiderGame.PickupColour(PickupKind.Weapon);
+        string name = game.Weapon.Short;
+        if (WeaponNameFits(cols, name))
+        {
+            Pips(scr, col0 + HudBombCol, row, 'W', game.WeaponLevel, Tuning.MaxWeaponLevel, colour);
+            scr.Text(col0 + HudBombCol + WeaponPipsWidth + HudWeaponNameGap, row, name, colour, HudBg);
+            return;
+        }
+        Pips(scr, col0 + Math.Min(HudBombCol, cols - HudInset - WeaponPipsWidth), row, 'W', game.WeaponLevel, Tuning.MaxWeaponLevel, colour);
     }
 
     /// <summary>The HUD's stage readout, as long as <paramref name="room"/> allows: "STAGE 3", "ST 3" on a narrow field, "3" at the narrowest.
@@ -693,7 +775,12 @@ public sealed class RaiderView
 
         if (!game.Alive) CentreTag(scr, lay, lay.Rows / 2, ShipDown, Palette.White, ShipDownBg);
         else if (!Backdrop && game.Tick < DragHintSeconds * Tuning.Fps && game.Input.PointerLast) CentreTag(scr, lay, lay.Rows - HintRowsFromBottom, " drag to move ", Dim, HudBg);
-        else if (!Backdrop && game.Tick < KeysHintSeconds * Tuning.Fps && !game.Input.PointerLast) CentreTag(scr, lay, lay.Rows - HintRowsFromBottom, cols >= WideHintCols ? " WASD move  SPACE fire  B bomb  F auto " : " WASD SPACE B ", Dim, HudBg);
+        else if (!Backdrop && game.Tick < KeysHintSeconds * Tuning.Fps && !game.Input.PointerLast) CentreTag(scr, lay, lay.Rows - HintRowsFromBottom, KeysHint(cols), Dim, HudBg);
+        if (Backdrop && game.TourPointer is { } pointer)
+        {
+            int col = ColOf(pointer.X), row = RowOf(pointer.Y);
+            if (row >= 0 && row < scr.Rows) scr.Put(col, row, TourPointerMark, Surface.Legible(Palette.White, scr.BgAt(col, row)));
+        }
         if (Backdrop) return;
         if (game.Toast is { } toast) CentreTag(scr, lay, lay.Rows - ToastRowsFromBottom, $" {toast} ", Palette.White, ToastBg);
         if (game.Input.PointerLast)
@@ -745,21 +832,16 @@ public sealed class RaiderView
     private void DrawHud(RaiderGame game, Screen scr, FieldLayout lay, string? debug)
     {
         int col0 = lay.Col0, cols = lay.PCols;
-        const int top = 0, second = top + 1, inset = 1;
+        const int top = 0, second = top + 1;
         for (int row = top; row < HudRows; row++) scr.Blank(col0, row, cols, Palette.White, HudBg);
-        scr.Text(col0 + inset, top, $"SCORE {game.Score:D6}", Palette.White, HudBg);
+        scr.Text(col0 + HudInset, top, $"SCORE {game.Score:D6}", Palette.White, HudBg);
         Pips(scr, col0 + HudShieldCol, top, 'S', game.Shield, Tuning.ShieldHits, RaiderGame.PickupColour(PickupKind.Shield));
         scr.Text(col0 + HudBombCol, top, "B" + new string(BombDot, game.Bombs), Ice, HudBg);
-        Pips(scr, col0 + HudBombCol, second, 'W', game.WeaponLevel, Tuning.MaxWeaponLevel, RaiderGame.PickupColour(PickupKind.Weapon));
+        DrawWeaponRow(game, scr, col0, cols, second);
         string wave = game.WaveLabel();
-        scr.Text(col0 + inset, second, wave, wave[0] == LiveWaveMark ? LiveWaveColour : Dim, HudBg);
-        if (game.Powered)
-        {
-            int cells = Math.Max(1, game.PowerLeft * PowerBarMaxCells / Tuning.PowerFrames);
-            scr.Text(col0 + cols - PowerLabelWidth, second, PowerHeart + " POWER " + new string(PipFull, cells), Pink, HudBg);
-        }
+        scr.Text(col0 + HudInset, second, wave, wave[0] == LiveWaveMark ? LiveWaveColour : Dim, HudBg);
         string stage = StageReadout(game.Stage, cols - HudStageMargin, game.Gate == GateState.Fighting);
-        int stageCol = col0 + cols - stage.Length - inset;
+        int stageCol = col0 + cols - stage.Length - HudInset;
         scr.Text(stageCol, top, stage, game.Stage >= Tuning.StageCap ? Pink : Ice, HudBg);
         if (debug is not null) scr.Text(stageCol - debug.Length - 1, top, debug, Dim, HudBg);
     }
@@ -780,13 +862,17 @@ public sealed class RaiderView
     public IReadOnlyList<CellRect> Tags => _tags;
 
     /// <summary>The row nearest <paramref name="tag"/>'s own, searched down and up in turn, at which it covers none of the speech
-    /// boxes drawn this frame; its own row when there is none. A banner or tag is drawn over the boxes, so this keeps their words whole.</summary>
+    /// boxes drawn this frame, a labelled enemy's and a gunship's or carrier's alike; its own row when there is none. A banner
+    /// or tag is drawn over the boxes, so this keeps their words whole.</summary>
     private int RowClearOfSpeechBoxes(CellRect tag, FieldLayout lay)
     {
         int last = lay.Rows - tag.H;
         for (int step = 0; step <= lay.Rows; step++)
             foreach (int row in (ReadOnlySpan<int>)[tag.R + step, tag.R - step])
-                if (row >= HudRows && row <= last && !_speechBoxPainter.Boxes.Exists(box => box.Overlaps(tag with { R = row }))) return row;
+            {
+                var moved = tag with { R = row };
+                if (row >= HudRows && row <= last && !_speechBoxPainter.Boxes.Exists(moved.Overlaps) && !_enemySpeechBoxes.Exists(moved.Overlaps)) return row;
+            }
         return tag.R;
     }
 
@@ -818,7 +904,7 @@ public sealed class RaiderView
         return null;
     }
 
-    /// <summary>A click or tap on a cell of the screen: on a button of the feed log's last drawn frame it toggles that like or repost,
+    /// <summary>A click on a cell of the screen: on a button of the feed log's last drawn frame it toggles that like or repost,
     /// anywhere else it does nothing.</summary>
     public void ToggleLogButtonAt(RaiderGame game, int col, int row)
     {

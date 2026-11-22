@@ -24,7 +24,7 @@ public sealed class Spectator
     /// <summary>The live threadgate stream's connection state, once it is running.</summary>
     public string HiddenState => _threadgates?.State ?? "off";
     private ThreadgateSource? _threadgates;
-    public DarknessStats DarkStats { get; } = new();
+    public DarknessStats DarknessStats { get; } = new();
     public int EnemiesSpawned { get; private set; }
     public int SpawnedFromLabels { get; private set; }
     public int SpawnedFromHidden { get; private set; }
@@ -60,8 +60,8 @@ public sealed class Spectator
 
         var room = new Room(follows);
         var source = new JetstreamSource(follows.Select(f => f.Did));
-        void UpdateStatus() { EnemiesSpawned = room.Dark.Spawned; SpawnedFromLabels = room.Dark.SpawnedFromLabels; SpawnedFromHidden = room.Dark.SpawnedFromHidden; Status(); }
-        void Status() => room.Status = $"@{handle} | {room.FigureCount} figures | {source.State} | {PostsSeen} posts seen" + (Darkness ? $" | {room.Dark.Enemies.Count} enemies ({room.Dark.Enemies.Count(m => m.Source == DarkSource.Label)} labels, {room.Dark.Enemies.Count(m => m.Source == DarkSource.Hidden)} hidden)" + (DarknessDemo ? " (demo)" : "") : "") + (Hint.Length > 0 ? " | " + Hint : "");
+        void UpdateStatus() { EnemiesSpawned = room.Darkness.Spawned; SpawnedFromLabels = room.Darkness.SpawnedFromLabels; SpawnedFromHidden = room.Darkness.SpawnedFromHidden; Status(); }
+        void Status() => room.Status = $"@{handle} | {room.FigureCount} figures | {source.State} | {PostsSeen} posts seen" + (Darkness ? $" | {room.Darkness.Enemies.Count} enemies ({room.Darkness.Enemies.Count(m => m.Source == DarknessSource.Label)} labels, {room.Darkness.Enemies.Count(m => m.Source == DarknessSource.Hidden)} hidden)" + (DarknessDemo ? " (demo)" : "") : "") + (Hint.Length > 0 ? " | " + Hint : "");
         UpdateStatus();
 
         using var pumpCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -84,7 +84,7 @@ public sealed class Spectator
         {
             var labels = new LabelSource().ReadAsync(pumpCts.Token);
             background.Add(Task.Run(() => DarknessFeed.RunAsync(labels, fetch,
-                post => { lock (room) { room.Dark.Offer(post); DarkStats.Haunted++; } }, DarkStats, pumpCts.Token), pumpCts.Token));
+                post => { lock (room) { room.Darkness.Offer(post); DarknessStats.Haunted++; } }, DarknessStats, pumpCts.Token), pumpCts.Token));
         }
 
         if (Darkness)
@@ -92,7 +92,7 @@ public sealed class Spectator
             _threadgates = new ThreadgateSource();
             var gates = _threadgates.ReadAsync(pumpCts.Token);
             background.Add(Task.Run(() => DarknessFeed.RunHiddenAsync(gates, fetch,
-                post => { lock (room) { room.Dark.Offer(post); DarkStats.Haunted++; } }, DarkStats, pumpCts.Token), pumpCts.Token));
+                post => { lock (room) { room.Darkness.Offer(post); DarknessStats.Haunted++; } }, DarknessStats, pumpCts.Token), pumpCts.Token));
         }
 
         if (Darkness && DarknessDemo)
@@ -102,8 +102,8 @@ public sealed class Spectator
                 {
                     await Task.Delay(i == 0 ? DemoFirstDelayMs : DemoDelayMs, pumpCts.Token).ConfigureAwait(false);
                     lock (room)
-                        if (DarkStats.Haunted == 0 || room.Dark.Pending == 0 && room.Dark.Enemies.Count < DemoMaxEnemies)
-                            room.Dark.Offer(DarknessDemoPosts.Next(i));
+                        if (DarknessStats.Haunted == 0 || room.Darkness.Pending == 0 && room.Darkness.Enemies.Count < DemoMaxEnemies)
+                            room.Darkness.Offer(DarknessDemoPosts.Next(i));
                 }
             }, pumpCts.Token));
 

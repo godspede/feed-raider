@@ -5,7 +5,7 @@ using FeedRaider.Tests.Enemies;
 namespace FeedRaider.Tests;
 
 // The feed log is where a like or repost is undone, or made late: E and R act on the marked entry, [ and ] move the mark,
-// and a click can name a button. A toggle here is only ever the write: it never pays the reward a hold on the field pays.
+// and a click can name a button. A toggle here is only ever the write: it never pays the reward a like on the field pays.
 public class LogToggleTests
 {
     private const int Cols = 130, Rows = 46;
@@ -15,8 +15,8 @@ public class LogToggleTests
     /// <summary>The records the network hands back: a like as the server names it, a new like, one made before the run, and a new repost.</summary>
     private const string ServerLikeUri = "at://did:plc:me/app.bsky.feed.like/1";
     private const string NewLikeUri = "at://me/like/1", OldLikeUri = "at://me/like/old", NewRepostUri = "at://me/repost/1";
-    /// <summary>A write's failure reason, the line said when a like is taken back, and the sound a refused like plays.</summary>
-    private const string NoNetwork = "no network", LikeRemoved = "Like removed.", NoLikeSound = "nolike";
+    /// <summary>A write's failure reason, the line said when a like is taken back.</summary>
+    private const string NoNetwork = "no network", LikeRemoved = "Like removed.";
 
     private static FeedPost Post(int id, bool liked = false, string? likeUri = null) =>
         new($"at://did:plc:t{id}/app.bsky.feed.post/{id}", $"cid{id}", $"did:plc:t{id}", $"t{id}.test",
@@ -55,12 +55,12 @@ public class LogToggleTests
 
     private static LogEntry AddToLog(RaiderGame game, FeedPost post)
     {
-        var entry = new LogEntry(post, game.Book.For(post));
+        var entry = new LogEntry(post, game.Book.MarksFor(post));
         game.Log.Add(entry);
         return entry;
     }
 
-    private static void StepIdle(RaiderGame game, int frames = 1) { for (int i = 0; i < frames; i++) { HoldRig.Away(game); HoldRig.Step(game); } }
+    private static void StepIdle(RaiderGame game, int frames = 1) { for (int i = 0; i < frames; i++) { PressRig.Away(game); PressRig.Step(game); } }
 
     // --- the mark ---
 
@@ -140,7 +140,7 @@ public class LogToggleTests
         var (game, recorder) = RecordedGame();
         var post = Post(1);
         var entry = AddToLog(game, post);
-        game.Input.Like(); StepIdle(game);
+        game.Input.LogLike(); StepIdle(game);
         Assert.Equal([LikeWrite(post)], recorder.Writes);
         Assert.Equal(ButtonState.Pending, entry.Marks.Like);
         StepIdle(game, 30);
@@ -160,7 +160,7 @@ public class LogToggleTests
         game.Toggle(post.Uri, Like);
         game.WriteConfirmed(post.Uri, Like, NewLikeUri);
         recorder.Writes.Clear(); recorder.Said.Clear();
-        game.Input.Like(); StepIdle(game);
+        game.Input.LogLike(); StepIdle(game);
         Assert.Equal([DeleteWrite(Like, post)], recorder.Writes);
         Assert.Equal(ButtonState.Pending, entry.Marks.Like);
         game.WriteConfirmed(post.Uri, Like, null, undo: true);
@@ -193,14 +193,14 @@ public class LogToggleTests
         var (game, recorder) = RecordedGame();
         var post = Post(1);
         var entry = AddToLog(game, post);
-        game.Input.Repost(); StepIdle(game);
+        game.Input.LogRepost(); StepIdle(game);
         Assert.Equal([RepostWrite(post)], recorder.Writes);
         Assert.Equal(ButtonState.Pending, entry.Marks.Repost);
         game.WriteConfirmed(post.Uri, Repost, NewRepostUri);
         Assert.Equal(ButtonState.Lit, entry.Marks.Repost);
         Assert.Equal((Reposts + 1).ToString(), CardPainter.CountText(post, entry.Marks, Repost));
         recorder.Writes.Clear();
-        game.Input.Repost(); StepIdle(game);
+        game.Input.LogRepost(); StepIdle(game);
         Assert.Equal([DeleteWrite(Repost, post)], recorder.Writes);
         game.WriteConfirmed(post.Uri, Repost, null, undo: true);
         Assert.Equal(ButtonState.Off, entry.Marks.Repost);
@@ -217,7 +217,7 @@ public class LogToggleTests
         AddToLog(game, post);
         game.Toggle(post.Uri, Like);
         game.Toggle(post.Uri, Like);
-        game.Input.Like(); StepIdle(game);
+        game.Input.LogLike(); StepIdle(game);
         Assert.Single(recorder.Writes);
         game.WriteConfirmed(post.Uri, Like, NewLikeUri);
         game.Toggle(post.Uri, Like);
@@ -235,7 +235,7 @@ public class LogToggleTests
         game.WriteFailed(post.Uri, Like, NoNetwork);
         Assert.Equal(ButtonState.Off, entry.Marks.Like);
         Assert.Equal(Likes.ToString(), CardPainter.CountText(post, entry.Marks, Like));
-        Assert.Contains(NoLikeSound, recorder.Played);
+        Assert.Contains(SfxNames.NoLike, recorder.Played);
         Assert.Contains(NoNetwork, game.Toast);
     }
 
@@ -250,7 +250,7 @@ public class LogToggleTests
         Assert.Equal(ButtonState.Lit, entry.Marks.Like);
         Assert.Equal(OldLikeUri, entry.Marks.LikeUri);
         Assert.Equal(Likes.ToString(), CardPainter.CountText(post, entry.Marks, Like));
-        Assert.Contains(NoLikeSound, recorder.Played);
+        Assert.Contains(SfxNames.NoLike, recorder.Played);
         Assert.Contains(NoNetwork, game.Toast);
     }
 
@@ -279,25 +279,25 @@ public class LogToggleTests
         var (game, recorder) = RecordedGame(signedIn: false);
         var post = Post(1);
         var entry = AddToLog(game, post);
-        game.Input.Like(); StepIdle(game);
+        game.Input.LogLike(); StepIdle(game);
         Assert.Equal(ButtonState.Marked, entry.Marks.Like);
         Assert.Equal(Likes.ToString(), CardPainter.CountText(post, entry.Marks, Like));
-        game.Input.Like(); StepIdle(game);
+        game.Input.LogLike(); StepIdle(game);
         Assert.Equal(ButtonState.Off, entry.Marks.Like);
-        game.Input.Repost(); StepIdle(game);
+        game.Input.LogRepost(); StepIdle(game);
         Assert.Equal(ButtonState.Marked, entry.Marks.Repost);
-        game.Input.Repost(); StepIdle(game);
+        game.Input.LogRepost(); StepIdle(game);
         Assert.Equal(ButtonState.Off, entry.Marks.Repost);
         Assert.Empty(recorder.Writes);
     }
 
     [Fact]
-    public void A_toggle_in_the_log_never_raises_the_shield_starts_the_power_or_adds_a_bomb_and_an_undo_never_takes_one_away()
+    public void A_toggle_in_the_log_never_raises_the_shield_or_adds_a_bomb_and_an_undo_never_takes_one_away()
     {
         var (game, _) = RecordedGame();
         var post = Post(1);
         AddToLog(game, post);
-        HoldRig.Force(game, nameof(RaiderGame.Shield), LikeHoldTests.NoShield);
+        PressRig.Force(game, nameof(RaiderGame.Shield), LikePressTests.NoShield);
         int bombs = game.Bombs;
         game.Toggle(post.Uri, Like);
         game.WriteConfirmed(post.Uri, Like, NewLikeUri);
@@ -305,13 +305,12 @@ public class LogToggleTests
         game.WriteConfirmed(post.Uri, Repost, NewRepostUri);
         const int settleFrames = 3;
         StepIdle(game, settleFrames);
-        Assert.Equal(LikeHoldTests.NoShield, game.Shield);
-        Assert.Equal(0, game.PowerLeft);
+        Assert.Equal(LikePressTests.NoShield, game.Shield);
         Assert.Equal(bombs, game.Bombs);
         Assert.False(game.Book.Find(post.Uri)!.Paid);
 
-        // a reward already paid by a hold stays when the like is undone
-        HoldRig.Force(game, nameof(RaiderGame.Shield), Tuning.ShieldHits);
+        // a reward already paid on the field stays when the like is undone
+        PressRig.Force(game, nameof(RaiderGame.Shield), Tuning.ShieldHits);
         game.Book.Find(post.Uri)!.Paid = true;
         game.Toggle(post.Uri, Like);
         game.WriteConfirmed(post.Uri, Like, null, undo: true);
@@ -320,19 +319,19 @@ public class LogToggleTests
     }
 
     [Fact]
-    public void A_post_unliked_in_the_log_can_be_held_again_when_it_comes_round_and_pays_nothing_the_second_time()
+    public void A_post_unliked_in_the_log_can_be_liked_again_when_it_comes_round_and_pays_nothing_the_second_time()
     {
         var (game, _) = RecordedGame();
-        var post = HoldRig.Post(1);
+        var post = PressRig.Post(1);
         game.Posts.Offer(post);
-        HoldRig.Sweep(game);
+        PressRig.Sweep(game);
         game.Step();
         var card = game.Cards.Cards[0];
         const int cardTop = 6;
         card.Top = cardTop;
-        HoldRig.Away(game);
-        HoldRig.Force(game, nameof(RaiderGame.Shield), LikeHoldTests.NoShield);
-        HoldRig.Hold(game, card, Like, Tuning.HoldFrames);
+        PressRig.Away(game);
+        PressRig.Force(game, nameof(RaiderGame.Shield), LikePressTests.NoShield);
+        PressRig.Press(game, card, Like);
         Assert.Equal(Tuning.ShieldHits, game.Shield);
         game.WriteConfirmed(post.Uri, Like, NewLikeUri);
         Assert.True(card.Marks.Paid);
@@ -342,19 +341,20 @@ public class LogToggleTests
         game.WriteConfirmed(post.Uri, Like, null, undo: true);
         Assert.Equal(ButtonState.Off, card.Marks.Like);
 
-        HoldRig.Force(game, nameof(RaiderGame.Shield), LikeHoldTests.NoShield);
-        HoldRig.Away(game);
+        PressRig.Rest(game, Tuning.PressRepeatFrames + 1);
+        PressRig.Force(game, nameof(RaiderGame.Shield), LikePressTests.NoShield);
+        PressRig.Away(game);
         card.Top = cardTop;
-        HoldRig.Hold(game, card, Like, Tuning.HoldFrames);
-        Assert.Equal(ButtonState.Pending, card.Marks.Like);   // held again, written again
-        Assert.Equal(LikeHoldTests.NoShield, game.Shield);    // and nothing paid
+        PressRig.Press(game, card, Like);
+        Assert.Equal(ButtonState.Pending, card.Marks.Like);
+        Assert.Equal(LikePressTests.NoShield, game.Shield);
     }
 
     [Fact]
     public void A_card_on_the_field_and_the_log_entry_of_the_same_post_always_show_the_same_state()
     {
         var (game, _) = RecordedGame();
-        var post = HoldRig.Post(1);
+        var post = PressRig.Post(1);
         game.Posts.Offer(post);
         game.Step();
         var card = game.Cards.Cards[0];
@@ -397,28 +397,28 @@ public class LogToggleTests
         game.Book.Find(marked.Uri)!.Like = ButtonState.Marked;
         var scr = Render(game).Scr;
         int c0 = LogCol0(game), half = game.Layout.PanelCols / 2;
-        int Buttons(FeedPost post) => RowOf(scr, game, "@" + post.AuthorHandle) + 1;
+        int ButtonRowOf(FeedPost post) => RowOf(scr, game, "@" + post.AuthorHandle) + 1;
 
-        int row = Buttons(off);
+        int row = ButtonRowOf(off);
         Assert.Equal(CardLayout.HeartOff, scr.CharAt(c0 + RaiderView.LikeIconCol, row));
         Assert.Equal(Palette.Dim, scr.Fg[row * Cols + c0 + RaiderView.LikeIconCol]);
         Assert.Contains(Likes.ToString(), LogLine(scr, game, row));
         Assert.Equal(CardLayout.LoopMark, scr.CharAt(c0 + half + RaiderView.RepostIconCol, row));
 
-        row = Buttons(lit);
+        row = ButtonRowOf(lit);
         Assert.Equal(CardLayout.HeartOn, scr.CharAt(c0 + RaiderView.LikeIconCol, row));
         Assert.Equal(CardColours.LikeLit, scr.Fg[row * Cols + c0 + RaiderView.LikeIconCol]);
         Assert.Equal(CardLayout.LoopMark, scr.CharAt(c0 + half + RaiderView.RepostIconCol, row));
 
-        row = Buttons(marked);
+        row = ButtonRowOf(marked);
         Assert.Equal(CardLayout.HeartOff, scr.CharAt(c0 + RaiderView.LikeIconCol, row));
         Assert.Equal(Surface.Mix(RaiderView.PanelBg, CardColours.LikeLit, RaiderView.MarkedIconStrength), scr.Fg[row * Cols + c0 + RaiderView.LikeIconCol]);
 
-        row = Buttons(locked);
+        row = ButtonRowOf(locked);
         Assert.Contains("lock", LogLine(scr, game, row)[half..]);
 
         // pending blinks every few frames between the lit colour and the dim one
-        row = Buttons(pending);
+        row = ButtonRowOf(pending);
         var seen = new HashSet<uint>();
         const int watchedPhases = 24;   // a dozen blinks of a lit phase and an idle one: enough for a third colour to show if there were one
         for (int i = 0; i < watchedPhases; i++)

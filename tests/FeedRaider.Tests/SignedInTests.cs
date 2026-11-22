@@ -3,7 +3,7 @@ using FeedRaider.Engine.Raider;
 
 namespace FeedRaider.Tests;
 
-// The signed-in game: the Following timeline as the source, the like path from the game's own feed, B, and hold-to-like.
+// The signed-in game: the Following timeline as the source, the like path from the game's own feed, B, and the like key.
 // The JS side (main.js -> atproto.js) is a fake: delegates that answer with the JSON the real calls give.
 public class SignedInTests
 {
@@ -32,7 +32,7 @@ public class SignedInTests
     private static RaiderGame NewGame()
     {
         var g = new RaiderGame(5) { SignedIn = true };
-        g.SetLayout(FieldLayout.Compute(HoldRig.ScrCols, HoldRig.ScrRows));
+        g.SetLayout(FieldLayout.Compute(PressRig.ScrCols, PressRig.ScrRows));
         return g;
     }
 
@@ -89,7 +89,7 @@ public class SignedInTests
     {
         const string firstDid = "did:plc:a0", secondDid = "did:plc:a3";
         var json = Page(AuthorHandle, AuthorHandle, AuthorHandle, OtherAuthorHandle, OtherAuthorHandle);
-        // one author per did in Page(); make the dids repeat by author instead
+        // Page() gives every post its own did, but one author is one did
         json = json.Replace("did:plc:a1", firstDid).Replace("did:plc:a2", firstDid).Replace("did:plc:a4", secondDid);
         var game = new RaiderGame(1);
         using var cts = new CancellationTokenSource();
@@ -198,20 +198,20 @@ public class SignedInTests
     }
 
     [Fact]
-    public async Task Signed_in_a_finished_hold_asks_for_one_like_write_and_the_heart_is_pending_until_the_answer_then_lit_with_the_records_address_kept()
+    public async Task Signed_in_a_like_key_asks_for_one_like_write_and_the_heart_is_pending_until_the_answer_then_lit_with_the_records_address_kept()
     {
-        var (g, c, _) = HoldRig.Scene();
+        var (g, c, _) = PressRig.Scene();
         var actions = new FakeActions();
         var writes = new List<Task>();
         g.OnLike = p => writes.Add(RaiderFeeds.WriteAsync(g, actions, p, PostAction.Like));
-        HoldRig.Hold(g, c, PostAction.Like, LikeHoldTests.LastTickBeforeDone);
+        PressRig.RestOn(g, c, PostAction.Like, Tuning.Fps);
         Assert.Empty(actions.Calls);
-        HoldRig.Hold(g, c, PostAction.Like, LikeHoldTests.FinishingTicks);
+        PressRig.Press(g, c, PostAction.Like);
         Assert.Equal([FakeActions.LikeCall(c.Post.Uri)], actions.Calls);
         Assert.Equal(ButtonState.Pending, c.Marks.Like);
         Assert.Null(c.Marks.LikeUri);
-        const int waitingFrames = Tuning.HoldFrames, afterAnswerFrames = Tuning.HoldFrames;   // long enough that a second hold would finish
-        HoldRig.Hold(g, c, PostAction.Like, waitingFrames);     // still on the button: no second write while it waits
+        PressRig.RestOn(g, c, PostAction.Like, Tuning.Fps);
+        PressRig.Press(g, c, PostAction.Like);   // pressed again while it waits: no second write
         Assert.Single(actions.Calls);
 
         const string likeRecord = "at://did:plc:me/app.bsky.feed.like/3kx";
@@ -219,34 +219,33 @@ public class SignedInTests
         await Assert.Single(writes);
         Assert.Equal(ButtonState.Lit, c.Marks.Like);
         Assert.Equal(likeRecord, c.Marks.LikeUri);
-        HoldRig.Hold(g, c, PostAction.Like, afterAnswerFrames);
+        PressRig.RestOn(g, c, PostAction.Like, Tuning.Fps);
         Assert.Single(actions.Calls);
     }
 
     [Fact]
     public async Task A_failed_write_puts_the_heart_back_plays_nolike_says_why_in_plain_words_and_takes_no_reward_back()
     {
-        var (g, c, played) = HoldRig.Scene();
+        var (g, c, played) = PressRig.Scene();
         var actions = new FakeActions();
         var writes = new List<Task>();
         var said = new List<string>();
         g.Said = said.Add;
         g.OnLike = p => writes.Add(RaiderFeeds.WriteAsync(g, actions, p, PostAction.Like));
-        HoldRig.Force(g, nameof(RaiderGame.Shield), LikeHoldTests.NoShield);
-        HoldRig.Hold(g, c, PostAction.Like, Tuning.HoldFrames);
+        PressRig.Force(g, nameof(RaiderGame.Shield), LikePressTests.NoShield);
+        PressRig.Press(g, c, PostAction.Like);
         Assert.Equal(ButtonState.Pending, c.Marks.Like);
-        Assert.Equal(LikeHoldTests.CountAfter, CardPainter.CountText(c, PostAction.Like));
+        Assert.Equal(LikePressTests.CountAfter, CardPainter.CountText(c, PostAction.Like));
         played.Clear();
 
         actions.Answer.SetException(new Exception($"TypeError: {FetchFailed}"));
         await Assert.Single(writes);
         Assert.Equal(ButtonState.Off, c.Marks.Like);
         Assert.Null(c.Marks.LikeUri);
-        Assert.Equal(LikeHoldTests.CountBefore, CardPainter.CountText(c, PostAction.Like));
+        Assert.Equal(LikePressTests.CountBefore, CardPainter.CountText(c, PostAction.Like));
         Assert.Equal([SfxNames.NoLike], played.Select(p => p.Name));
         Assert.Equal(LikeFailedToast, said[^1]);
         Assert.Equal(Tuning.ShieldHits, g.Shield);
-        Assert.True(g.Powered);
         Assert.True(c.Marks.Paid);
     }
 
@@ -280,6 +279,10 @@ public class SignedInTests
         HostKeys.Apply(g.Input, "KeyF", true);
         Assert.True(g.Input.AutoToggle);
         HostKeys.Apply(g.Input, "KeyE", true);
-        Assert.True(g.Input.LikeLatch > 0);
+        Assert.True(g.Input.LogLikeLatch > 0);
+        HostKeys.Apply(g.Input, "KeyZ", true);
+        Assert.True(g.Input.ShipLikeLatch > 0);
+        HostKeys.Apply(g.Input, "KeyX", true);
+        Assert.True(g.Input.ShipRepostLatch > 0);
     }
 }

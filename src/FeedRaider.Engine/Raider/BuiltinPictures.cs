@@ -23,7 +23,7 @@ public static class BuiltinPictures
         ['t'] = 0xa05a2a,
     };
 
-    private static readonly Dictionary<string, string[]> All = new(StringComparer.Ordinal)
+    private static readonly Dictionary<string, string[]> Art = new(StringComparer.Ordinal)
     {
         // a boat in a harbour at first light: wide
         ["harbour"] =
@@ -105,22 +105,57 @@ public static class BuiltinPictures
             "gggggggggggggggggggg",
             "gggggggggggggggggggg",
         ],
+        // a notebook and a cup on a desk by a window, a link card's thumbnail: about the Open Graph shape
+        ["desk"] =
+        [
+            "SSSSSSSSSSSSSSSSSSSS",
+            "SSwwSSSSSSSSSSkSSSSS",
+            "SSSSSSSSSSSSSSkSSSSS",
+            "kkkkkkkkkkkkkkkkkkkk",
+            "BBBBBBBBBBBBBBBBBBBB",
+            "BBwwwwwwwwBBBBBBBBBB",
+            "BBwsssssswBBBwwwwBBB",
+            "BBwwwwwwwwBBBwttwwBB",
+            "BBBBBBBBBBBBBwwwwBBB",
+            "bbbbbbbbbbbbbbbbbbbb",
+        ],
+        // a street at night under one lamp, a video's thumbnail: wide
+        ["street"] =
+        [
+            "................",
+            "...........O....",
+            "..........OOO...",
+            ".kk.......kOk...",
+            ".kk.kkk....k.kk.",
+            ".ko.kok....k.ko.",
+            ".kk.kkk....k.kk.",
+            "ssssssssssOsssss",
+            "ssssssssOOOOssss",
+        ],
     };
 
     /// <summary>Every built-in picture's name.</summary>
-    public static IReadOnlyCollection<string> Names => All.Keys;
+    public static IReadOnlyCollection<string> Names => Art.Keys;
 
     /// <summary>A post's picture entry for the built-in picture <paramref name="name"/>, with its shape.</summary>
     public static PostPicture Picture(string name)
     {
-        var art = All[name];
+        var art = Art[name];
         return new PostPicture(RaiderGame.BuiltinPrefix + name, art[0].Length, art.Length);
+    }
+
+    /// <summary>A video by <paramref name="did"/> whose thumbnail is the built-in picture <paramref name="name"/>, in that picture's shape. Its
+    /// CID is the picture's built-in address, which the game draws from here and never asks the host for.</summary>
+    public static VideoRef Video(string did, string name)
+    {
+        var art = Art[name];
+        return new VideoRef(did, RaiderGame.BuiltinPrefix + name, art[0].Length / (double)art.Length, null);
     }
 
     /// <summary>The picture as <paramref name="w"/> by <paramref name="h"/> colours, or null for a name that is not one of them.</summary>
     public static uint[]? Render(string name, int w, int h)
     {
-        if (w < 1 || h < 1 || !All.TryGetValue(name, out var art)) return null;
+        if (w < 1 || h < 1 || !Art.TryGetValue(name, out var art)) return null;
         int aw = art[0].Length, ah = art.Length;
         var px = new uint[w * h];
         for (int y = 0; y < h; y++)

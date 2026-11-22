@@ -1,13 +1,14 @@
 namespace FeedRaider.Engine.Raider;
 
 /// <summary>
-/// The scenery. A dark sky with a Bluesky-blue glow far back and a few drifting stars. The posts themselves are not here: the
-/// real cards are drawn over this by <see cref="CardPainter"/>. The sky is baked once, so a frame is a copy and a few dots.
+/// The scenery. A dark sky with a Bluesky-blue glow far back and three layers of drifting stars: a faint dust, a far layer and a
+/// sparse, bright near layer, each faster than the one behind, so the field reads as flying up the page. The posts themselves are
+/// not here: the real cards are drawn over this by <see cref="CardPainter"/>. The sky is baked once, so a frame is a copy and a few dots.
 /// </summary>
 public sealed class Background
 {
-    private const int StarCount = 34;
-    private const ulong StarSeedOffset = 5000;
+    private const int DustCount = 34;
+    private const ulong DustSeedOffset = 5000, FarSeedOffset = 6000, NearSeedOffset = 7000;
 
     /// <summary>The sky's fade from top to bottom: the row's depth raised to this, so the dark comes on early.</summary>
     private const double SkyFadeCurve = 0.55;
@@ -20,9 +21,13 @@ public sealed class Background
     /// <summary>The streak's strongest blend, and the strength and offset of the shadow row beneath it.</summary>
     private const double StreakAlpha = 0.22, StreakShadowAlpha = 0.5;
     private const int StreakShadowShiftX = 3, StreakShadowShiftY = 1;
-    /// <summary>A star's brightness range as a fraction, the chance it takes the Bluesky tint, the pale tint, and how far it is mixed from the sky.</summary>
-    private const double StarBrightnessMin = 0.25, StarBrightnessSpread = 0.5, StarBlueChance = 0.35, StarMix = 0.55;
+    /// <summary>A dust star's brightness range as a fraction, the chance a star takes the Bluesky tint, the pale tint, and how far dust is mixed from the sky.</summary>
+    private const double DustBrightnessMin = 0.25, DustBrightnessSpread = 0.5, StarBlueChance = 0.35, DustMix = 0.55;
     private const uint StarPaleTint = 0xdfe8ff;
+    /// <summary>The far and near layers' brightness, as the share mixed from the sky to the star's tint. One shade a layer and tint: a
+    /// moving star pairs its colour with every colour of the fade it crosses, so each shade more is hundreds more keys in a phone's
+    /// glyph atlas. Near stars are the brightest.</summary>
+    private const double FarMix = 0.4, NearMix = 0.75;
     /// <summary>Hash streams a star draws its brightness, tint, column and row from.</summary>
     private const int StarColumnStream = 1, StarRowStream = 2, StarBrightnessStream = 3, StarTintStream = 4;
 
@@ -45,23 +50,45 @@ public sealed class Background
     private readonly int _width, _height;
     private readonly ulong _seed;
     private readonly Surface _sky;
-    private readonly (int X, int Y, uint Colour)[] _stars;
+    private readonly Layer[] _layers;
+
+    /// <summary>One layer of stars: each star's start and colour, the layer's pace in pixels a frame, and its streak during a burst at
+    /// full strength, from the shortest to the longest, in pixels behind each star.</summary>
+    private sealed record Layer((int X, int Y, uint Colour)[] Stars, double Pace, int StreakMin, int StreakMax);
+
+    /// <summary>The streaks of the dust, the far layer and the near layer: a faster layer draws a longer line, as it rushes past nearer.</summary>
+    private const int DustStreakMin = 3, DustStreakMax = 6, FarStreakMin = 5, FarStreakMax = 9, NearStreakMin = 8, NearStreakMax = 14;
 
     public Background(int width, int height, ulong seed)
     {
         _width = width; _height = height; _seed = seed;
         _sky = BakeSky();
-        _stars = BakeStars();
+        _layers =
+        [
+            new(BakeDust(), Tuning.ScrollStars, DustStreakMin, DustStreakMax),
+            new(BakeLayer(width * height / Tuning.StarsFarPixels, FarSeedOffset, FarMix), Tuning.ScrollStarsFar, FarStreakMin, FarStreakMax),
+            new(BakeLayer(width * height / Tuning.StarsNearPixels, NearSeedOffset, NearMix), Tuning.ScrollStarsNear, NearStreakMin, NearStreakMax),
+        ];
     }
 
-    public void Draw(Surface target, double scrollFrames)
+    /// <summary>The stars of every layer.</summary>
+    public int StarTotal => _layers.Sum(layer => layer.Stars.Length);
+
+    /// <summary>Draws the sky and its stars, each layer at its own pace. <paramref name="streak"/>, 0 to 1, draws each star as a fading
+    /// streak behind it, as long as the speed burst is strong; 0 draws dots.</summary>
+    public void Draw(Surface target, double scrollFrames, double streak = 0)
     {
         Array.Copy(_sky.P, target.P, Math.Min(_sky.P.Length, target.P.Length));
-        foreach (var (x, startY, colour) in _stars)
-        {
-            int y = (int)((startY + scrollFrames * Tuning.ScrollStars) % _height);
-            target.Set(x, y, colour);
-        }
+        foreach (var layer in _layers)
+            for (int star = 0; star < layer.Stars.Length; star++)
+            {
+                var (x, startY, colour) = layer.Stars[star];
+                int y = (int)((startY + scrollFrames * layer.Pace) % _height);
+                target.Set(x, y, colour);
+                int length = (int)Math.Round((layer.StreakMin + star % (layer.StreakMax - layer.StreakMin + 1)) * streak);
+                for (int i = 1; i <= length; i++)
+                    target.Blend(x, y - i, colour, 1 - i / (double)(length + 1));
+            }
     }
 
     private Surface BakeSky()
@@ -102,16 +129,52 @@ public sealed class Background
         return [.. Enumerable.Range(0, gaps + 1).Select(step => Surface.Mix(Palette.SkyTop, SkyBottom, step / (double)gaps))];
     }
 
-    private (int X, int Y, uint Colour)[] BakeStars()
+    private (int X, int Y, uint Colour)[] BakeDust()
     {
-        var stars = new (int X, int Y, uint Colour)[StarCount];
+        var stars = new (int X, int Y, uint Colour)[DustCount];
         for (int star = 0; star < stars.Length; star++)
         {
-            ulong hash = Hashing.Mix(_seed + StarSeedOffset + (ulong)star);
-            double brightness = StarBrightnessMin + Hashing.Unit(hash, StarBrightnessStream) * StarBrightnessSpread;
+            ulong hash = Hashing.Mix(_seed + DustSeedOffset + (ulong)star);
+            double brightness = DustBrightnessMin + Hashing.Unit(hash, StarBrightnessStream) * DustBrightnessSpread;
             uint tint = Hashing.Unit(hash, StarTintStream) < StarBlueChance ? BlueskyBlue : StarPaleTint;
-            stars[star] = ((int)(Hashing.Unit(hash, StarColumnStream) * _width), (int)(Hashing.Unit(hash, StarRowStream) * _height), Surface.Mix(Palette.SkyTop, tint, brightness * StarMix));
+            stars[star] = ((int)(Hashing.Unit(hash, StarColumnStream) * _width), (int)(Hashing.Unit(hash, StarRowStream) * _height), Surface.Mix(Palette.SkyTop, tint, brightness * DustMix));
         }
         return stars;
+    }
+
+    /// <summary><paramref name="count"/> stars, each <paramref name="mix"/> of the way from the sky to its tint.</summary>
+    private (int X, int Y, uint Colour)[] BakeLayer(int count, ulong seedOffset, double mix)
+    {
+        var stars = new (int X, int Y, uint Colour)[Math.Max(1, count)];
+        for (int star = 0; star < stars.Length; star++)
+        {
+            ulong hash = Hashing.Mix(_seed + seedOffset + (ulong)star);
+            uint tint = Hashing.Unit(hash, StarTintStream) < StarBlueChance ? BlueskyBlue : StarPaleTint;
+            stars[star] = ((int)(Hashing.Unit(hash, StarColumnStream) * _width), (int)(Hashing.Unit(hash, StarRowStream) * _height), ClearOfCards(tint, mix));
+        }
+        return stars;
+    }
+
+    /// <summary>How much brighter a layer star's shade is made each time it is still within the snap's reach of a card colour.</summary>
+    private const double ShadeNudge = 0.03;
+
+    /// <summary>The star colour <paramref name="mix"/> of the way from the sky to <paramref name="tint"/>, brightened while it lies within
+    /// <see cref="ColourSnap.DefaultTolerance"/> of a card colour: the game's encoder would send such a star as that card colour,
+    /// a speck of card in the sky.</summary>
+    private static uint ClearOfCards(uint tint, double mix)
+    {
+        uint colour = Surface.Mix(Palette.SkyTop, tint, mix);
+        while (mix < 1 && CardColours.All.Any(card => NearCard(card, colour)))
+        {
+            mix = Math.Min(1, mix + ShadeNudge);
+            colour = Surface.Mix(Palette.SkyTop, tint, mix);
+        }
+        return colour;
+    }
+
+    private static bool NearCard(uint card, uint colour)
+    {
+        var (r, g, b) = Surface.Unpack(colour);
+        return ColourSnap.Distance(card, r, g, b) <= ColourSnap.DefaultTolerance;
     }
 }

@@ -18,18 +18,18 @@ function fakeSlider() {
   return { value: '3', addEventListener: (type, fn) => { on[type] = fn; }, fire: (type) => on[type]() };
 }
 
-test('feedSpeed: ?feed-speed=4 is step 4; 0, 6 and abc are ignored and fall back to the stored step, and with neither it is 3', () => {
+test('feedSpeed: ?feed-speed=4 is step 4; 0, 6 and abc are ignored and fall back to the stored step, and with neither it is the default', () => {
   assert.equal(feedSpeed('?feed-speed=4', null), 4);
   assert.equal(feedSpeed('?feed-speed=4', '2'), 4);
   for (const bad of ['0', '6', 'abc', '', '2.5', '-1', '12']) {
     assert.equal(feedSpeed(`?feed-speed=${bad}`, '2'), 2, `feed-speed=${bad} with a stored 2`);
-    assert.equal(feedSpeed(`?feed-speed=${bad}`, null), 3, `feed-speed=${bad} with nothing stored`);
+    assert.equal(feedSpeed(`?feed-speed=${bad}`, null), FEED_SPEED_DEFAULT, `feed-speed=${bad} with nothing stored`);
   }
   assert.equal(feedSpeed('', '5'), 5);
-  assert.equal(feedSpeed('?feed=random', null), 3);
-  assert.equal(feedSpeed('', 'junk'), 3);
-  assert.equal(feedSpeed('', '9'), 3);
-  assert.equal(FEED_SPEED_DEFAULT, 3);
+  assert.equal(feedSpeed('?feed=random', null), FEED_SPEED_DEFAULT);
+  assert.equal(feedSpeed('', 'junk'), FEED_SPEED_DEFAULT);
+  assert.equal(feedSpeed('', '9'), FEED_SPEED_DEFAULT);
+  assert.ok(FEED_SPEED_DEFAULT >= FEED_SPEED_MIN && FEED_SPEED_DEFAULT <= FEED_SPEED_MAX, 'the default is one of the steps');
 });
 
 test('feedSpeed: the address wins for the visit and writes nothing; a later change is stored', () => {
@@ -73,9 +73,9 @@ test('feedSpeed: the start-up call tells the game the step without a toast', () 
 test('feedSpeed: with storage blocked the step still starts and changes; any other failure surfaces', () => {
   const blocked = { get() { throw new DOMException('denied', 'SecurityError'); }, set() { throw new DOMException('full', 'QuotaExceededError'); } };
   const speed = createFeedSpeed({ search: '', storage: blocked, tell: () => {} });
-  assert.equal(speed.step, 3);
-  speed.bump(1);
-  assert.equal(speed.step, 4);
+  assert.equal(speed.step, FEED_SPEED_DEFAULT);
+  speed.bump(-1);
+  assert.equal(speed.step, FEED_SPEED_DEFAULT - 1);
   const broken = { get() { throw new RangeError('a bug'); }, set() {} };
   assert.throws(() => createFeedSpeed({ search: '', storage: broken, tell: () => {} }), RangeError);
 });
@@ -139,8 +139,8 @@ test('index.html: a Feed speed group in the pause dialog, after Sound, with a 1 
   const sound = dialog.indexOf('id="menu-sound"'), speed = dialog.indexOf('id="menu-speed"');
   assert.ok(sound > 0 && speed > sound, 'the Feed speed group comes after Sound');
   assert.match(dialog, /<legend>Feed speed<\/legend>/);
-  assert.match(dialog, /<input id="feed-speed" type="range" min="1" max="5" step="1" value="3"[^>]*aria-label="Feed speed"/);
-  assert.match(dialog, /id="feed-speed-name"/);
+  assert.match(dialog, new RegExp(`<input id="feed-speed" type="range" min="1" max="5" step="1" value="${FEED_SPEED_DEFAULT}"[^>]*aria-label="Feed speed"`));
+  assert.match(dialog, new RegExp(`id="feed-speed-name"[^>]*>${FEED_SPEED_NAMES[FEED_SPEED_DEFAULT - FEED_SPEED_MIN]}<`), 'the slider opens on the default step and its name');
 });
 
 test('main.js: the speed keys are handled by the page and never passed to the game as held keys', () => {

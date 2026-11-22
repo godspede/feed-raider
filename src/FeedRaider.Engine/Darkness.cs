@@ -3,7 +3,7 @@ using TUImation;
 namespace FeedRaider.Engine;
 
 /// <summary>A darkness enemy. It knows its kind, a seed and a text fragment, and nothing about the author.</summary>
-public sealed class DarkEnemy
+public sealed class DarknessEnemy
 {
     public required DarknessKind Kind { get; init; }
     /// <summary>Per-enemy seed; motes of one swarm share <see cref="GroupSeed"/> (and so an edge to come from).</summary>
@@ -12,7 +12,7 @@ public sealed class DarkEnemy
     public required long SpawnMs { get; init; }
     public required string Text { get; init; }
     public required string TargetDid { get; set; }
-    public DarkSource Source { get; init; } = DarkSource.Label;
+    public DarknessSource Source { get; init; } = DarknessSource.Label;
 
     public double X { get; internal set; }
     public double Y { get; internal set; }
@@ -20,12 +20,12 @@ public sealed class DarkEnemy
     public long DissolveStartMs { get; internal set; } = -1;
     public bool Dissolving => DissolveStartMs >= 0;
 
-    public int Width => Kind == DarknessKind.Rude ? DarkEnemySprites.BruteW : DarkEnemySprites.MoteW;
-    public int Height => Kind == DarknessKind.Rude ? DarkEnemySprites.BruteH : DarkEnemySprites.MoteH;
+    public int Width => Kind == DarknessKind.Rude ? DarknessEnemySprites.BruteW : DarknessEnemySprites.MoteW;
+    public int Height => Kind == DarknessKind.Rude ? DarknessEnemySprites.BruteH : DarknessEnemySprites.MoteH;
 }
 
-/// <summary>DarkEnemy movement as a pure function of (seed, time, target position): no state, no randomness.</summary>
-public static class DarkEnemyMotion
+/// <summary>DarknessEnemy movement as a pure function of (seed, time, target position): no state, no randomness.</summary>
+public static class DarknessEnemyMotion
 {
     private const long BruteTravelBaseMs = 5500, BruteTravelSpreadMs = 1500;
     private const long MoteTravelBaseMs = 2200, MoteTravelSpreadMs = 500;
@@ -48,7 +48,7 @@ public static class DarkEnemyMotion
     private const int SideSalt = 5;                               // hash channel of which side of the figure it stops at
     private const int MoteLandingSalt = 6;                        // hash channel of how high on the figure a mote stops
     private const int MoteWobblePhaseSalt = 7;                    // hash channel of where in its wobble a mote starts
-    public static (double X, double Y) Start(DarkEnemy m, int cols, int pixelHeight)
+    public static (double X, double Y) Start(DarknessEnemy m, int cols, int pixelHeight)
     {
         int edge = (int)(Hashing.Mix(m.GroupSeed) % FieldEdges);
         double u = Hashing.Unit(m.GroupSeed, AlongEdgeSalt);
@@ -67,12 +67,12 @@ public static class DarkEnemyMotion
         return (x, y);
     }
 
-    public static long TravelMs(DarkEnemy m) => m.Kind == DarknessKind.Rude
+    public static long TravelMs(DarknessEnemy m) => m.Kind == DarknessKind.Rude
         ? BruteTravelBaseMs + (long)(Hashing.Unit(m.Seed, TravelSalt) * BruteTravelSpreadMs)
         : MoteTravelBaseMs + (long)(Hashing.Unit(m.Seed, TravelSalt) * MoteTravelSpreadMs);
 
     /// <summary>Top-left of the enemy. <paramref name="target"/> is the top-left of the figure it is after.</summary>
-    public static (double X, double Y) Position(DarkEnemy m, long ms, (double X, double Y) target, int cols, int pixelHeight)
+    public static (double X, double Y) Position(DarknessEnemy m, long ms, (double X, double Y) target, int cols, int pixelHeight)
     {
         var (sx, sy) = Start(m, cols, pixelHeight);
         double side = Hashing.Unit(m.Seed, SideSalt) < 0.5 ? -1 : 1;
@@ -119,28 +119,28 @@ public sealed class Darkness
     /// <summary>An enemy pushes a figure within this many pixels either side on x, and on y.</summary>
     private const double FlinchReachX = 16, FlinchReachY = 12;
 
-    private readonly List<DarkEnemy> _enemies = [];
-    private readonly Queue<DarkPost> _pending = new();
+    private readonly List<DarknessEnemy> _enemies = [];
+    private readonly Queue<DarknessPost> _pending = new();
     /// <summary>Far enough back that the first arrival is due at once; half of the minimum so that ms minus it cannot overflow.</summary>
     private const long NeverSpawnedMs = long.MinValue / 2;
 
     private long _lastSpawnMs = NeverSpawnedMs;
     private int _serial;
 
-    public IReadOnlyList<DarkEnemy> Enemies => _enemies;
+    public IReadOnlyList<DarknessEnemy> Enemies => _enemies;
     public int Pending => _pending.Count;
     public int Spawned { get; private set; }
     public int SpawnedFromLabels { get; private set; }
     public int SpawnedFromHidden { get; private set; }
     public int Dispelled { get; private set; }
 
-    public void Offer(DarkPost post)
+    public void Offer(DarknessPost post)
     {
         _pending.Enqueue(post);
         while (_pending.Count > MaxPending) _pending.Dequeue();
     }
 
-    private static long LifeMs(DarkEnemy m) => m.Kind == DarknessKind.Rude ? BruteLifeMs : MoteLifeMs;
+    private static long LifeMs(DarknessEnemy m) => m.Kind == DarknessKind.Rude ? BruteLifeMs : MoteLifeMs;
 
     /// <summary>Advance the enemies. <paramref name="figures"/> are the figures' top-left positions this frame.</summary>
     public void Update(long ms, IReadOnlyList<(string Did, (double X, double Y) Pos)> figures, int cols, int pixelHeight)
@@ -157,7 +157,7 @@ public sealed class Darkness
                 target = Nearest(figures, m.X, m.Y);
                 m.TargetDid = target.Did;
             }
-            (m.X, m.Y) = DarkEnemyMotion.Position(m, ms, target.Pos, cols, pixelHeight);
+            (m.X, m.Y) = DarknessEnemyMotion.Position(m, ms, target.Pos, cols, pixelHeight);
             if (ms - m.SpawnMs > LifeMs(m)) { m.DissolveStartMs = ms; continue; }
 
             double mx = m.X + m.Width / 2.0, my = m.Y + m.Height / 2.0;
@@ -174,7 +174,7 @@ public sealed class Darkness
             Spawn(_pending.Dequeue(), ms, figures, cols, pixelHeight);
     }
 
-    private void Spawn(DarkPost post, long ms, IReadOnlyList<(string Did, (double X, double Y) Pos)> figures, int cols, int pixelHeight)
+    private void Spawn(DarknessPost post, long ms, IReadOnlyList<(string Did, (double X, double Y) Pos)> figures, int cols, int pixelHeight)
     {
         _lastSpawnMs = ms;
         var texts = new List<string>();
@@ -183,17 +183,17 @@ public sealed class Darkness
         if (texts.Count == 0) return;
 
         ulong group = Hashing.Mix(post.Seed ^ (ulong)(++_serial));
-        var probe = new DarkEnemy { Kind = post.Kind, Seed = group, GroupSeed = group, SpawnMs = ms, Text = "", TargetDid = "" };
-        var (sx, sy) = DarkEnemyMotion.Start(probe, cols, pixelHeight);
+        var probe = new DarknessEnemy { Kind = post.Kind, Seed = group, GroupSeed = group, SpawnMs = ms, Text = "", TargetDid = "" };
+        var (sx, sy) = DarknessEnemyMotion.Start(probe, cols, pixelHeight);
         var target = Nearest(figures, sx, sy);
         for (int i = 0; i < texts.Count; i++)
         {
-            var m = new DarkEnemy { Kind = post.Kind, Seed = Hashing.Mix(group + (ulong)i), GroupSeed = group, SpawnMs = ms, Text = texts[i], TargetDid = target.Did, Source = post.Source };
-            (m.X, m.Y) = DarkEnemyMotion.Start(m, cols, pixelHeight);
+            var m = new DarknessEnemy { Kind = post.Kind, Seed = Hashing.Mix(group + (ulong)i), GroupSeed = group, SpawnMs = ms, Text = texts[i], TargetDid = target.Did, Source = post.Source };
+            (m.X, m.Y) = DarknessEnemyMotion.Start(m, cols, pixelHeight);
             _enemies.Add(m);
             Spawned++;
-            if (post.Source == DarkSource.Label) SpawnedFromLabels++;
-            else if (post.Source == DarkSource.Hidden) SpawnedFromHidden++;
+            if (post.Source == DarknessSource.Label) SpawnedFromLabels++;
+            else if (post.Source == DarknessSource.Hidden) SpawnedFromHidden++;
         }
     }
 
@@ -218,7 +218,7 @@ public sealed class Darkness
     }
 }
 
-public static class DarkEnemySprites
+public static class DarknessEnemySprites
 {
     public const int BruteW = 14, BruteH = 12, MoteW = 9, MoteH = 6;
     private const int FlickerMs = 90;   // how long a mote stays on or off in its flicker
@@ -278,7 +278,7 @@ public static class DarkEnemySprites
     ];
 
     /// <summary>The sprite at this moment, or null for a flickering mote that is "off" this frame.</summary>
-    public static Canvas? Build(DarkEnemy m, long ms)
+    public static Canvas? Build(DarknessEnemy m, long ms)
     {
         Canvas c;
         if (m.Kind == DarknessKind.Rude)
@@ -304,7 +304,7 @@ public static class DarkEnemySprites
         return c;
     }
 
-    private static void Dissolve(Canvas c, DarkEnemy m, long ms)
+    private static void Dissolve(Canvas c, DarknessEnemy m, long ms)
     {
         double p = Math.Clamp((double)(ms - m.DissolveStartMs) / Darkness.DissolveMs, 0, 1);
         for (int y = 0; y < c.Height; y++)

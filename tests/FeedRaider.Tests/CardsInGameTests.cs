@@ -18,9 +18,9 @@ public class CardsInGameTests
     /// <summary>The post id a handle made by <see cref="Handle"/> carries.</summary>
     private static int IdOf(string handle) => int.Parse(handle[HandleLead.Length..^HandleTail.Length]);
 
-    private static FeedPost Post(int id, string? text = null, string? name = "Display Name", string? did = null, AttachmentKind kind = AttachmentKind.None, string? note = null) =>
+    private static FeedPost Post(int id, string? text = null, string? name = "Display Name", string? did = null) =>
         new($"at://did:plc:c{id}/app.bsky.feed.post/{id}", $"cid{id}", did ?? $"did:plc:c{id}", Handle(id), text ?? $"post number {id} says a few ordinary words and ends with tail{id}word",
-            10, 0, 0, null, null, DisplayName: name, Attachment: kind, AttachmentText: note);
+            10, 0, 0, null, null, DisplayName: name);
 
     private static RaiderGame NewGame(int speed = FeedSpeed.Default, int cols = Cols, int rows = Rows)
     {
@@ -59,7 +59,8 @@ public class CardsInGameTests
         Assert.Equal(game.Layout.PCols, game.Cards.FieldCols);
         Assert.Equal(game.Layout.Rows, game.Cards.FieldRows);
         game.Posts.Offer(Post(1));
-        for (int i = 0; i < 100; i++) game.Step();
+        const int settledFrames = 100;
+        for (int i = 0; i < settledFrames; i++) game.Step();
         int top = game.Cards.Cards[0].Top;
         const int newCols = 100, newRows = 40;
         game.SetLayout(FieldLayout.Compute(newCols, newRows));
@@ -77,10 +78,11 @@ public class CardsInGameTests
         var card = game.Cards.Cards[0];
         int rows = card.Shape.Rows, framesPerRow = game.Cards.FramesPerRow;
         int frozen = 0;
-        for (int i = 0; i < 400; i++)
+        int[] bombTicks = [framesPerRow * 2 - 4, framesPerRow * 5 + 2];
+        for (int i = 0; i < framesPerRow * 27; i++)
         {
             // Rows are due at ticks 16, 31, 46 ...: each bomb freezes the game across one of them.
-            if (i == 26 || i == 77) game.Input.Bomb();
+            if (Array.IndexOf(bombTicks, i) >= 0) game.Input.Bomb();
             long tick = game.Tick; int top = card.Top;
             game.Step();
             if (game.Tick == tick) { frozen++; Assert.Equal(top, card.Top); }
@@ -97,12 +99,13 @@ public class CardsInGameTests
         const string name = "Ada Lovelace";
         var post = Post(1, text, name);
         game.Posts.Offer(post);
-        for (int i = 0; i < 1000 && game.Log.Entries.Count == 0; i++) game.Step();
+        const int logWaitFrames = 1000;
+        for (int i = 0; i < logWaitFrames && game.Log.Entries.Count == 0; i++) game.Step();
         var entry = Assert.Single(game.Log.Entries);
         Assert.Equal(name, entry.Post.DisplayName);
         Assert.Equal(Handle(1), entry.Post.AuthorHandle);
         Assert.Equal(text, entry.Post.Text);
-        Assert.Same(game.Book.For(post), entry.Marks);
+        Assert.Same(game.Book.MarksFor(post), entry.Marks);
     }
 
     [Fact]
@@ -183,7 +186,7 @@ public class CardsInGameTests
         const int settleFrames = 40;
         for (int i = 0; i < settleFrames; i++) game.Step();
         Assert.Equal(FeedSpeed.FramesPerRow(speed), game.Cards.FramesPerRow);
-        game.FeedSpeed = 99;
+        game.FeedSpeed = FeedSpeed.Max + 1;
         Assert.Equal(FeedSpeed.Max, game.FeedSpeed);
     }
 
@@ -208,13 +211,19 @@ public class CardsInGameTests
         var game = NewGame();
         var rude = Post(1);
         var plain = Post(2);
-        game.OfferDark(new DarkPost(DarknessKind.Rude, Hashing.MixedFnv64(rude.Uri), rude.Text));
+        game.OfferDarkness(new DarknessPost(DarknessKind.Rude, Hashing.MixedFnv64(rude.Uri), rude.Text));
         Assert.True(game.Rude.Holds(Hashing.MixedFnv64(rude.Uri)));
         game.Posts.Offer(rude);
         game.Posts.Offer(plain);
-        for (int i = 0; i < 600; i++) game.Step();
-        Assert.DoesNotContain(game.Cards.Cards, card => card.Post.Uri == rude.Uri);
-        Assert.Contains(game.Cards.Cards, card => card.Post.Uri == plain.Uri);
+        bool plainSeen = false;
+        const int rudeWatchFrames = 600;
+        for (int i = 0; i < rudeWatchFrames; i++)
+        {
+            game.Step();
+            Assert.DoesNotContain(game.Cards.Cards, card => card.Post.Uri == rude.Uri);
+            plainSeen |= game.Cards.Cards.Any(card => card.Post.Uri == plain.Uri);
+        }
+        Assert.True(plainSeen, "the plain post never became a card");
         Assert.Equal(0, game.Posts.Count);
     }
 }

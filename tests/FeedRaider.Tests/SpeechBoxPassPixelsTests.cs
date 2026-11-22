@@ -92,5 +92,6 @@ public class SpeechBoxPassPixelsTests
         Assert.Equal(NoUnitNear, FrameHash(game));
     }
 
-    private const ulong OverBoxes = 8406509250988379653UL, NoUnitNear = 622736293825532887UL;
+    // The frame hashes of a field with the boxes over it, and of a field with no unit near a box: the far and near star layers sit behind the boxes.
+    private const ulong OverBoxes = 12858706267421384689UL, NoUnitNear = 8820127619628254887UL;
 }

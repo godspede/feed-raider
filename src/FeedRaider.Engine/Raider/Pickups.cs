@@ -1,19 +1,22 @@
 namespace FeedRaider.Engine.Raider;
 
-public enum PickupKind { Shield, Bomb, Weapon }
+public enum PickupKind { Shield, Bomb, Weapon, Burst }
 
 public sealed class Pickup
 {
     public required PickupKind Kind;
     public double X, Y, BaseX;
     public int Age;
+    /// <summary>Pixels a frame it falls; the run's opening burst falls faster, to meet the ship.</summary>
+    public double Drift = Tuning.PickupDrift;
     public int Left => Tuning.PickupLifeFrames - Age;
     /// <summary>True for the last <see cref="Tuning.PickupBlinkFrames"/> frames of its life.</summary>
     public bool Blinking => Left <= Tuning.PickupBlinkFrames;
 }
 
-/// <summary>One bullet of a weapon volley: offset from the muzzle, sideways speed, forward speed as a fraction of the bullet speed, damage.</summary>
-public readonly record struct Shot(double Dx, double Dy, double VX, double VyMul, double Dmg)
+/// <summary>One shot of a weapon volley: offset from the muzzle, sideways speed, forward speed as a fraction of the shot speed, damage,
+/// and whether it is a missile that homes on a small enemy ahead.</summary>
+public readonly record struct Shot(double Dx, double Dy, double VX, double VyMul, double Dmg, bool Homing = false)
 {
     /// <summary>The shot's angle from straight up, in degrees (negative is left).</summary>
     public double Angle => double.RadiansToDegrees(Math.Atan2(VX, VyMul * Tuning.ShipShotSpeed));
@@ -21,7 +24,7 @@ public readonly record struct Shot(double Dx, double Dy, double VX, double VyMul
 
 /// <summary>Drops, pickups, the shield and the weapon levels. Kept apart from the rest of the sim; the hooks in
 /// <c>RaiderGame.cs</c> are <see cref="MaybeDrop"/>, <see cref="UpdatePickups"/>, <see cref="AbsorbWithShield"/>,
-/// <see cref="LoseWeaponLevel"/> and <see cref="WeaponPattern"/>.</summary>
+/// <see cref="LoseWeaponLevel"/> and <see cref="Weapon"/>.</summary>
 public sealed partial class RaiderGame
 {
     public readonly List<Pickup> Pickups = [];
@@ -54,30 +57,37 @@ public sealed partial class RaiderGame
         if (Pickups.Count >= Tuning.MaxPickups) return;
         double chance = ReferenceEquals(e, Boss) ? 1 : TableBehaviour(e.Kind).DropChanceFor(e);
         if (!waveCleared && DropR() >= chance) return;
-        Pickups.Add(new Pickup { Kind = PickDropKind(), X = e.X, BaseX = e.X, Y = e.Y });
+        Pickups.Add(new Pickup { Kind = PickDropKind(burst: true), X = e.X, BaseX = e.X, Y = e.Y });
     }
 
-    /// <summary>A part shot off a bigger enemy may drop a pickup too: a small roll on the drop stream, which an enemy without parts never reaches.</summary>
+    /// <summary>A part shot off a bigger enemy may drop a pickup too: a small roll on the drop stream, which an enemy without parts never reaches.
+    /// It is never a burst, which has no place in the fights that are full of parts.</summary>
     private void MaybeDropFromPart(Enemy e, Part p)
     {
         if (Pickups.Count >= Tuning.MaxPickups) return;
         if (DropR() >= Tuning.PartDropChance) return;
-        Pickups.Add(new Pickup { Kind = PickDropKind(), X = e.X + p.OX, BaseX = e.X + p.OX, Y = e.Y + p.OY });
+        Pickups.Add(new Pickup { Kind = PickDropKind(burst: false), X = e.X + p.OX, BaseX = e.X + p.OX, Y = e.Y + p.OY });
     }
 
-    /// <summary>The weights of the three kinds as the player stands: a kind they are full on comes up a quarter as often.</summary>
-    public (double Shield, double Bomb, double Weapon) DropWeights() => (
+    /// <summary>The weights of the four kinds as the player stands: a kind they are full on comes up a quarter as often, and a burst
+    /// weighs nothing while one may not drop (see <see cref="BurstMayDrop"/>).</summary>
+    public (double Shield, double Bomb, double Weapon, double Burst) DropWeights() => (
         Tuning.WeightShield * (Shield >= Tuning.ShieldHits ? Tuning.WeightFull : 1),
         Tuning.WeightBomb * (Bombs >= Tuning.BombCap ? Tuning.WeightFull : 1),
-        Tuning.WeightWeapon * (WeaponLevel >= Tuning.MaxWeaponLevel ? Tuning.WeightFull : 1));
+        Tuning.WeightWeapon * (WeaponLevel >= Tuning.MaxWeaponLevel ? Tuning.WeightFull : 1),
+        BurstMayDrop ? Tuning.WeightBurst : 0);
 
-    private PickupKind PickDropKind() => KindFor(DropR(), DropWeights());
+    private PickupKind PickDropKind(bool burst)
+    {
+        var w = DropWeights();
+        return KindFor(DropR(), burst ? w : w with { Burst = 0 });
+    }
 
     /// <summary>The kind a uniform draw <paramref name="u"/> (0..1) picks from these weights.</summary>
-    internal static PickupKind KindFor(double u, (double Shield, double Bomb, double Weapon) w)
+    internal static PickupKind KindFor(double u, (double Shield, double Bomb, double Weapon, double Burst) w)
     {
-        double r = u * (w.Shield + w.Bomb + w.Weapon);
-        return r < w.Shield ? PickupKind.Shield : r < w.Shield + w.Bomb ? PickupKind.Bomb : PickupKind.Weapon;
+        double r = u * (w.Shield + w.Bomb + w.Weapon + w.Burst);
+        return r < w.Shield ? PickupKind.Shield : r < w.Shield + w.Bomb ? PickupKind.Bomb : r < w.Shield + w.Bomb + w.Weapon || w.Burst <= 0 ? PickupKind.Weapon : PickupKind.Burst;
     }
 
     // ---------------------------------------------------------------- pickups
@@ -99,9 +109,10 @@ public sealed partial class RaiderGame
         {
             var p = Pickups[i];
             p.Age++;
-            p.Y += Tuning.PickupDrift;
+            p.Y += p.Drift;
             p.X = Math.Clamp(p.BaseX + Math.Sin(p.Age * Tuning.PickupBobRate) * Tuning.PickupBobAmp, PickupEdgeMargin, Math.Max(PickupEdgeMargin, PW - PickupEdgeMargin));
             if (p.Age >= Tuning.PickupLifeFrames || p.Y > PH + PickupEdgeMargin) { Pickups.RemoveAt(i); continue; }
+            if (p.Kind == PickupKind.Burst && !BurstMayStart) continue;
             if (Alive && Math.Abs(p.X - PX) <= Ship.W / 2.0 + Tuning.PickupReach && Math.Abs(p.Y - PY) <= Ship.H / 2.0 + Tuning.PickupReach)
             {
                 Pickups.RemoveAt(i);
@@ -110,9 +121,9 @@ public sealed partial class RaiderGame
         }
     }
 
-    private const uint ShieldColour = 0x4fe8ff, BombColour = 0xff9a3c, WeaponColour = 0xffd84a;
+    private const uint ShieldColour = 0x4fe8ff, BombColour = 0xff9a3c, WeaponColour = 0xffd84a, BurstColour = 0xc4f8ff;
 
-    public static uint PickupColour(PickupKind k) => k switch { PickupKind.Shield => ShieldColour, PickupKind.Bomb => BombColour, _ => WeaponColour };
+    public static uint PickupColour(PickupKind k) => k switch { PickupKind.Shield => ShieldColour, PickupKind.Bomb => BombColour, PickupKind.Burst => BurstColour, _ => WeaponColour };
 
     /// <summary>Sparks in the ring that bursts from a collected pickup.</summary>
     private const int CollectSparks = 12;
@@ -147,10 +158,15 @@ public sealed partial class RaiderGame
                 if (!wasted) Bombs++;
                 sound = SfxNames.PickupBomb; text = "+BOMB";
                 break;
+            case PickupKind.Burst:
+                wasted = false;
+                StartBurst();
+                sound = SfxNames.Burst; text = "ZOOM!";
+                break;
             default:
                 wasted = WeaponLevel >= Tuning.MaxWeaponLevel;
                 if (!wasted) WeaponLevel++;
-                sound = SfxNames.PickupWeapon; text = "+WEAPON";
+                sound = SfxNames.PickupWeapon; text = "+" + Weapon.Name;
                 break;
         }
         if (wasted) { Score += Tuning.ScorePickupOverflow; text = "+" + Tuning.ScorePickupOverflow; }
@@ -193,29 +209,12 @@ public sealed partial class RaiderGame
 
     // ---------------------------------------------------------------- weapon
 
-    public static int FireIntervalFor(int level) => level >= Tuning.MaxWeaponLevel ? Tuning.FireIntervalMax : Tuning.FireInterval;
-
-    /// <summary>The weapon level whose volley is a twin shot and the slanted pair.</summary>
-    private const int AngledPairLevel = 3;
-    /// <summary>The slanted pair that <see cref="AngledPairLevel"/> has and the like's power adds to the levels below it.</summary>
-    private static readonly Shot[] AngledPair = [new(-4, 2, -0.75, 0.95, 0.4), new(4, 2, 0.75, 0.95, 0.4)];
-
-    /// <summary>The bullets one trigger pull makes at a level. <paramref name="liked"/> (the like's power) adds the angled pair to a
-    /// level that does not have one. Damage per bullet falls as the count rises, so a higher level shreds but a boss still lasts.</summary>
-    public static Shot[] WeaponPattern(int level, bool liked = false)
-    {
-        level = Math.Clamp(level, 1, Tuning.MaxWeaponLevel);
-        Shot[] basis = level switch
-        {
-            1 => [new(0, 0, 0, 1, 2.0)],
-            2 => [new(-2, 0, 0, 1, 1.1), new(2, 0, 0, 1, 1.1)],
-            AngledPairLevel => [new(-2, 0, 0, 1, 1.0), new(2, 0, 0, 1, 1.0), .. AngledPair],
-            _ => [new(0, 0, 0, 1, 1.0), new(-2, 1, -0.6, 0.98, 0.5), new(2, 1, 0.6, 0.98, 0.5), new(-4, 2, -1.2, 0.93, 0.4), new(4, 2, 1.2, 0.93, 0.4)],
-        };
-        if (liked && level < AngledPairLevel) basis = [.. basis, .. AngledPair];
-        return basis;
-    }
+    /// <summary>The kind the ship holds.</summary>
+    public WeaponKind Weapon => Weapons.At(WeaponLevel);
 
     /// <summary>Dying costs a level, never below 1.</summary>
     private void LoseWeaponLevel() => WeaponLevel = Math.Max(1, WeaponLevel - 1);
+
+    /// <summary>The page's <c>?debug=weapon</c> key: the next kind, round from the top to the first.</summary>
+    public void DebugStepWeapon() => WeaponLevel = WeaponLevel % Tuning.MaxWeaponLevel + 1;
 }

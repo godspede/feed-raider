@@ -17,7 +17,6 @@ test('menuKey: Esc opens the pause menu during a run and closes it when open; no
   assert.equal(menuKey(esc({ repeat: true }), { playing: true, open: false }), null, 'a held Esc does not flicker the pause menu');
   assert.equal(menuKey(esc({ ctrlKey: true }), { playing: true, open: false }), null);
   assert.equal(menuKey({ key: 'p', code: 'KeyP' }, { playing: true, open: false }), null);
-  assert.equal(menuKey({ key: 'Esc', code: '' }, { playing: true, open: false }), 'open', 'an old browser\'s key name');
 });
 
 test('menuKey: Alt+Esc and Meta+Esc do not open or close the pause menu', () => {
@@ -313,16 +312,13 @@ test('logList: the status line speaks the answer and the list is rebuilt after e
   assert.equal(els.status.textContent, needsSignIn);
 });
 
-test('logList: a bad answer from the game leaves the list as it was and is warned of once, by its reason', () => {
-  const { els, logList } = logRig([row(1)]);
-  logList.refresh();
-  const warned = [];
-  const broken = createLogList({ els, doc: { createElement: () => ({ children: [], append() {}, setAttribute() {}, addEventListener() {} }) }, read: () => { throw new Error('no game'); }, toggle() {}, warn: (message) => warned.push(message) });
-  assert.doesNotThrow(() => broken.refresh());
-  assert.doesNotThrow(() => broken.refresh());
-  assert.equal(li(els, 0) !== undefined, true);
-  assert.equal(warned.length, 1, 'a second failure is not reported again');
-  assert.match(warned[0], /feed log could not be read.*no game/);
+test('logList: a game that throws, or answers what is not JSON, is a fault the refresh throws on', () => {
+  const { els } = logRig([row(1)]);
+  const doc = { createElement: () => ({ children: [], append() {}, setAttribute() {}, addEventListener() {} }) };
+  const throwing = createLogList({ els, doc, read: () => { throw new Error('no game'); }, toggle() {} });
+  assert.throws(() => throwing.refresh(), /no game/);
+  const garbled = createLogList({ els, doc, read: () => 'not json', toggle() {} });
+  assert.throws(() => garbled.refresh(), SyntaxError);
 });
 
 test('index.html: no rule resizes one checkbox, so each is the theme\'s switch with its knob inside the track', () => {

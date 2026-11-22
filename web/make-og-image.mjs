@@ -72,10 +72,10 @@ const PILL_RADIUS = '999px';
 
 const browser = await firefox.launch();
 const card = await browser.newPage({ viewport: { width: CARD_W, height: CARD_H } });
-// The sprite colours of the mine, diver, splitter and turret, from Sprites.cs (MineLit, DiverLime, SplitterPink, TurretTeal).
+// The sprite colours of the mine, diver, splitter and turret, from Sprites.cs (MineLit, DiverLime, SplitterPink, TurretGreen).
 // A frame counts a kind when enough pixels are close to its colour.
-const kindColours = [[0xff, 0xb3, 0x47], [0x9d, 0xff, 0x5a], [0xff, 0x6b, 0xe0], [0x3f, 0xe0, 0xd0]];
-const kindsIn = (png) => card.evaluate(async ([b64, colours, tolerance, minPixels]) => {
+const kindColours = [[0xff, 0xb3, 0x47], [0x9d, 0xff, 0x5a], [0xff, 0x6b, 0xe0], [0x4f, 0xd6, 0x5a]];
+const kindCount = (png) => card.evaluate(async ([b64, colours, tolerance, minPixels]) => {
   const img = new Image();
   img.src = `data:image/png;base64,${b64}`;
   await img.decode();
@@ -147,9 +147,9 @@ else {
     mkdirSync(process.env.OG_FRAMES, { recursive: true });
     frames.forEach((png, f) => writeFileSync(`${process.env.OG_FRAMES}/f${f}.png`, png));
   }
-  const kinds = await Promise.all(frames.map(kindsIn));
-  const best = kinds.lastIndexOf(Math.max(...kinds));
-  console.info(`frame ${best} shows ${kinds[best]} new kinds`);
+  const kindCounts = await Promise.all(frames.map(kindCount));
+  const best = kindCounts.lastIndexOf(Math.max(...kindCounts));
+  console.info(`frame ${best} shows ${kindCounts[best]} of the ${kindColours.length} kinds`);
   shot = frames[best].toString('base64');
 }
 
@@ -167,7 +167,7 @@ await card.setContent(`<style>
 </style>
 <div class="text"><h1>Feed Raider</h1>
 <p class="lede">A shoot-'em-up built from your Bluesky feed</p>
-<ul><li>Real posts scroll behind the fight</li><li>Rest on a post's heart to like it</li><li>Ten bosses, in your browser</li></ul></div>
+<ul><li>Real posts scroll behind the fight</li><li>Press Z or click a heart to like</li><li>Ten bosses, in your browser</li></ul></div>
 <img src="data:image/png;base64,${shot}">`);
 writeFileSync(out, await card.screenshot({ type: 'png' }));
 await browser.close();

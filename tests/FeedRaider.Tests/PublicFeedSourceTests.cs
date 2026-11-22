@@ -72,7 +72,7 @@ public class PublicFeedSourceTests
     public async Task An_error_response_throws_with_its_status_code(HttpStatusCode code, int number)
     {
         var h = new Handler(code, "{\"feed\":[],\"error\":\"nope\"}");
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => new PublicFeedSource(new HttpClient(h)).GetPageAsync(Feed, null, 10, CancellationToken.None));
+        var ex = await Assert.ThrowsAsync<BskyStatusException>(() => new PublicFeedSource(new HttpClient(h)).GetPageAsync(Feed, null, 10, CancellationToken.None));
         Assert.Equal($"getFeed failed: {number}", ex.Message);
     }
 }

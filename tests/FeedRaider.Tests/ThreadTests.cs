@@ -4,7 +4,7 @@ using FeedRaider.Tests.Enemies;
 
 namespace FeedRaider.Tests;
 
-// Following an author's self-thread: a finished like asks for the author's next reply, the reply is picked from a
+// Following an author's self-thread: a like asks for the author's next reply, the reply is picked from a
 // getPostThread body, and the game brings it in as the next card with the thread note.
 public class ThreadTests
 {
@@ -44,7 +44,7 @@ public class ThreadTests
     }
 
     [Fact]
-    public void The_thread_ends_on_an_embed_no_reply_or_a_bad_body()
+    public void A_picture_reply_continues_the_thread_a_video_or_missing_reply_ends_it_and_a_bad_body_throws()
     {
         Assert.Single(ThreadMapper.Next(Fixture(EmbedThread), Root())!.Pictures!);   // a reply with a picture follows: the picture is drawn on its card
         string video = Fixture(EmbedThread).Replace("app.bsky.embed.images#view", "app.bsky.embed.video#view");
@@ -55,13 +55,17 @@ public class ThreadTests
     }
 
     [Fact]
-    public async Task A_failed_or_slow_lookup_ends_the_thread_without_a_word()
+    public async Task A_lookup_that_could_not_be_read_says_so_and_queues_nothing()
     {
         var failed = Game(signedIn: true);
         await RaiderFeeds.ThreadAsync(failed, new ThrowingSource(), Root());
-        Assert.Null(failed.Toast);
+        Assert.Equal("Reply lookup failed: the thread could not be read.", failed.Toast);
         Assert.Equal(0, failed.Posts.Count);
+    }
 
+    [Fact]
+    public async Task A_slow_lookup_ends_the_thread_without_a_word()
+    {
         var slow = Game(signedIn: true);
         await RaiderFeeds.ThreadAsync(slow, new HangingSource(), Root(), timeoutMs: ShortTimeoutMs);
         Assert.Null(slow.Toast);
@@ -186,7 +190,7 @@ public class ThreadTests
     /// <summary>A game with the first post of a thread as its one card, and the addresses of the posts whose next reply it asked for.</summary>
     private static (RaiderGame G, Card C, List<string> Asked) LikeScene(bool signedIn, FeedPost? first = null)
     {
-        var (g, c, _) = HoldRig.Scene(signedIn, first ?? ThreadPost(FirstPost));
+        var (g, c, _) = PressRig.Scene(signedIn, first ?? ThreadPost(FirstPost));
         var asked = new List<string>();
         g.ThreadWanted = p => asked.Add(p.Uri);
         return (g, c, asked);
@@ -195,20 +199,20 @@ public class ThreadTests
     /// <summary>Lets the feed scroll until a second card has entered, and returns it.</summary>
     private static Card ScrollToNextCard(RaiderGame g, Card first)
     {
-        HoldRig.Until(g, () => g.Cards.Cards.Count > 1);
+        PressRig.Until(g, () => g.Cards.Cards.Count > 1);
         return g.Cards.Cards.Single(k => k != first);
     }
 
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void A_finished_like_asks_once_for_the_authors_next_reply_signed_in_or_out(bool signedIn)
+    public void A_like_asks_once_for_the_authors_next_reply_signed_in_or_out(bool signedIn)
     {
         var (g, c, asked) = LikeScene(signedIn);
-        HoldRig.Hold(g, c, Like, LikeHoldTests.LastTickBeforeDone);
+        PressRig.RestOn(g, c, Like, Tuning.Fps);
         Assert.Empty(asked);
-        HoldRig.Hold(g, c, Like, LikeHoldTests.FinishingTicks);
-        HoldRig.Rest(g, Tuning.Fps);
+        PressRig.Press(g, c, Like);
+        PressRig.Rest(g, Tuning.Fps);
         Assert.Equal([ThreadPost(FirstPost).Uri], asked);
     }
 
@@ -217,19 +221,20 @@ public class ThreadTests
     {
         var (g, c, asked) = LikeScene(signedIn: true);
         g.OnLike = _ => { };
-        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        PressRig.Press(g, c, Like);
         g.WriteFailed(c.Post.Uri, Like);
         Assert.Equal(ButtonState.Off, c.Marks.Like);
-        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        PressRig.Rest(g, Tuning.PressRepeatFrames + 1);
+        PressRig.Press(g, c, Like);
         Assert.Equal(ButtonState.Pending, c.Marks.Like);
         Assert.Single(asked);
     }
 
     [Fact]
-    public void A_finished_repost_asks_for_no_reply()
+    public void A_repost_asks_for_no_reply()
     {
         var (g, c, asked) = LikeScene(signedIn: true);
-        HoldRig.Hold(g, c, Repost, Tuning.HoldFrames);
+        PressRig.Press(g, c, Repost);
         Assert.Equal(ButtonState.Marked, c.Marks.Repost);
         Assert.Empty(asked);
     }
@@ -251,19 +256,19 @@ public class ThreadTests
         var (g, c, _) = LikeScene(signedIn: false);
         g.ThreadWanted = _ =>
         {
-            g.Posts.Offer(HoldRig.Post(WaitingPost));
-            g.Posts.Offer(HoldRig.Post(WaitingPost + 1));
+            g.Posts.Offer(PressRig.Post(WaitingPost));
+            g.Posts.Offer(PressRig.Post(WaitingPost + 1));
             g.ThreadOpened(ThreadPost(ReplyPost));
         };
-        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        PressRig.Press(g, c, Like);
         var next = ScrollToNextCard(g, c);
         Assert.Equal(ThreadPost(ReplyPost).Uri, next.Post.Uri);
         Assert.True(next.Thread);
         Assert.Equal(CardLayout.ThreadNote, next.Shape.Note!.Value.Text);
         Assert.False(c.Thread);
 
-        string waitingUri = HoldRig.Post(WaitingPost).Uri;
-        HoldRig.Until(g, () => g.Cards.Cards.Any(k => k.Post.Uri == waitingUri));
+        string waitingUri = PressRig.Post(WaitingPost).Uri;
+        PressRig.Until(g, () => g.Cards.Cards.Any(k => k.Post.Uri == waitingUri));
         var waiting = g.Cards.Cards.Single(k => k.Post.Uri == waitingUri);
         Assert.False(waiting.Thread);
         Assert.Null(waiting.Shape.Note);
@@ -276,7 +281,7 @@ public class ThreadTests
         var (g, c, _) = LikeScene(signedIn: false);
         int firstTop = c.Top;
         g.ThreadWanted = _ => g.ThreadOpened(withPicture);
-        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        PressRig.Press(g, c, Like);
         var next = ScrollToNextCard(g, c);
         var s = next.Shape;
         var note = s.Note!.Value;
@@ -284,12 +289,12 @@ public class ThreadTests
         Assert.Equal(s.Lines[^1].Row + 1, note.Row);
         Assert.Equal(note.Row + 1, Assert.Single(s.Pictures).Y);
 
-        c.Top = HoldRig.ScrRows;
+        c.Top = PressRig.ScrRows;
         next.Top = firstTop;
-        HoldRig.Away(g);
-        HoldRig.Sweep(g);
+        PressRig.Away(g);
+        PressRig.Sweep(g);
         g.Particles.Clear(); g.Rings.Clear();
-        var scr = new Screen(HoldRig.ScrCols, HoldRig.ScrRows);
+        var scr = new Screen(PressRig.ScrCols, PressRig.ScrRows);
         new RaiderView().FitAndRender(g, scr);
         int col = g.Layout.Col0 + g.Cards.CardLeft + note.Col, row = next.Top + note.Row;
         Assert.Equal(CardLayout.ThreadNote[0], scr.CharAt(col, row));
@@ -307,11 +312,11 @@ public class ThreadTests
             asked.Add(p.Uri);
             if (p.Uri == ThreadPost(FirstPost).Uri) g.ThreadOpened(ThreadPost(ReplyPost));
         };
-        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        PressRig.Press(g, c, Like);
         var next = ScrollToNextCard(g, c);
-        c.Top = HoldRig.ScrRows;
+        c.Top = PressRig.ScrRows;
         next.Top = firstTop;
-        HoldRig.Hold(g, next, Like, Tuning.HoldFrames);
+        PressRig.Press(g, next, Like);
         Assert.Equal([ThreadPost(FirstPost).Uri, ThreadPost(ReplyPost).Uri], asked);
     }
 
@@ -322,7 +327,7 @@ public class ThreadTests
         var (g, c, _) = LikeScene(signedIn: false, Root());
         var lookups = new List<Task>();
         g.ThreadWanted = p => lookups.Add(RaiderFeeds.ThreadAsync(g, src, p, timeoutMs: ShortTimeoutMs));
-        HoldRig.Hold(g, c, Like, Tuning.HoldFrames);
+        PressRig.Press(g, c, Like);
         await Task.WhenAll(lookups);
         return (g, lookups.Count);
     }
@@ -336,17 +341,25 @@ public class ThreadTests
     }
 
     [Fact]
-    public async Task A_like_whose_lookup_fails_or_runs_out_of_time_changes_nothing_the_player_sees()
+    public async Task A_like_whose_lookup_runs_out_of_time_changes_nothing_the_player_sees()
     {
-        foreach (IThreadSource src in new IThreadSource[] { new ThrowingSource(), new HangingSource() })
-        {
-            var (g, lookups) = await LikeAndLookUp(src);
-            Assert.Equal(1, lookups);
-            Assert.Equal(0, g.Posts.Count);
-            Assert.Equal(LikeHoldTests.SignedOutLikeToast, g.Toast);
-            HoldRig.Rest(g, Tuning.Fps);
-            Assert.Single(g.Cards.Cards);
-        }
+        var (g, lookups) = await LikeAndLookUp(new HangingSource());
+        Assert.Equal(1, lookups);
+        Assert.Equal(0, g.Posts.Count);
+        Assert.Equal(LikePressTests.SignedOutLikeToast, g.Toast);
+        PressRig.Rest(g, Tuning.Fps);
+        Assert.Single(g.Cards.Cards);
+    }
+
+    [Fact]
+    public async Task A_like_whose_lookup_fails_says_why_and_brings_no_card()
+    {
+        var (g, lookups) = await LikeAndLookUp(new ThrowingSource());
+        Assert.Equal(1, lookups);
+        Assert.Equal(0, g.Posts.Count);
+        Assert.StartsWith("Reply lookup failed: ", g.Toast);
+        PressRig.Rest(g, Tuning.Fps);
+        Assert.Single(g.Cards.Cards);
     }
 
     [Fact]

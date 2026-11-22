@@ -32,7 +32,7 @@ public class SpeechBoxTextTests
     {
         var g = new RaiderGame(GameSeed) { BossGates = false };
         g.SetLayout(FieldLayout.Compute(Cols, Rows));
-        g.OfferDark(new DarkPost(DarknessKind.Spam, PostSeed, text, DarkSource.Label, "x"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Spam, PostSeed, text, DarknessSource.Label, "x"));
         for (int i = 0; i < steps && !g.Enemies.Any(EnemySpeechBox.IsOpen); i++) g.Step();
         return g;
     }
@@ -122,11 +122,11 @@ public class SpeechBoxTextTests
     [Fact]
     public void A_label_with_an_emoji_or_wide_chars_is_cleaned_like_the_text()
     {
-        Assert.Equal("SCAM", EnemySpeechBox.Header(Smile + " scam", DarknessKind.Spam, DarkSource.Label));
-        Assert.Equal("SPAM", EnemySpeechBox.Header(Smile, DarknessKind.Spam, DarkSource.Label));
+        Assert.Equal("SCAM", EnemySpeechBox.Header(Smile + " scam", DarknessKind.Spam, DarknessSource.Label));
+        Assert.Equal("SPAM", EnemySpeechBox.Header(Smile, DarknessKind.Spam, DarknessSource.Label));
         // 48 cells of wide chars, twice the widest label
         const int copies = 4;
-        string wide = EnemySpeechBox.Header(string.Concat(Enumerable.Repeat(Cjk, copies)), DarknessKind.Spam, DarkSource.Label);
+        string wide = EnemySpeechBox.Header(string.Concat(Enumerable.Repeat(Cjk, copies)), DarknessKind.Spam, DarknessSource.Label);
         Assert.InRange(CellText.Width(wide), 1, EnemySpeechBox.MaxLabel);
     }
 }

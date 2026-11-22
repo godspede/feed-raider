@@ -5,15 +5,15 @@ using Xunit.Abstractions;
 namespace FeedRaider.Tests;
 
 // One hit point and one shield: is that fair? Two pilots fly stages 1 to 3 at the default feed speed, signed out, on a phone-sized
-// field and on a desktop one, over a set of seeds. One rests on the heart of about one post in three; the other never looks at
+// field and on a desktop one, over a set of seeds. One flies to the heart of about one post in three and presses Z on it; the other never looks at
 // the feed. The numbers they come back with are what the tuning in Tuning.cs is judged by, and the test prints them.
 public class FairnessTests(ITestOutputHelper output)
 {
     /// <summary>A pilot of middling skill. It looks at the field every <c>Reaction</c> frames (a third of a second), misses one
-    /// look in four (<c>Lapse</c>) and keeps its keys until the next; it sees <c>Horizon</c> frames ahead (0.4 s) and knows bullets
+    /// look in four (<c>Lapse</c>) and keeps its keys until the next; it sees <c>Horizon</c> frames ahead (0.4 s) and knows bolts
     /// and hulls, not beams or marked ground. It fires all the time, collects pickups, and bombs when it is about to lose its ship
     /// with no way out. The one that likes goes for the heart of every third post once the post is well down the field.</summary>
-    internal sealed class Pilot(bool holds, ulong seed)
+    internal sealed class Pilot(bool likes, ulong seed)
     {
         private const int Reaction = 10, Horizon = 12;
         private const double Lapse = 0.25;
@@ -27,7 +27,7 @@ public class FairnessTests(ITestOutputHelper output)
         private const double BottomMargin = 6;   // a heart this close to the bottom edge is not worth the trip
         private const double PickupTopY = 12;   // a pickup above this row is still too far up the field to chase
         private const double LowEnemyGap = 8;   // the enemy to sit under is at least this far above the ship
-        private const double HoldBelow = 0.45;   // it goes for a heart only once the post is this far down the field, clear of where enemies come in
+        private const double LikeBelow = 0.45;   // it goes for a heart only once the post is this far down the field, clear of where enemies come in
         private const int LikeEvery = 3;   // the pilot who likes goes for one post in this many
         private const ulong TickHashStep = 0x9E3779B97F4A7C15UL;   // 2^64 over the golden ratio: spreads consecutive ticks over the whole hash input
         private static readonly double Diagonal = Math.Sqrt(2);   // a diagonal step is this much longer, so its speed is divided by it
@@ -44,7 +44,7 @@ public class FairnessTests(ITestOutputHelper output)
             if (!_hooked)
             {
                 _hooked = true;
-                g.Cards.Entered += c => { if (holds && _cards++ % LikeEvery == 0) _wanted.Add(c); };
+                g.Cards.Entered += c => { if (likes && _cards++ % LikeEvery == 0) _wanted.Add(c); };
                 g.Cards.Left += c => _wanted.Remove(c);
             }
             while (g.Posts.Count < Tuning.PostQueueLow) g.Posts.Offer(Post(++_posts));
@@ -86,8 +86,9 @@ public class FairnessTests(ITestOutputHelper output)
                 if (!_wanted.Contains(c)) continue;
                 if (c.Marks.Like != ButtonState.Off) { _wanted.Remove(c); Likes++; break; }
                 var button = g.Cards.ButtonBox(c, PostAction.Like);
-                if (g.CanHold(c, PostAction.Like) && button.Y >= g.PH * HoldBelow && button.Y + button.H < g.PH - BottomMargin)
-                    return (button.X + button.W / 2.0, button.Y + button.H / 2.0);
+                if (!g.CanPress(c, PostAction.Like) || button.Y < g.PH * LikeBelow || button.Y + button.H >= g.PH - BottomMargin) continue;
+                if (g.KeyCard == c) g.Input.ShipLike();
+                return (button.X + button.W / 2.0, button.Y + button.H / 2.0);
             }
             foreach (var p in g.Pickups)
                 if (p.Y > PickupTopY && p.Y < g.PH) return (p.X, p.Y);
@@ -166,12 +167,12 @@ public class FairnessTests(ITestOutputHelper output)
 
     /// <summary>One run from a fresh start to the end of stage 3 (its boss down, or gone): ships lost in each stage, its boss fight
     /// counted in, and the likes the pilot landed.</summary>
-    internal static (int[] Lost, int Likes, bool Finished) Fly(ulong seed, bool holds, int cols, int rows)
+    internal static (int[] Lost, int Likes, bool Finished) Fly(ulong seed, bool liking, int cols, int rows)
     {
         var g = new RaiderGame(seed) { SignedIn = false };
         g.SetLayout(FieldLayout.Compute(cols, rows));
         g.FeedSpeed = FeedSpeed.Default;
-        var pilot = new Pilot(holds, seed);
+        var pilot = new Pilot(liking, seed);
         int[] lost = new int[Stages];
         int deaths = 0;
         for (int f = 0; f < MaxFrames && g.BossesBeaten < Stages; f++)
@@ -186,14 +187,14 @@ public class FairnessTests(ITestOutputHelper output)
     internal const int Seeds = 32;
 
     /// <summary>Mean ships lost in each stage over the seeds, and mean likes in a run.</summary>
-    internal static (double[] Lost, double Likes, int Finished) Mean(bool holds, int cols, int rows)
+    internal static (double[] Lost, double Likes, int Finished) Mean(bool liking, int cols, int rows)
     {
         double[] lost = new double[Stages];
         double likes = 0;
         int finished = 0;
         for (ulong seed = 1; seed <= Seeds; seed++)
         {
-            var run = Fly(seed, holds, cols, rows);
+            var run = Fly(seed, liking, cols, rows);
             for (int s = 0; s < Stages; s++) lost[s] += run.Lost[s] / (double)Seeds;
             likes += run.Likes / (double)Seeds;
             if (run.Finished) finished++;
@@ -201,12 +202,8 @@ public class FairnessTests(ITestOutputHelper output)
         return (lost, likes, finished);
     }
 
-    // Measured with 72 seeds, with the numbers as they are in Tuning.cs (ships lost in stage 1, 2, 3):
-    //   phone 40x70     likes one in three 0.56 0.59 1.03    ignores the feed 0.81 0.84 0.78
-    //   desktop 130x46  likes one in three 2.12 1.47 1.91    ignores the feed 1.53 2.22 4.09
-    // A sharper pilot (a look every 8 frames, one in seven missed) loses a quarter of a ship a stage, a duller one (every 12
-    // frames, three in ten missed) two to five, so the pilot's skill moves these far more than any number in Tuning.cs does. What
-    // the test holds is the shape: about one to two ships a stage for the pilot who likes, and clearly more for the one who does not.
+    // The pilot's skill moves the ships lost far more than any number in Tuning.cs does, so the test holds only the shape: about one
+    // to three ships a stage for the pilot who likes, and clearly more for the one who does not.
     [Theory]
     [InlineData("phone", 40, 70)]
     [InlineData("desktop", 130, 46)]

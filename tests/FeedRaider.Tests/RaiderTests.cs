@@ -8,15 +8,15 @@ public class RaiderTests
 {
     private const string LongText = "this is a perfectly ordinary post with enough words in it";
 
-    private static RaiderGame NewGame(bool signedIn = true)
+    private static RaiderGame NewGame()
     {
-        var g = new RaiderGame(5) { SignedIn = signedIn };
+        var g = new RaiderGame(5) { SignedIn = true };
         g.SetLayout(FieldLayout.Compute(120, 46));
         return g;
     }
 
-    private static FeedPost Post(int n, string text = LongText, int likes = 10, bool media = false) =>
-        new($"at://did:plc:t{n}/app.bsky.feed.post/{n}", $"cid{n}", $"did:plc:t{n}", $"t{n}.test", text, likes, 0, 0, null, null, HasEmbed: media);
+    private static FeedPost Post(int n) =>
+        new($"at://did:plc:t{n}/app.bsky.feed.post/{n}", $"cid{n}", $"did:plc:t{n}", $"t{n}.test", LongText, 10, 0, 0, null, null);
 
     private static void Run(RaiderGame g, int frames) { for (int i = 0; i < frames; i++) g.Step(); }
 
@@ -53,10 +53,10 @@ public class RaiderTests
     [Fact]
     public void A_rude_event_makes_no_enemy_and_waits_for_a_speaker()
     {
-        var w = WaveSpawner.FromPost(new DarkPost(DarknessKind.Rude, 9, "you are all wrong about everything"));
+        var w = WaveSpawner.FromPost(new DarknessPost(DarknessKind.Rude, 9, "you are all wrong about everything"));
         Assert.Empty(w.Enemies);
         var g = NewGame();
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 9, "you are all wrong about everything"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 9, "you are all wrong about everything"));
         Assert.Equal("you are all wrong about everything", Assert.Single(g.Rude.Waiting).Text);
         Assert.Equal(0, g.LiveWavesSpawned);
     }
@@ -66,7 +66,7 @@ public class RaiderTests
     {
         for (ulong seed = 1; seed < 40; seed++)
         {
-            var w = WaveSpawner.FromPost(new DarkPost(DarknessKind.Spam, seed, "free crypto giveaway dm me now please"));
+            var w = WaveSpawner.FromPost(new DarknessPost(DarknessKind.Spam, seed, "free crypto giveaway dm me now please"));
             Assert.InRange(w.Enemies.Count, Tuning.SpamMin, Tuning.SpamMax);
             Assert.Equal(1, w.Enemies.Count(e => e.Kind == EnemyKind.Carrier));
             Assert.DoesNotContain(w.Enemies, e => e.Kind == EnemyKind.Gunship);
@@ -77,7 +77,7 @@ public class RaiderTests
     [Fact]
     public void The_same_event_always_gives_the_same_wave_and_filler_never_carries_text()
     {
-        var p = new DarkPost(DarknessKind.Spam, 77, "same text every time here");
+        var p = new DarknessPost(DarknessKind.Spam, 77, "same text every time here");
         Assert.Equal(WaveSpawner.FromPost(p).Enemies, WaveSpawner.FromPost(p).Enemies);
         for (ulong s = 0; s < 30; s++)
         {
@@ -91,7 +91,7 @@ public class RaiderTests
     public void A_darkness_event_puts_a_live_wave_on_screen_and_the_hud_tells_it_from_filler()
     {
         var g = NewGame();
-        g.OfferDark(new DarkPost(DarknessKind.Spam, 4, "some spam words for the carrier"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Spam, 4, "some spam words for the carrier"));
         for (int i = 0; i < 200 && !g.Enemies.Any(e => e.Live); i++) g.Step();
         Assert.Contains(g.Enemies, e => e.Live);
         Assert.Equal(1, g.LiveWavesSpawned);
@@ -115,11 +115,11 @@ public class RaiderTests
         Assert.True(g.Shake > 0);
         long tick = g.Tick; double scroll = g.ScrollFrames;
         Run(g, 4);
-        Assert.Equal(tick, g.Tick);                             // frozen
+        Assert.Equal(tick, g.Tick);
         Assert.Equal(scroll, g.ScrollFrames);
         Assert.True(g.Shake < Tuning.ShakeBomb);                // but the shake keeps decaying
         g.Step();
-        Assert.Equal(tick + 1, g.Tick);                         // released
+        Assert.Equal(tick + 1, g.Tick);
         double prev = g.Shake;
         for (int i = 0; i < 80 && g.Shake > 0; i++) { g.Step(); Assert.True(g.Shake <= prev); prev = g.Shake; }
         Assert.Equal(0, g.Shake);
@@ -135,14 +135,18 @@ public class RaiderTests
     }
 
     [Fact]
-    public void A_bomb_on_a_heavy_enemy_gives_hit_stop_flash_and_debris()
+    public void A_bomb_on_a_heavy_enemy_hurts_it_with_hit_stop_shake_and_a_blast_ring_and_likes_nothing()
     {
         var g = NewGame();
-        var ship = g.SpawnLesser();
-        ship.Y = 40;
+        int likes = 0;
+        g.OnLike = _ => likes++;
+        var lesser = g.SpawnLesser();
+        lesser.Y = 40;
         g.Input.Bomb(); g.Step();                               // a bomb hits everything for 30
-        Assert.True(ship.Flash > 0 || ship.Hp < ship.MaxHp);
-        Assert.True(g.HitStop > 0 || g.Shake > 0);
+        Assert.True(lesser.Flash > 0 || lesser.Hp < lesser.MaxHp);
+        Assert.True(g.HitStop > 0);
+        Assert.True(g.Shake > 0);
+        Assert.Equal(0, likes);
         Assert.NotEmpty(g.Rings);
     }
 
@@ -216,10 +220,12 @@ public class RaiderTests
     {
         var g = NewGame();
         var (c, r, w, h) = g.BombButton;
-        int bombs = g.Bombs;
-        g.Input.Tap(c + 1, r);
+        int bombs = g.Bombs, likes = 0;
+        g.OnLike = _ => likes++;
+        g.Input.Click(c + 1, r);
         g.Step();
         Assert.Equal(bombs - 1, g.Bombs);
+        Assert.Equal(0, likes);
     }
 
     // ---------------------------------------------------------------- determinism
@@ -230,7 +236,7 @@ public class RaiderTests
         static (int, long, int) Play()
         {
             var g = NewGame();
-            g.OfferDark(new DarkPost(DarknessKind.Spam, 5, "buy now cheap followers here"));
+            g.OfferDarkness(new DarknessPost(DarknessKind.Spam, 5, "buy now cheap followers here"));
             g.Posts.Offer(Post(1));
             g.Input.Key(GameKey.Fire, true);
             Run(g, 600);

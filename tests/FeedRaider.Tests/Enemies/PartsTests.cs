@@ -551,9 +551,9 @@ public class PartsTests
     {
         const string SecondPost = "second post of the dark", ThirdPost = "third post of the dark", RudeLabel = "rude-ish";
         var game = EnemyKit.Game();
-        game.OfferDark(new DarkPost(DarknessKind.Spam, 1, "first post of the dark", DarkSource.Label, "scam"));
-        game.OfferDark(new DarkPost(DarknessKind.Rude, 2, SecondPost, DarkSource.Label, RudeLabel));
-        game.OfferDark(new DarkPost(DarknessKind.Rude, 3, ThirdPost, DarkSource.Label, RudeLabel));
+        game.OfferDarkness(new DarknessPost(DarknessKind.Spam, 1, "first post of the dark", DarknessSource.Label, "scam"));
+        game.OfferDarkness(new DarknessPost(DarknessKind.Rude, 2, SecondPost, DarknessSource.Label, RudeLabel));
+        game.OfferDarkness(new DarknessPost(DarknessKind.Rude, 3, ThirdPost, DarknessSource.Label, RudeLabel));
         const double WeakHp = 5, StrongHp = 50;   // one shot breaks the first and not the second
         const int HalfSide = 4, Apart = 12;
         EnemyKit.OverrideBehaviour(game, new ScriptBehaviour(EnemyKind.Bulwark)
@@ -580,7 +580,7 @@ public class PartsTests
     {
         var game = EnemyKit.Game();
         const int Posts = 3, Cues = 2 * Posts;
-        for (ulong id = 1; id <= Posts; id++) game.OfferDark(new DarkPost(DarknessKind.Rude, id, "post " + id, DarkSource.Label, "gamma"));
+        for (ulong id = 1; id <= Posts; id++) game.OfferDarkness(new DarknessPost(DarknessKind.Rude, id, "post " + id, DarknessSource.Label, "gamma"));
         EnemyKit.OverrideBehaviour(game, new ScriptBehaviour(EnemyKind.Bulwark) { IsBoss = true });
         var enemy = EnemyKit.ScriptedThreeParts(game);
         var seen = new List<string?>();

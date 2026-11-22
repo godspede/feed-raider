@@ -32,7 +32,7 @@ public class FeedLogTests
     /// <summary>The handle with the log's `@` mark in front (<see cref="HandleMark"/>).</summary>
     private static string ShownHandle(int id) => HandleMark + Handle(id);
 
-    private static void AddToLog(RaiderGame game, FeedPost post) => game.Log.Add(new LogEntry(post, game.Book.For(post)));
+    private static void AddToLog(RaiderGame game, FeedPost post) => game.Log.Add(new LogEntry(post, game.Book.MarksFor(post)));
 
     private static RaiderGame GameWithPosts(int posts)
     {

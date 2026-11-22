@@ -89,7 +89,7 @@ public sealed class SchismTests(ITestOutputHelper output)
     /// <summary>A schism on the field, quiet and untroubled, stepped until it is in <paramref name="mode"/>.</summary>
     private static Enemy SpawnInMode(RaiderGame g, int mode)
     {
-        var s = g.SpawnKind(EnemyKind.Schism, 0.5);
+        var s = g.SpawnKind(EnemyKind.Schism, EnemyKit.MidWidth);
         for (int i = 0; i < ModeWatchFrames && s.Mode != mode; i++) StepAlone(g, s);
         Assert.Equal(mode, s.Mode);
         return s;
@@ -121,7 +121,7 @@ public sealed class SchismTests(ITestOutputHelper output)
     public void It_is_an_ice_half_and_a_rose_half_round_a_gold_seam()
     {
         var g = EnemyKit.Game();
-        var s = g.SpawnKind(EnemyKind.Schism, 0.5);
+        var s = g.SpawnKind(EnemyKind.Schism, EnemyKit.MidWidth);
         Assert.Equal(["ice", "rose", "seam"], s.Parts!.Select(p => p.Name));
         var ice = PartOf(s, "ice"); var rose = PartOf(s, "rose"); var seam = PartOf(s, "seam");
         Assert.True(ice.Vital); Assert.True(rose.Vital); Assert.False(seam.Vital);
@@ -143,7 +143,7 @@ public sealed class SchismTests(ITestOutputHelper output)
     public void It_enters_holds_joined_then_comes_apart_when_the_seam_gives_or_three_hundred_frames_pass(int cols, int rows)
     {
         var g = EnemyKit.Game(cols, rows);
-        var s = g.SpawnKind(EnemyKind.Schism, 0.5);
+        var s = g.SpawnKind(EnemyKind.Schism, EnemyKit.MidWidth);
         Assert.Equal(Entering, s.Mode);
         Assert.True(s.Y < 0, "it enters from above");
         const int watchFrames = 700, mostEntryFrames = 200, frameSlack = 2;
@@ -205,7 +205,7 @@ public sealed class SchismTests(ITestOutputHelper output)
             Assert.True(EnemyKit.Extent(s).T >= -HalfPixel, $"frame {f}: above the field");
         }
         Assert.Equal(2, swaps.Count);
-        Assert.InRange(swaps[1] - swaps[0], SwapEvery, SwapEvery);
+        Assert.Equal(SwapEvery, swaps[1] - swaps[0]);
         Assert.InRange(swaps[0], SwapEvery - firstSwapSlack, SwapEvery + firstSwapSlack);   // the first swap comes a swap's gap after coming apart
         // after the swap ice stands higher than rose by the stagger the field leaves room for
         double stagger = Math.Min(StaggerMax, Floor(g) - (HoldY(g) + HalfH));
@@ -503,7 +503,7 @@ public sealed class SchismTests(ITestOutputHelper output)
     public void Joined_it_is_drawn_in_shield_blue_and_rose_round_a_gold_knot_with_both_eyes_shut()
     {
         var g = EnemyKit.Game();
-        var s = g.SpawnKind(EnemyKind.Schism, 0.5);
+        var s = g.SpawnKind(EnemyKind.Schism, EnemyKit.MidWidth);
         const double bodyX = 60.5, bodyY = 30;
         // art points: the knot at the middle and a crimson corner above it, a light and a dark shade on each half, the outline's top, and each eye
         const int knotX = 15, knotY = 6, cornerX = 14, cornerY = 5, shadeRow = 3, iceLightX = 4, iceDarkX = 2, roseLightX = 24, roseDarkX = 20;
@@ -526,7 +526,7 @@ public sealed class SchismTests(ITestOutputHelper output)
     public void The_seam_is_a_gold_target_on_crimson_and_the_halves_are_closed_art_until_it_breaks()
     {
         var g = EnemyKit.Game();
-        var s = g.SpawnKind(EnemyKind.Schism, 0.5);
+        var s = g.SpawnKind(EnemyKind.Schism, EnemyKit.MidWidth);
         Assert.Equal(PartState.Armoured, PartOf(s, "ice").State);
         var seam = PartOf(s, "seam");
         var art = seam.OpenArt ?? seam.Closed;
@@ -545,7 +545,7 @@ public sealed class SchismTests(ITestOutputHelper output)
             for (int y = firstY; y < firstY + positions; y++)
             {
                 EnemyKit.Clear(g);
-                var s = g.SpawnKind(EnemyKind.Schism, 0.5);
+                var s = g.SpawnKind(EnemyKind.Schism, EnemyKit.MidWidth);
                 s.X = x + 0.5; s.BaseX = s.X; s.Y = y;
                 var withParts = EnemyKit.ClearPickupsAndDraw(g);
                 var snapshot = (uint[])withParts.P.Clone();
@@ -638,7 +638,7 @@ public sealed class SchismTests(ITestOutputHelper output)
         foreach (var (text, age) in posts)
         {
             while (at < age) { g.Step(); at++; EnemyKit.Clear(g); }
-            g.OfferDark(new DarkPost(DarknessKind.Rude, seed++, text, DarkSource.Label, "rude"));
+            g.OfferDarkness(new DarknessPost(DarknessKind.Rude, seed++, text, DarknessSource.Label, "rude"));
         }
         return g;
     }
@@ -656,7 +656,7 @@ public sealed class SchismTests(ITestOutputHelper output)
     public void Ice_takes_the_post_that_has_waited_longest_and_rose_the_one_that_has_waited_least_and_they_take_turns()
     {
         var g = VoiceGame(Four);
-        var s = g.SpawnKind(EnemyKind.Schism, 0.5);
+        var s = g.SpawnKind(EnemyKind.Schism, EnemyKit.MidWidth);
         g.Enemies.RemoveAll(e => e != s);
         for (int i = 0; i < SpeakWatchFrames && s.Text is null; i++) StepAlone(g, s);
         Assert.Equal(Four[0].Text, s.Text);               // ice: the longest waited
@@ -680,7 +680,7 @@ public sealed class SchismTests(ITestOutputHelper output)
     public void Each_half_cuts_the_other_off_in_the_middle_of_a_page()
     {
         var g = VoiceGame(Four);
-        var s = g.SpawnKind(EnemyKind.Schism, 0.5);
+        var s = g.SpawnKind(EnemyKind.Schism, EnemyKit.MidWidth);
         g.Enemies.RemoveAll(e => e != s);
         for (int i = 0; i < SpeakWatchFrames && s.Text is null; i++) StepAlone(g, s);
         const int intoThePage = 6;
@@ -709,7 +709,7 @@ public sealed class SchismTests(ITestOutputHelper output)
     public void With_the_store_empty_it_says_its_own_lines_under_its_own_name()
     {
         var g = EnemyKit.Game();
-        var s = g.SpawnKind(EnemyKind.Schism, 0.5);
+        var s = g.SpawnKind(EnemyKind.Schism, EnemyKit.MidWidth);
         for (int i = 0; i < SpeakWatchFrames && s.Text is null; i++) StepAlone(g, s);
         Assert.Equal("Both sides have a point.", s.Text);
         Assert.Equal("SCHISM", s.Header);
@@ -741,7 +741,7 @@ public sealed class SchismTests(ITestOutputHelper output)
     public void With_none_waiting_the_halves_go_on_arguing_with_the_heard_posts_ice_the_oldest_rose_the_newest()
     {
         var g = VoiceGame(Four);
-        var s = g.SpawnKind(EnemyKind.Schism, 0.5);
+        var s = g.SpawnKind(EnemyKind.Schism, EnemyKit.MidWidth);
         g.Enemies.RemoveAll(e => e != s);
         for (int i = 0; i < SpeakWatchFrames && s.Text is null; i++) StepAlone(g, s);
         for (int i = 1; i < Four.Length; i++) g.Cue(s, VoiceCue.Phase);
@@ -770,7 +770,7 @@ public sealed class SchismTests(ITestOutputHelper output)
     public void The_ship_dying_does_not_hand_the_floor_to_the_other_half()
     {
         var g = VoiceGame(Four[0]);
-        var s = g.SpawnKind(EnemyKind.Schism, 0.5);
+        var s = g.SpawnKind(EnemyKind.Schism, EnemyKit.MidWidth);
         g.Enemies.RemoveAll(e => e != s);
         for (int i = 0; i < SpeakWatchFrames && s.Text is null; i++) StepAlone(g, s);
         Assert.Equal("FROST", s.Voice!.Prefix);

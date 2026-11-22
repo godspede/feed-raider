@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 // self-contained block of it: read that block out of the source and run it against stand-ins for the page.
 const main = readFileSync(new URL('../../src/FeedRaider.Web/wwwroot/main.js', import.meta.url), 'utf8');
 const start = main.indexOf("const panel = document.getElementById('debug');");
-const end = main.indexOf("if (debug === 'feed') renderDebug();", start);
+const end = main.indexOf("if (debugFeed) renderDebug();", start);
 assert.ok(start > 0 && end > start, 'the debug block is still where this test looks for it');
 const block = main.slice(start, end);
 

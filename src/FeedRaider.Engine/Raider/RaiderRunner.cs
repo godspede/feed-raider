@@ -15,7 +15,7 @@ public sealed class PublicFeedSource(HttpClient http) : IFeedSource
         if (cursor is not null) url += "&cursor=" + Uri.EscapeDataString(cursor);
         using var resp = await http.GetAsync(url, ct).ConfigureAwait(false);
         string body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-        if (!resp.IsSuccessStatusCode) throw new InvalidOperationException($"getFeed failed: {(int)resp.StatusCode}");
+        if (!resp.IsSuccessStatusCode) throw new BskyStatusException((int)resp.StatusCode, $"getFeed failed: {(int)resp.StatusCode}");
         return FeedMapper.ParsePage(body, signedOut: true); // read without signing in, so authors who opted out of signed-out viewers are dropped
     }
 }
@@ -106,7 +106,6 @@ public sealed class FollowsFeedSource(HttpClient http, string handle, Func<TimeS
                 _failure = new FollowsUnavailableException($"{who} follows nobody the game can show.");
                 throw _failure;
             }
-            catch (FollowsUnavailableException) { throw; }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex) when (ex is HttpRequestException or JsonException or BskyStatusException or TaskCanceledException)
             {
@@ -175,7 +174,8 @@ public sealed class FollowsFeedSource(HttpClient http, string handle, Func<TimeS
 public static class RaiderFeeds
 {
     /// <summary>Label and hidden-reply streams in, one wave per real event. The same sources as the spectator; only posts in the
-    /// player's <paramref name="languages"/> become enemies.</summary>
+    /// player's <paramref name="languages"/> become enemies, and a hidden reply in English is kept as well while the run knows too few
+    /// posts to speak (<see cref="VoiceFetch"/>).</summary>
     public static Task DarknessAsync(RaiderGame game, HttpClient http, PlayerLanguages languages, CancellationToken ct, PauseGate? pause = null)
     {
         var stats = new DarknessStats();
@@ -183,11 +183,23 @@ public static class RaiderFeeds
         var hidden = new ThreadgateSource { Pause = pause }.ReadAsync(ct);
         bool signedOut = !game.SignedIn;
         Func<string, CancellationToken, Task<string?>> fetch = (uri, c) => PostTextFetcher.FetchAsync(http, uri, signedOut, c, languages);
-        void Offer(DarkPost p) { lock (game) game.OfferDark(p); }
+        var voiceFetch = VoiceFetch(game, languages, (uri, readable, c) => PostTextFetcher.FetchAsync(http, uri, signedOut, c, readable));
+        void Offer(DarknessPost p) { lock (game) game.OfferDarkness(p); }
         return Task.WhenAll(
             Task.Run(() => DarknessFeed.RunAsync(labels, fetch, Offer, stats, ct, pause: pause), ct),
-            Task.Run(() => DarknessFeed.RunHiddenAsync(hidden, fetch, Offer, stats, ct, pause: pause), ct));
+            Task.Run(() => DarknessFeed.RunHiddenAsync(hidden, voiceFetch, Offer, stats, ct, pause: pause), ct));
     }
+
+    /// <summary>The fetch for the posts bosses speak: each asks <paramref name="fetch"/> with the languages
+    /// <see cref="RaiderGame.VoiceLanguages"/> gives at that moment, so English fills in only while the run knows too few posts.</summary>
+    public static Func<string, CancellationToken, Task<string?>> VoiceFetch(RaiderGame game, PlayerLanguages languages,
+        Func<string, PlayerLanguages, CancellationToken, Task<string?>> fetch) =>
+        (uri, c) =>
+        {
+            PlayerLanguages readable;
+            lock (game) readable = game.VoiceLanguages(languages);
+            return fetch(uri, readable, c);
+        };
 
     private const int RepeatWaitMs = 4000, PageLimit = 30;
     private const string FallbackName = "Discover";   // what the notices call the fallback feed
@@ -195,7 +207,9 @@ public static class RaiderFeeds
     private const int MaxBackoffDoublings = 4;   // the retry delay doubles this many times at most, up to MaxBackoffMs
     private const int MaxBackoffMs = 15_000, FallbackRetryMs = 8000, EmptyPageWaitMs = 5000, NextPageWaitMs = 400;
 
-    /// <summary>The one write of a finished hold: the host's session makes the like or repost record, then the game lights the
+    private const string UnknownRecordText = "the record's address is not known";   // an undo of a like or repost whose record the game never heard back
+
+    /// <summary>The one write of a press: the host's session makes the like or repost record, then the game lights the
     /// button and keeps the record's address, or puts the button back and says why it failed.</summary>
     public static async Task WriteAsync(RaiderGame game, IPostActions actions, FeedPost post, PostAction action, CancellationToken ct = default, bool undo = false)
     {
@@ -205,7 +219,11 @@ public static class RaiderFeeds
             {
                 string? record;
                 lock (game) record = game.Book.Find(post.Uri) is { } m ? (action == PostAction.Like ? m.LikeUri : m.RepostUri) : null;
-                if (record is null) throw new InvalidOperationException("the record's address is not known");
+                if (record is null)
+                {
+                    lock (game) game.WriteFailed(post.Uri, action, UnknownRecordText, undo);
+                    return;
+                }
                 await actions.DeleteAsync(record, ct).ConfigureAwait(false);
                 lock (game) game.WriteConfirmed(post.Uri, action, null, undo: true);
                 return;
@@ -217,24 +235,30 @@ public static class RaiderFeeds
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Console.Error.WriteLine((action == PostAction.Like ? "like" : "repost") + (undo ? " undo" : "") + " failed: " + ex.Message);
             lock (game) game.WriteFailed(post.Uri, action, Plain.WriteFailureText(ex, action, undo), undo);
         }
     }
 
-    /// <summary>Looks up the author's own next reply to a liked post, off the game loop, and hands it to the game. A lookup that
-    /// fails, or runs past <paramref name="timeoutMs"/>, changes nothing in the game and nothing waits on it: the player liked a
-    /// post and did not ask for a thread, so a missing reply is no news to them. A failure goes to the error stream.</summary>
+    /// <summary>Looks up the author's own next reply to a liked post, off the game loop, and settles every outcome in the game
+    /// itself, so a host owes nothing and only starts it. A reply goes to the game. No reply, a lookup past
+    /// <paramref name="timeoutMs"/> or a run that ended first changes nothing: the player liked a post and did not ask for a
+    /// thread, and a reply that comes later than the time limit would arrive after the card it belongs behind. An answer
+    /// that could not be read (refused, unreachable or not a thread) is a failure, and the toast says so.</summary>
     public static async Task ThreadAsync(RaiderGame game, IThreadSource threads, FeedPost post, CancellationToken ct = default, int timeoutMs = Tuning.ThreadLookupMs)
     {
-        FeedPost? next = null;
-        try { next = await threads.NextAsync(post, ct).WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), ct).ConfigureAwait(false); }
-        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException) { }   // safe to drop: the reply is an extra, and the game carries on without it
-        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or JsonException) { Console.Error.WriteLine($"a thread could not be read: {ex.Message}"); }   // logged, not shown: the player did not ask for the thread
-        lock (game)
+        FeedPost? next;
+        try
         {
-            if (next is not null) game.ThreadOpened(next);
+            next = await threads.NextAsync(post, ct).WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), ct).ConfigureAwait(false);
         }
+        catch (TimeoutException) { return; }
+        catch (OperationCanceledException) { return; }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or JsonException)
+        {
+            lock (game) game.Say("Reply lookup failed: " + Plain.ThreadFailureText(ex) + ".");
+            return;
+        }
+        if (next is not null) lock (game) game.ThreadOpened(next);
     }
 
     /// <summary>Keeps the post queue topped up from <paramref name="primary"/> (falling back to <paramref name="fallback"/> when it

@@ -84,7 +84,7 @@ public sealed class ThreadgateSource
     public const string Endpoint = $"{JetstreamSource.DefaultEndpoint}?wantedCollections={ThreadgateDiffer.GateCollection}";
     /// <summary>How far before its first event the run's stream starts. Replies are hidden too seldom for a boss to have one to say
     /// through a fight, so the stream begins with those hidden in this time, which arrive within seconds of the start.</summary>
-    public static readonly TimeSpan Replay = TimeSpan.FromMinutes(30);
+    public static readonly TimeSpan Replay = TimeSpan.FromMinutes(Raider.Tuning.HiddenReplayMinutes);
     private const string Connecting = "connecting", Paused = "paused", Reconnecting = "reconnecting", Live = "live";
     public string State { get; private set; } = Connecting;
     /// <summary>While paused the connection is closed; on resume it opens afresh at "now" (the paused time is not replayed).</summary>

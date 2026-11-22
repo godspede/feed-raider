@@ -11,19 +11,19 @@ public sealed class JsFeedSource(Func<string, string?, int, Task<string>> fetch)
 }
 
 /// <summary>The write calls through JS functions: like and repost take (uri, cid) and answer the new record as JSON {uri, cid};
-/// delete takes the record's address. A host that gives no repost or delete function cannot make those writes.</summary>
-public sealed class JsActions(Func<string, string, Task<string>> like, Func<string, string, Task<string>>? repost = null, Func<string, Task>? delete = null) : IPostActions
+/// delete takes the record's address.</summary>
+public sealed class JsActions(Func<string, string, Task<string>> like, Func<string, string, Task<string>> repost, Func<string, Task> delete) : IPostActions
 {
     public async Task<PostRef> LikeAsync(PostRef post, CancellationToken ct) =>
         JsonSerializer.Deserialize(await like(post.Uri, post.Cid), EngineJson.Default.PostRef)
         ?? throw new InvalidOperationException("Bluesky answered the like with nothing");
 
     public async Task<PostRef> RepostAsync(PostRef post, CancellationToken ct) =>
-        JsonSerializer.Deserialize(await (repost ?? throw new NotSupportedException("this page cannot repost"))(post.Uri, post.Cid), EngineJson.Default.PostRef)
+        JsonSerializer.Deserialize(await repost(post.Uri, post.Cid), EngineJson.Default.PostRef)
         ?? throw new InvalidOperationException("Bluesky answered the repost with nothing");
 
     public Task DeleteAsync(string recordUri, CancellationToken ct) =>
-        (delete ?? throw new NotSupportedException("this page cannot delete"))(recordUri);
+        delete(recordUri);
 }
 
 /// <summary>Source-generated JSON for the Engine's own calls, so the like answer is read without reflection when trimmed.</summary>
@@ -81,6 +81,15 @@ public static class Plain
         return $"could not load {name}";
     }
 
+    /// <summary>Why the lookup of an author's reply after a like could not be read, in words a player can act on.</summary>
+    public static string ThreadFailureText(Exception ex)
+    {
+        if (IsAuthProblem(ex)) return IsSignedOut(ex.Message) ? "you are signed out" : "your sign-in may not read threads; sign in again";
+        if (RateLimited(ex.Message)) return "too many lookups; wait a moment";
+        if (Network(ex.Message)) return "could not reach Bluesky";
+        return "the thread could not be read";
+    }
+
     /// <summary>The words @atproto/api's agent throws when it holds no session; atproto.js throws the same words, so one match covers both.</summary>
     private const string NotSignedIn = "not logged in";
 
@@ -115,8 +124,10 @@ public static class HostKeys
             case "Space": inp.Key(Raider.GameKey.Fire, down); break;
             case "KeyF" when down: inp.ToggleAutoFire(); break;
             case "KeyB" when down: inp.Bomb(); break;
-            case "KeyE" when down: inp.Like(); break;
-            case "KeyR" when down: inp.Repost(); break;
+            case "KeyE" when down: inp.LogLike(); break;
+            case "KeyR" when down: inp.LogRepost(); break;
+            case "KeyZ" when down: inp.ShipLike(); break;
+            case "KeyX" when down: inp.ShipRepost(); break;
             case "BracketLeft" when down: inp.MarkUp(); break;
             case "BracketRight" when down: inp.MarkDown(); break;
         }

@@ -32,17 +32,10 @@ public class PostActionsTests
     [Fact]
     public async Task A_like_still_goes_through_the_like_function()
     {
-        IPostActions actions = new JsActions((uri, cid) => Task.FromResult($$"""{"uri":"at://l/{{uri.Length}}","cid":"{{cid}}"}"""));
+        IPostActions actions = new JsActions((uri, cid) => Task.FromResult($$"""{"uri":"at://l/{{uri.Length}}","cid":"{{cid}}"}"""),
+            (_, _) => throw new InvalidOperationException(), _ => throw new InvalidOperationException());
         var made = await actions.LikeAsync(Post, default);
         Assert.Equal("cidp", made.Cid);
-    }
-
-    [Fact]
-    public async Task A_repost_or_delete_on_a_host_that_gave_no_function_says_so_instead_of_crashing_quietly()
-    {
-        IPostActions actions = new JsActions((_, _) => Task.FromResult("{}"));
-        await Assert.ThrowsAsync<NotSupportedException>(() => actions.RepostAsync(Post, default));
-        await Assert.ThrowsAsync<NotSupportedException>(() => actions.DeleteAsync("at://x/y/z", default));
     }
 
     [Theory]

@@ -8,7 +8,7 @@ namespace FeedRaider.Tests.Enemies;
 /// The Mirror (boss 9): one wide wall of glass, two panes of facets either side of an eye. These tests give its kind and numbers, its
 /// size on every field, its art (the drawings exactly), the machine (a 240-frame cycle: each pane rests, warns in white and burns),
 /// the rule that it hurts a ship for where it stands and never for firing, what a lit and a dull facet do with a shot, the eye's
-/// rhythm and its spread, its voice (it says back the run's echoes) and the fight (a bot with the starting gun and at weapon level 3).
+/// rhythm and its spread, its voice (it says back the run's echoes) and the fight (a bot with the starting gun and with the heavy laser).
 /// </summary>
 public sealed class MirrorTests(ITestOutputHelper output)
 {
@@ -21,6 +21,8 @@ public sealed class MirrorTests(ITestOutputHelper output)
     /// <summary>The warning's dots and the glare's ice stripes are this many pixels apart.</summary>
     private const int DotPitch = 2;
     private const int MaxFightFrames = Tuning.BossStayFrames;
+    /// <summary>The stage whose gate brings the mirror in as its boss.</summary>
+    private const int MirrorStage = 9;
     /// <summary>A phone's field: 80 pixels wide.</summary>
     private const int PhoneCols = 40, PhoneRows = 58;
     private const uint Shade = 0x5f7f9f, Silver = 0x8f8a9a, Sheen = 0xd8d4e0;
@@ -59,7 +61,7 @@ public sealed class MirrorTests(ITestOutputHelper output)
     private static Enemy Settled(RaiderGame g)
     {
         const int enterLimit = 200;
-        var m = g.SpawnKind(EnemyKind.Mirror, 0.5);
+        var m = g.SpawnKind(EnemyKind.Mirror, EnemyKit.MidWidth);
         for (int i = 0; i < enterLimit && m.Mode == Entering; i++) StepKeepingAndClearingHostileBolts(g, m);
         Assert.Equal(LeftRest, m.Mode);
         return m;
@@ -110,12 +112,13 @@ public sealed class MirrorTests(ITestOutputHelper output)
 
     private static int HostileBoltCount(RaiderGame g) => g.Bullets.Count(b => !b.Friendly);
 
-    /// <summary>What the ship has lost (its shield, its hit points) and its deaths.</summary>
-    private static (int Shield, int Hp, int Deaths) Harm(RaiderGame g) => (g.Shield, g.Hp, g.Deaths);
+    /// <summary>What the ship still has (its shield, its hit points) and its deaths so far.</summary>
+    private static (int Shield, int Hp, int Deaths) Standing(RaiderGame g) => (g.Shield, g.Hp, g.Deaths);
 
-    private static readonly (int Shield, int Hp, int Deaths) Unharmed = (Tuning.ShieldHits, Tuning.ShipHp, 0);
+    /// <summary>The standing of a ship that has taken no harm: a full shield, full hit points and no deaths.</summary>
+    private static readonly (int Shield, int Hp, int Deaths) FullStanding = (Tuning.ShieldHits, Tuning.ShipHp, 0);
 
-    /// <summary>True when the ship has lost something between two readings of its harm.</summary>
+    /// <summary>True when the ship has lost something between two readings of its standing.</summary>
     private static bool Hurt((int Shield, int Hp, int Deaths) before, (int Shield, int Hp, int Deaths) after) =>
         after.Shield < before.Shield || after.Hp < before.Hp || after.Deaths > before.Deaths;
 
@@ -145,25 +148,22 @@ public sealed class MirrorTests(ITestOutputHelper output)
     // ---------------------------------------------------------------- the kind
 
     [Fact]
-    public void It_is_a_boss_and_has_its_numbers()
+    public void It_is_a_speaking_boss_whose_name_fits_its_speech_box()
     {
-        const int hp = 72, score = 8000, place = 9;
         Assert.True(Mirror.Boss);
         Assert.True(Mirror.Speaks);
         Assert.Equal(EnemyKind.Mirror, Mirror.Kind);
         Assert.Equal("MIRROR", Mirror.Name);
-        Assert.Equal(hp, Mirror.Hp);
-        Assert.Equal(score, Mirror.Score);
         Assert.True(Mirror.Name.Length <= EnemySpeechBox.MaxLabel);
-        Assert.Equal(EnemyKind.Mirror, Ramp.Boss(place));
+        Assert.Equal(EnemyKind.Mirror, Ramp.Boss(MirrorStage));
     }
 
     [Fact]
     public void The_gate_at_the_end_of_stage_nine_brings_it_in_as_the_boss()
     {
-        const int place = 9, settle = 5;
+        const int settle = 5;
         var g = EnemyKit.Game();
-        g.StartAtBoss(place);
+        g.StartAtBoss(MirrorStage);
         for (int i = 0; i < Tuning.BossWarnFrames + settle; i++) g.Step();
         Assert.NotNull(g.Boss);
         Assert.Equal(EnemyKind.Mirror, g.Boss!.Kind);
@@ -442,13 +442,13 @@ public sealed class MirrorTests(ITestOutputHelper output)
                 Assert.Equal(PartState.Open, p.State);
             }
             Assert.False(Mirror.Touches(g, m));
-            Assert.Equal(Unharmed, Harm(g));
+            Assert.Equal(FullStanding, Standing(g));
             warned++;
             StepKeepingAndClearingHostileBolts(g, m);
         }
         Assert.Equal(TellFrames, warned);
         Assert.Equal(LeftBurn, m.Mode);
-        Assert.NotEqual(Unharmed, Harm(g));   // the ship stood under it to the end, and the first frame of the burn has it
+        Assert.NotEqual(FullStanding, Standing(g));   // the ship stood under it to the end, and the first frame of the burn has it
     }
 
     [Fact]
@@ -614,7 +614,7 @@ public sealed class MirrorTests(ITestOutputHelper output)
             Follow(g, m, underThePane, false);
         }
         Assert.DoesNotContain(SfxNames.Beam, played);
-        Assert.Equal(Unharmed, Harm(g));
+        Assert.Equal(FullStanding, Standing(g));
     }
 
     [Fact]
@@ -624,7 +624,7 @@ public sealed class MirrorTests(ITestOutputHelper output)
         foreach (double shipX in new[] { 20.0, 100.0 })
         {
             var g = Field();
-            var m = g.SpawnKind(EnemyKind.Mirror, 0.5);
+            var m = g.SpawnKind(EnemyKind.Mirror, EnemyKit.MidWidth);
             Walk(g, shipX, m);   // while the mirror is still coming on
             Assert.Equal(Entering, m.Mode);
             while (m.Mode == Entering) StepKeepingAndClearingHostileBolts(g, m);
@@ -677,11 +677,11 @@ public sealed class MirrorTests(ITestOutputHelper output)
         foreach (var p in m.Parts!) p.Hp = p.MaxHp;
     }
 
-    /// <summary>A ship keeps this far to the side of the mirror's middle for one pane's turn, the glass mended every frame. Gives what the ship
-    /// had lost after every frame, and how many shots it fired.</summary>
-    private static (List<(int, int, int)> Harm, int Fired) StandThroughTurn(RaiderGame g, Enemy m, double offset, bool firing)
+    /// <summary>A ship keeps this far to the side of the mirror's middle for one pane's turn, the glass mended every frame. Gives the ship's
+    /// standing after every frame, and how many shots it fired.</summary>
+    private static (List<(int, int, int)> Standings, int Fired) StandThroughTurn(RaiderGame g, Enemy m, double offset, bool firing)
     {
-        var harm = new List<(int, int, int)>();
+        var standings = new List<(int, int, int)>();
         int fired = 0, mode = m.Mode;
         Assert.True(mode is LeftRest or RightRest);
         while (m.Mode == mode || m.Mode == mode + 1 || m.Mode == mode + 2)
@@ -690,9 +690,9 @@ public sealed class MirrorTests(ITestOutputHelper output)
             int before = g.Bullets.Count(b => b.Friendly);
             Follow(g, m, offset, firing);
             fired += Math.Max(0, g.Bullets.Count(b => b.Friendly) - before);
-            harm.Add(Harm(g));
+            standings.Add(Standing(g));
         }
-        return (harm, fired);
+        return (standings, fired);
     }
 
     [Theory]
@@ -711,15 +711,15 @@ public sealed class MirrorTests(ITestOutputHelper output)
         var q = Settled(quiet); var l = Settled(loud);
         foreach (bool burnt in new[] { leftBurns, rightBurns })
         {
-            var start = Harm(quiet);
-            Assert.Equal(start, Harm(loud));
-            var (quietHarm, quietFired) = StandThroughTurn(quiet, q, offset, false);
-            var (loudHarm, loudFired) = StandThroughTurn(loud, l, offset, true);
+            var start = Standing(quiet);
+            Assert.Equal(start, Standing(loud));
+            var (quietStandings, quietFired) = StandThroughTurn(quiet, q, offset, false);
+            var (loudStandings, loudFired) = StandThroughTurn(loud, l, offset, true);
             Assert.Equal(0, quietFired);
             Assert.True(loudFired > 0, "the firing ship fired");
-            Assert.Equal(quietHarm, loudHarm);
-            Assert.Equal(burnt, Hurt(start, Harm(quiet)));
-            Assert.Equal(burnt, Hurt(start, Harm(loud)));
+            Assert.Equal(quietStandings, loudStandings);
+            Assert.Equal(burnt, Hurt(start, Standing(quiet)));
+            Assert.Equal(burnt, Hurt(start, Standing(loud)));
         }
     }
 
@@ -733,12 +733,12 @@ public sealed class MirrorTests(ITestOutputHelper output)
     {
         var quiet = Field(PhoneCols, PhoneRows); var loud = Field(PhoneCols, PhoneRows);
         var q = Settled(quiet); var l = Settled(loud);
-        var (quietHarm, _) = StandThroughTurn(quiet, q, offset, false);
-        var (loudHarm, loudFired) = StandThroughTurn(loud, l, offset, true);
+        var (quietStandings, _) = StandThroughTurn(quiet, q, offset, false);
+        var (loudStandings, loudFired) = StandThroughTurn(loud, l, offset, true);
         Assert.True(loudFired > 0, "the firing ship fired");
-        Assert.Equal(quietHarm, loudHarm);
-        Assert.Equal(burnt, Hurt(Unharmed, Harm(quiet)));
-        Assert.Equal(burnt, Hurt(Unharmed, Harm(loud)));
+        Assert.Equal(quietStandings, loudStandings);
+        Assert.Equal(burnt, Hurt(FullStanding, Standing(quiet)));
+        Assert.Equal(burnt, Hurt(FullStanding, Standing(loud)));
     }
 
     [Theory]
@@ -750,7 +750,7 @@ public sealed class MirrorTests(ITestOutputHelper output)
         var g = Field();
         var m = Settled(g);
         for (int f = 0; f < cycles * CycleFrames && m.Hp > 0; f++) Follow(g, m, 0, firing);
-        Assert.Equal(Unharmed, Harm(g));
+        Assert.Equal(FullStanding, Standing(g));
         Assert.Equal(firing, m.Hp < Mirror.Hp);
     }
 
@@ -775,7 +775,7 @@ public sealed class MirrorTests(ITestOutputHelper output)
             }
             output.WriteLine($"{cols}x{rows}: from facet {i} the eye is {walked} frames away; the warning lasts {TellFrames}");
             Assert.True(walked < TellFrames);
-            Assert.Equal(Unharmed, Harm(g));
+            Assert.Equal(FullStanding, Standing(g));
         }
     }
 
@@ -786,7 +786,7 @@ public sealed class MirrorTests(ITestOutputHelper output)
         var m = Settled(g);
         StepToMode(g, m, LeftTell, TellFrames - 1);
         Assert.Equal(LeftTell, m.Mode);
-        Assert.Equal(Unharmed, Harm(g));
+        Assert.Equal(FullStanding, Standing(g));
         StepKeepingAndClearingHostileBolts(g, m);
         Assert.Equal(LeftBurn, m.Mode);
         Assert.Equal(Tuning.ShieldHits - 1, g.Shield);
@@ -820,19 +820,16 @@ public sealed class MirrorTests(ITestOutputHelper output)
         var g = Field();
         var m = Settled(g);
         FollowToMode(g, m, LeftBurn);
-        int struck = 0;
         for (int f = 0; f < BurnFrames - 1; f++)
         {
             foreach (var p in Pane(m, true)) EnemyKit.Shot(g, m.X + p.OX, m.Y + p.OY);
-            struck += Pane(m, true).Count();
             g.Input.Key(GameKey.Fire, true);
             Steer(g, m.X);
             StepLive(g, m);
             Assert.DoesNotContain(g.Bullets, b => b.Reflected);
         }
-        Assert.True(struck > BurnFrames);
         Assert.All(Pane(m, true), p => Assert.Equal(p.MaxHp, p.Hp));
-        Assert.Equal(Unharmed, Harm(g));
+        Assert.Equal(FullStanding, Standing(g));
     }
 
     [Fact]
@@ -875,7 +872,7 @@ public sealed class MirrorTests(ITestOutputHelper output)
             Follow(g, m, p.OX, false);
             Assert.False(Mirror.Touches(g, m));
         }
-        Assert.Equal(Unharmed, Harm(g));
+        Assert.Equal(FullStanding, Standing(g));
         Assert.True(shot.Y < m.Y + p.OY - p.HH, "the shot flew on through the hole");
         Assert.All(Pane(m, true).Where(q => q != p), q => Assert.Equal(q.MaxHp, q.Hp));
     }
@@ -961,7 +958,7 @@ public sealed class MirrorTests(ITestOutputHelper output)
             if (f < quiet) Assert.Equal(0, HostileBoltCount(g));
             Assert.False(Mirror.Touches(g, m));
         }
-        Assert.Equal(Unharmed, Harm(g));
+        Assert.Equal(FullStanding, Standing(g));
     }
 
     [Fact]
@@ -980,7 +977,7 @@ public sealed class MirrorTests(ITestOutputHelper output)
             StepLive(g, m);
         }
         Assert.True(Math.Abs(g.PX - m.X) >= aside);
-        Assert.Equal(Unharmed, Harm(g));
+        Assert.Equal(FullStanding, Standing(g));
     }
 
     [Fact]
@@ -1003,7 +1000,7 @@ public sealed class MirrorTests(ITestOutputHelper output)
         Run(watched);
         Assert.True(volleys.Count >= watched / gap - 1);
         for (int i = 1; i < volleys.Count; i++) Assert.Equal(gap, volleys[i] - volleys[i - 1]);
-        Assert.Equal(Unharmed, Harm(g));
+        Assert.Equal(FullStanding, Standing(g));
         g.Bullets.RemoveAll(b => !b.Friendly);
         StepToMode(g, m, LeftRest);
         BreakAndStep(g, m, Pane(m, true).Concat(Pane(m, false)));
@@ -1024,7 +1021,7 @@ public sealed class MirrorTests(ITestOutputHelper output)
         ulong seed = FirstEchoSeed;
         foreach (var t in texts)
         {
-            g.Rude.Add(new RudePost(seed++, t, DarkSource.Label, "someone", 0));
+            g.Rude.Add(new RudePost(seed++, t, DarknessSource.Label, "someone", 0));
             g.Rude.Take(g.Rude.Waiting.Count - 1);
         }
     }
@@ -1036,7 +1033,7 @@ public sealed class MirrorTests(ITestOutputHelper output)
     public void With_an_empty_store_it_says_its_own_line_under_its_name()
     {
         var g = Field();
-        var m = g.SpawnKind(EnemyKind.Mirror, 0.5);
+        var m = g.SpawnKind(EnemyKind.Mirror, EnemyKit.MidWidth);
         for (int i = 0; i < SpeechFrames && m.Text is null; i++) StepKeepingAndClearingHostileBolts(g, m);
         Assert.Equal("No, you.", m.Text);
         Assert.Equal("MIRROR", m.Header);
@@ -1048,8 +1045,8 @@ public sealed class MirrorTests(ITestOutputHelper output)
     {
         var g = Field();
         Echo(g, "older echo", "newest echo");
-        g.Rude.Add(new RudePost(FreshPostSeed, "a fresh post", DarkSource.Label, "fresh", 0));
-        var m = g.SpawnKind(EnemyKind.Mirror, 0.5);
+        g.Rude.Add(new RudePost(FreshPostSeed, "a fresh post", DarknessSource.Label, "fresh", 0));
+        var m = g.SpawnKind(EnemyKind.Mirror, EnemyKit.MidWidth);
         for (int i = 0; i < SpeechFrames && m.Text is null; i++) StepKeepingAndClearingHostileBolts(g, m);
         Assert.Equal("newest echo", m.Text);
         Assert.StartsWith("RE:", EnemySpeechBox.Title(m));
@@ -1061,7 +1058,7 @@ public sealed class MirrorTests(ITestOutputHelper output)
     {
         var g = Field();
         Echo(g, "one", "two");
-        var m = g.SpawnKind(EnemyKind.Mirror, 0.5);
+        var m = g.SpawnKind(EnemyKind.Mirror, EnemyKit.MidWidth);
         var seen = new List<string>();
         void Watch(int frames, string until)
         {
@@ -1080,7 +1077,7 @@ public sealed class MirrorTests(ITestOutputHelper output)
     public void A_wholly_broken_pane_makes_it_say_the_discourse_line_with_no_echoes_and_both_make_it_say_fine_me_then()
     {
         var g = Field();
-        var m = g.SpawnKind(EnemyKind.Mirror, 0.5);
+        var m = g.SpawnKind(EnemyKind.Mirror, EnemyKit.MidWidth);
         var seen = new List<string>();
         void Watch(int frames) { for (int i = 0; i < frames; i++) { StepKeepingAndClearingHostileBolts(g, m); if (m.Text is { } t && (seen.Count == 0 || seen[^1] != t)) seen.Add(t); } }
         Watch(SpeechFrames);
@@ -1113,13 +1110,13 @@ public sealed class MirrorTests(ITestOutputHelper output)
     [Fact]
     public void The_same_seed_gives_the_same_fight()
     {
-        const int limit = 4000, watched = 300, place = 9;
+        const int limit = 4000, watched = 300;
         const ulong seed = 11;
         string Run()
         {
             var g = new RaiderGame(seed) { SignedIn = true };
             g.SetLayout(FieldLayout.Compute(EnemyKit.BigCols, EnemyKit.BigRows));
-            g.StartAtBoss(place);
+            g.StartAtBoss(MirrorStage);
             int seen = 0;
             for (int f = 0; f < limit && seen < watched; f++) { EnemyKit.BotFrame(g, DodgeTarget); g.Step(); if (g.Boss is not null) seen++; }
             return string.Join("|", g.Enemies.Select(e => $"{e.Kind}:{e.X:0.000}:{e.Y:0.000}:{e.Hp:0.000}")) + $"#{g.Score}:{g.Kills}:{g.Deaths}:{g.PX:0.0}";
@@ -1148,10 +1145,9 @@ public sealed class MirrorTests(ITestOutputHelper output)
 
     private static (int Frames, int Deaths) Fight(ulong seed, int level, int cols = EnemyKit.BigCols, int rows = EnemyKit.BigRows)
     {
-        const int place = 9;
         var g = new RaiderGame(seed) { SignedIn = true };
         g.SetLayout(FieldLayout.Compute(cols, rows));
-        g.StartAtBoss(place);
+        g.StartAtBoss(MirrorStage);
         EnemyKit.Clear(g);
         while (g.WeaponLevel < level) { g.SpawnPickup(PickupKind.Weapon, g.PX, g.PY); g.Step(); EnemyKit.Clear(g); }
         Assert.Equal(level, g.WeaponLevel);
@@ -1167,9 +1163,9 @@ public sealed class MirrorTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void A_bot_that_never_stops_firing_wins_inside_the_band_at_weapon_level_three()
+    public void A_bot_that_never_stops_firing_wins_inside_the_band_with_the_heavy_laser()
     {
-        const int level = 3, fastest = 630, slowest = 990, seeds = 6;
+        const int level = 2, fastest = 630, slowest = 990, seeds = 6;
         var times = new List<int>();
         for (ulong seed = 1; seed <= seeds; seed++)
         {

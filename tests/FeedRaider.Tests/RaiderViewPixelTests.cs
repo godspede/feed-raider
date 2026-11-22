@@ -125,7 +125,6 @@ public class RaiderViewPixelTests
         Assert.True(shakeX != 0 && shakeY != 0, $"the test needs a shake that moves both ways, got {shakeX},{shakeY}");
         var scr = new Screen(EnemyKit.BigCols, EnemyKit.BigRows);
         var field = Draw(game, scr);
-        // the same field read by hand: each pixel from (x - shakeX, y - shakeY), the edges repeating
         var shifted = new Surface(field.W, field.H);
         for (int y = 0; y < field.H; y++)
             for (int x = 0; x < field.W; x++)
@@ -346,10 +345,10 @@ public class RaiderViewPixelTests
         Assert.NotEqual(Palette.Plum, Draw(game).Get(x0, RaiderView.BarRow(top)));
     }
 
-    // ---------------------------------------------------------------- bullets
+    // ---------------------------------------------------------------- shots and bolts
 
     [Fact]
-    public void A_turret_bolt_is_a_teal_diamond_around_a_white_centre()
+    public void A_turret_bolt_is_a_green_diamond_around_a_white_centre()
     {
         var game = Scene();
         game.Bullets.Add(new Bullet { X = SpotX, Y = SpotY, Aimed = true });
@@ -448,7 +447,7 @@ public class RaiderViewPixelTests
     }
 
     [Fact]
-    public void A_spark_is_as_big_as_its_size_and_a_heart_is_the_five_pixel_heart_with_a_tail()
+    public void A_spark_is_as_big_as_its_size_and_a_heart_is_the_six_pixel_heart_in_a_three_by_three_grid()
     {
         const int size = 2;
         var (bare, drawn) = Pair(0, game =>
@@ -469,9 +468,9 @@ public class RaiderViewPixelTests
     [Fact]
     public void The_screen_flash_washes_the_whole_field_toward_white_by_up_to_half()
     {
-        var (bare, drawn) = Pair(0, game => HoldRig.Force(game, nameof(RaiderGame.ScreenFlash), Tuning.ScreenFlashFrames));
+        var (bare, drawn) = Pair(0, game => PressRig.Force(game, nameof(RaiderGame.ScreenFlash), Tuning.ScreenFlashFrames));
         Assert.Equal(bare.P.Select(pixel => Surface.Mix(pixel, Palette.White, RaiderView.ScreenFlashMaxWhite)), drawn.P);
-        var (bareHalf, drawnHalf) = Pair(0, game => HoldRig.Force(game, nameof(RaiderGame.ScreenFlash), Tuning.ScreenFlashFrames / 2));
+        var (bareHalf, drawnHalf) = Pair(0, game => PressRig.Force(game, nameof(RaiderGame.ScreenFlash), Tuning.ScreenFlashFrames / 2));
         Assert.Equal(bareHalf.P.Select(pixel => Surface.Mix(pixel, Palette.White, RaiderView.ScreenFlashMaxWhite / 2)), drawnHalf.P);
     }
 
@@ -516,7 +515,7 @@ public class RaiderViewPixelTests
         uint colour = ShipAt(game, out int x, out int y);
         Assert.Equal(colour, Draw(game).Get(x, y));
         var dead = Scene();
-        HoldRig.Force(dead, nameof(RaiderGame.RespawnIn), Tuning.RespawnFrames);
+        PressRig.Force(dead, nameof(RaiderGame.RespawnIn), Tuning.RespawnFrames);
         Assert.NotEqual(colour, Draw(dead).Get(x, y));
     }
 
@@ -530,7 +529,7 @@ public class RaiderViewPixelTests
         })
         {
             var game = Scene(frame);
-            HoldRig.Force(game, nameof(RaiderGame.Invuln), Tuning.InvulnFrames); HoldRig.Force(game, nameof(RaiderGame.InvulnIsShield), shield);
+            PressRig.Force(game, nameof(RaiderGame.Invuln), Tuning.InvulnFrames); PressRig.Force(game, nameof(RaiderGame.InvulnIsShield), shield);
             uint colour = ShipAt(game, out int x, out int y);
             Assert.Equal(shown, Draw(game).Get(x, y) == colour);
         }
@@ -548,7 +547,7 @@ public class RaiderViewPixelTests
                 Assert.Equal(below < 1 + frame % RaiderView.FlameFlicker, field.Get(x, y + game.Ship.H / 2 + below) == RaiderView.Flame);
         }
         var firing = Scene();
-        HoldRig.Force(firing, nameof(RaiderGame.MuzzleFrames), Tuning.MuzzleFrames);
+        PressRig.Force(firing, nameof(RaiderGame.MuzzleFrames), Tuning.MuzzleFrames);
         var (bare, drawn) = (Draw(Scene()), Draw(firing));
         int noseX = (int)Math.Round(firing.PX), noseY = (int)Math.Round(firing.PY) - firing.Ship.H / 2 - 1;
         const int wide = RaiderView.MuzzleFlashLong, narrow = RaiderView.MuzzleFlashShort;
@@ -562,7 +561,7 @@ public class RaiderViewPixelTests
     [Fact]
     public void A_shield_draws_two_rings_round_the_ship_with_one_fixed_strength()
     {
-        var (bare, drawn) = Pair(0, game => HoldRig.Force(game, nameof(RaiderGame.Shield), Tuning.ShieldHits), game => HoldRig.Force(game, nameof(RaiderGame.Shield), LikeHoldTests.NoShield));
+        var (bare, drawn) = Pair(0, game => PressRig.Force(game, nameof(RaiderGame.Shield), Tuning.ShieldHits), game => PressRig.Force(game, nameof(RaiderGame.Shield), LikePressTests.NoShield));
         var ship = Scene();
         uint shield = RaiderGame.PickupColour(PickupKind.Shield);
         const double alpha = RaiderView.ShieldBaseAlpha + RaiderView.ShieldPulseAlpha * RaiderView.PulseMid;
@@ -579,35 +578,14 @@ public class RaiderViewPixelTests
         const int frame = 10;
         foreach (int since in new[] { 0, RaiderView.ShieldHitFlashFrames - 1 })
         {
-            var (bare, drawn) = Pair(frame, game => HoldRig.Force(game, nameof(RaiderGame.ShieldHitFrame), (long)frame - since), game => HoldRig.Force(game, nameof(RaiderGame.Shield), Tuning.ShieldHits));
+            var (bare, drawn) = Pair(frame, game => PressRig.Force(game, nameof(RaiderGame.ShieldHitFrame), (long)frame - since), game => PressRig.Force(game, nameof(RaiderGame.Shield), Tuning.ShieldHits));
             var ship = Scene(frame);
             AssertPainted(bare, drawn, surface =>
                 surface.Ring(ship.PX, ship.PY, RaiderView.ShieldRadius + since, Palette.White, RaiderView.ShieldHitFlashAlpha - since * RaiderView.ShieldHitFlashFade));
         }
-        var (bareLate, drawnLate) = Pair(frame, game => HoldRig.Force(game, nameof(RaiderGame.ShieldHitFrame), (long)frame - RaiderView.ShieldHitFlashFrames),
-            game => HoldRig.Force(game, nameof(RaiderGame.Shield), Tuning.ShieldHits));
+        var (bareLate, drawnLate) = Pair(frame, game => PressRig.Force(game, nameof(RaiderGame.ShieldHitFrame), (long)frame - RaiderView.ShieldHitFlashFrames),
+            game => PressRig.Force(game, nameof(RaiderGame.Shield), Tuning.ShieldHits));
         Assert.Equal(bareLate.P, drawnLate.P);
-    }
-
-    [Fact]
-    public void A_powered_ship_wears_a_pink_ring_and_in_its_last_second_a_white_one_flickers_on_for_three_frames_in_six()
-    {
-        static double PowerRadius(int frame) =>
-            RaiderView.PowerRingBase + (RaiderView.PulseMid + RaiderView.PulseMid * Math.Sin(frame * RaiderView.PowerPulseRate)) * RaiderView.PowerRingSwing;
-        const int warnOn = RaiderView.PowerWarnOn - 1, warnOff = RaiderView.PowerWarnOn;
-        const long plenty = 2L * Tuning.Fps, lastSecond = Tuning.Fps / 2;
-        var ship = Scene(warnOn);
-        var (bare, drawn) = Pair(warnOn, game => HoldRig.Force(game, LikeHoldTests.PowerUntilField, game.Tick + plenty));
-        AssertPainted(bare, drawn, surface => surface.Ring(ship.PX, ship.PY, PowerRadius(warnOn), Palette.Pink, RaiderView.PowerRingAlpha));
-        var (bareWarn, drawnWarn) = Pair(warnOn, game => HoldRig.Force(game, LikeHoldTests.PowerUntilField, game.Tick + lastSecond));
-        AssertPainted(bareWarn, drawnWarn, surface =>
-        {
-            surface.Ring(ship.PX, ship.PY, PowerRadius(warnOn), Palette.Pink, RaiderView.PowerRingAlpha);
-            surface.Ring(ship.PX, ship.PY, RaiderView.PowerWarnRadius, Palette.White, RaiderView.PowerWarnAlpha);
-        });
-        var (bareDark, drawnDark) = Pair(warnOff, game => HoldRig.Force(game, LikeHoldTests.PowerUntilField, game.Tick + lastSecond));
-        var shipLater = Scene(warnOff);
-        AssertPainted(bareDark, drawnDark, surface => surface.Ring(shipLater.PX, shipLater.PY, PowerRadius(warnOff), Palette.Pink, RaiderView.PowerRingAlpha));
     }
 
     // ---------------------------------------------------------------- the HUD
@@ -637,7 +615,7 @@ public class RaiderViewPixelTests
     {
         const string score = "SCORE 001234";
         var game = Scene();
-        HoldRig.Force(game, nameof(RaiderGame.Score), 1234);
+        PressRig.Force(game, nameof(RaiderGame.Score), 1234);
         var scr = RenderScreen(game, out var lay);
         int col0 = lay.Col0, bombCol = col0 + RaiderView.HudBombCol;
         Assert.Equal(score, Read(scr, 0, col0 + 1, score.Length));
@@ -652,15 +630,38 @@ public class RaiderViewPixelTests
     [Fact]
     public void The_weapon_pips_light_their_label_only_when_there_is_something_to_show()
     {
-        const string pips = "W█•••";
+        const string pips = "W█•••••••••", named = pips + " LASER";
         const int litCells = 2;
         var game = Scene();
         var scr = RenderScreen(game, out var lay);
         int weaponCol = lay.Col0 + RaiderView.HudBombCol;
         uint weapon = RaiderGame.PickupColour(PickupKind.Weapon);
-        Assert.Equal(pips, Read(scr, 1, weaponCol, pips.Length));             // the weapon starts at level one of four
+        Assert.Equal(named, Read(scr, 1, weaponCol, named.Length));           // the weapon starts at the first of ten kinds
         AssertColours(scr, 1, weaponCol, litCells, weapon, RaiderView.HudBg);
         AssertColours(scr, 1, weaponCol + litCells, pips.Length - litCells, Palette.Dim, RaiderView.HudBg);
+        AssertColours(scr, 1, weaponCol + pips.Length + 1, named.Length - pips.Length - 1, weapon, RaiderView.HudBg);
+    }
+
+    [Theory]
+    [InlineData(EnemyKit.BigCols, true)]
+    [InlineData(AtlasKeyTests.PhoneCols, true)]
+    [InlineData(Tuning.FieldMinCols, false)]
+    public void The_weapon_row_names_the_kind_at_desktop_and_phone_width_and_shows_the_pips_alone_on_the_narrowest_field(int cols, bool named)
+    {
+        var lay = FieldLayout.Compute(cols, EnemyKit.BigRows);
+        Assert.All(Weapons.Kinds, k => Assert.Equal(named, RaiderView.WeaponNameFits(lay.PCols, k.Short)));
+        var game = Scene();
+        game.SetLayout(lay);
+        PressRig.Force(game, nameof(RaiderGame.WeaponLevel), Tuning.MaxWeaponLevel);
+        var scr = new Screen(cols, EnemyKit.BigRows);
+        new RaiderView().FitAndRender(game, scr);
+        string pips = "W" + new string('█', Tuning.MaxWeaponLevel);
+        int pipsCol = lay.Col0 + Math.Min(RaiderView.HudBombCol, lay.PCols - 1 - RaiderView.WeaponPipsWidth);
+        Assert.Equal(pips, Read(scr, 1, pipsCol, pips.Length));
+        int after = pipsCol + pips.Length, fieldEnd = lay.Col0 + lay.PCols;
+        string rest = Read(scr, 1, after, fieldEnd - after);
+        if (named) Assert.Equal(" " + game.Weapon.Short, rest.TrimEnd());
+        else Assert.Equal("", rest.Trim());
     }
 
     [Fact]
@@ -674,17 +675,15 @@ public class RaiderViewPixelTests
         Assert.Equal(Tuning.ShieldHits, game.Shield);                   // a run starts with the shield up
         Assert.Equal(up, Read(scr, 0, shieldCol, up.Length));
         AssertColours(scr, 0, shieldCol, up.Length, shield, RaiderView.HudBg);
-        // the weapon's pips are its label cell and a cell per level; past them the second row is blank to the field's edge, since
-        // the shield's one mark is on the first row and the power label shows only while powered
-        int weaponEnd = col0 + RaiderView.HudBombCol + 1 + Tuning.MaxWeaponLevel, fieldEnd = col0 + lay.PCols;
+        // the weapon's pips are its label cell and a cell per level, then the kind's short name; past it the second row is blank to
+        // the field's edge, since the shield's one mark is on the first row
+        int weaponEnd = col0 + RaiderView.HudBombCol + RaiderView.WeaponPipsWidth + RaiderView.HudWeaponNameGap + game.Weapon.Short.Length;
+        int fieldEnd = col0 + lay.PCols;
         Assert.Equal(new string(' ', fieldEnd - weaponEnd), Read(scr, 1, weaponEnd, fieldEnd - weaponEnd));
-        HoldRig.Force(game, nameof(RaiderGame.Shield), LikeHoldTests.NoShield);
+        PressRig.Force(game, nameof(RaiderGame.Shield), LikePressTests.NoShield);
         scr = RenderScreen(game, out _);
         Assert.Equal(down, Read(scr, 0, shieldCol, down.Length));
         AssertColours(scr, 0, shieldCol, down.Length, Palette.Dim, RaiderView.HudBg);
-        for (int row = 0; row < RaiderView.HudRows; row++)
-            for (int col = col0; col < col0 + lay.PCols; col++)
-                Assert.NotEqual(RaiderView.PowerHeart, scr.CharAt(col, row));
     }
 
     [Fact]

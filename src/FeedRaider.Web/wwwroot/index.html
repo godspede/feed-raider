@@ -4,18 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Feed Raider</title>
-  <meta name="description" content="A vertical shoot-'em-up over your Bluesky feed: real posts scroll behind the fight, and you rest your ship on a post's heart or repost button to like or repost it.">
+  <meta name="description" content="A vertical shoot-'em-up over your Bluesky feed: real posts scroll behind the fight, and you like or repost the one under your ship with Z or X, or with a click or tap on its heart or repost button.">
   <meta property="og:title" content="Feed Raider">
-  <meta property="og:description" content="A vertical shoot-'em-up over your Bluesky feed: real posts scroll behind the fight, and you rest your ship on a post's heart or repost button to like or repost it.">
+  <meta property="og:description" content="A vertical shoot-'em-up over your Bluesky feed: real posts scroll behind the fight, and you like or repost the one under your ship with Z or X, or with a click or tap on its heart or repost button.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://feed-raider.famelos.com/">
   <meta property="og:image" content="https://feed-raider.famelos.com/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Feed Raider: a pixel-art ship with a shield at stage 4, flying over invented post cards, as a Bluesky feed would show them, while a large purple enemy and its escorts come down, beside the text: A shoot-'em-up built from your Bluesky feed. Real posts scroll behind the fight. Rest on a post's heart to like it. Ten bosses, in your browser.">
+  <meta property="og:image:alt" content="Feed Raider: a pixel-art ship with a shield at stage 4, flying over invented post cards, as a Bluesky feed would show them, while green and purple enemies come down among them, beside the text: A shoot-'em-up built from your Bluesky feed. Real posts scroll behind the fight. Press Z or click a heart to like. Ten bosses, in your browser.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="https://feed-raider.famelos.com/og.png">
-  <meta name="twitter:image:alt" content="Feed Raider: a pixel-art ship with a shield at stage 4, flying over invented post cards, as a Bluesky feed would show them, while a large purple enemy and its escorts come down, beside the text: A shoot-'em-up built from your Bluesky feed. Real posts scroll behind the fight. Rest on a post's heart to like it. Ten bosses, in your browser.">
+  <meta name="twitter:image:alt" content="Feed Raider: a pixel-art ship with a shield at stage 4, flying over invented post cards, as a Bluesky feed would show them, while green and purple enemies come down among them, beside the text: A shoot-'em-up built from your Bluesky feed. Real posts scroll behind the fight. Press Z or click a heart to like. Ten bosses, in your browser.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23151D28'/%3E%3Cpath d='M16 5l9 21-9-5-9 5z' fill='%230F73FF'/%3E%3Ccircle cx='16' cy='17' r='2' fill='%23FFFFFF'/%3E%3C/svg%3E">
   <!-- Sign-in on a local server needs the loopback IP, not "localhost", and the sign-in library would otherwise move the page
        there while the runtime is loading. Moving before anything else loads keeps the path, the query and the fragment. -->
@@ -153,7 +153,7 @@
     /* the side panel: a raised, rounded card with a hairline edge */
     #side { position: fixed; z-index: 1; overflow-y: auto; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
     #side kbd { background: var(--bg); }
-    /* the pause menu: a real dialog over a dimmed game; the controls on the left, the help beside them, stacked on a phone */
+    /* the pause menu: a real dialog over a dimmed game; the controls on the left, How to play beside them, stacked on a phone */
     #menu { width: min(60em, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0; overflow: auto; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
     #menu::backdrop { background: var(--backdrop); }
     #menu[open] { display: grid; grid-template-columns: minmax(16em, 20em) 1fr; }
@@ -318,7 +318,7 @@
     #start.booting #start-choices, #start.booting #start-foot { display: none !important; }
     #start .alt a { display: inline-block; padding: 12px 8px; line-height: 20px; color: var(--primary-light); border-radius: 4px; }
     #start .alt a:hover { color: var(--text); }
-    /* How to play: a dialog over the start page, with the same text as the pause menu's help */
+    /* How to play: a dialog over the start page, with the same How to play text as the pause menu */
     #howto { width: min(34em, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 22px 24px; overflow: auto; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
     #howto::backdrop { background: var(--backdrop); }
     #howto button { min-height: 44px; min-width: 7em; margin-top: 16px; }
@@ -397,7 +397,7 @@
       </fieldset>
       <fieldset id="menu-speed">
         <legend>Feed speed</legend>
-        <input id="feed-speed" type="range" min="1" max="5" step="1" value="3" aria-label="Feed speed">
+        <input id="feed-speed" type="range" min="1" max="5" step="1" value="4" aria-label="Feed speed">
         <span id="feed-speed-name" aria-hidden="true">Normal</span>
       </fieldset>
       <fieldset id="menu-pictures">
@@ -419,24 +419,24 @@
     </div>
     <div id="menu-info" class="info"></div>
   </dialog>
-  <!-- the help, shown in the pause menu and, on a wide window, beside the game -->
+  <!-- How to play, shown in the pause menu and, on a wide window, beside the game -->
   <template id="info">
     <section>
       <h2>How to play</h2>
       <dl>
         <dt>Move</dt><dd><kbd>WASD</kbd> or arrows, the mouse, or drag a finger</dd>
         <dt>Fire</dt><dd>hold <kbd>Space</kbd>, <kbd>F</kbd> for auto-fire; mouse and touch fire on their own</dd>
-        <dt>Like, repost</dt><dd>rest the ship on a post's heart or repost button for three seconds</dd>
+        <dt>Like, repost</dt><dd><kbd>Z</kbd> likes and <kbd>X</kbd> reposts the post under the ship, or click or tap its heart or repost button; the same again undoes it</dd>
         <dt>Feed log</dt><dd><kbd>E</kbd> likes and <kbd>R</kbd> reposts the marked post, <kbd>[</kbd> and <kbd>]</kbd> move the mark, or click the icons; on a phone, the pause menu</dd>
         <dt>Bomb</dt><dd><kbd>B</kbd>, right click, or a two-finger tap</dd>
         <dt>Pause</dt><dd><kbd>Esc</kbd> or the gear; <kbd>M</kbd> mutes</dd>
         <dt>Feed speed</dt><dd><kbd>-</kbd> slows the feed, <kbd>+</kbd> speeds it up; the pause menu has a slider</dd>
       </dl>
       <p>You have <b>one shield</b>. A hit takes it down, and if you are hit without it the ship dies. A shield pickup puts it back.</p>
-      <p><b>Hold to like or repost.</b> Keep the ship on the heart or the repost button of a post and it builds up: the icon grows and brightens, beat by beat, for three seconds. Fly off early and it drains away with nothing done. A finished hold puts your shield back if it is down, powers up your guns for five seconds and takes a quarter off every living part of the enemies in the fight, once for each post.</p>
-      <p><b>Gold cards.</b> A post with 1000 likes or more has a gold top edge and a star with its like count (1.8K, say) at the end of its name row. Finishing a like or a repost on one gives a <b>bomb</b>, up to three, once for each gold card. <b>BANGER +BOMB</b> pops up.</p>
-      <p><b>Thread follow.</b> When a like finishes, the game looks for the author's own next reply to that post. If there is one, it scrolls in next, with an arrow and <b>thread</b> under its words. Liking that card brings the reply after it. A repost brings none, and when there is no reply nothing appears.</p>
-      <p>Signed in, a finished hold <b>likes or reposts that post from your account</b>, the same as pressing the button on Bluesky. That is all the game writes, and only when you hold or press a button in the feed log. Not signed in, the button lights up here and nothing is sent.</p>
+      <p><b>Like or repost.</b> Press <kbd>Z</kbd> to like or <kbd>X</kbd> to repost the post under the ship (or the nearest one), or click or tap the heart or the repost button. While you play with the keys, the heart and repost buttons of the post they pick are outlined; the post itself is not, and the outline goes when you move the pointer, drag, click or tap. A like or repost puts your shield back if it is down (not again within fifteen seconds of the last time) and takes a quarter off every living part of the enemies in the fight, once for each post.</p>
+      <p><b>Gold cards.</b> A post with 1000 likes or more has a gold top edge and a star with its like count (1.8K, say) at the end of its name row. A like or a repost on one gives a <b>bomb</b>, up to three, once for each gold card. <b>BANGER +BOMB</b> pops up.</p>
+      <p><b>Thread follow.</b> When you like a post, the game looks for the author's own next reply to it. If there is one, it scrolls in next, with an arrow and <b>thread</b> under its words. Liking that card brings the reply after it. A repost brings none, and when there is no reply nothing appears.</p>
+      <p>Signed in, a like or repost <b>likes or reposts that post from your account</b>, the same as pressing the button on Bluesky. That is all the game writes, and only when you press <kbd>Z</kbd>, <kbd>X</kbd> or a post's button, or one in the feed log. Not signed in, the button lights up here and nothing is sent.</p>
       <p>The <b>feed log</b> shows each post that scrolled off, with its like and repost icons lit if you did that. Press an icon (or <kbd>E</kbd> or <kbd>R</kbd> on the marked post) to undo a like or repost, or to make one you missed. Signed in, that writes or removes it on your account; not signed in, it only marks it here. The pause menu lists them too.</p>
       <p>The <b>posts</b> come from the feed you picked: yours, the people followed by the handle you typed, or Random's. Each one scrolls down the field as a card you can read. A post's pictures are drawn small and dim under its words. Your ship, shots and enemies fly over the words and hide the letters they pass. Avatars and post pictures are read from each author's own server (their PDS); the <a href="https://github.com/godspede/feed-raider#privacy" target="_blank" rel="noopener">Privacy section of the README</a> says more.</p>
       <p><b>Stages and bosses.</b> Each stage ends in a boss, and after stage 10 the ten bosses come round again. A boss speaks in its speech box, and so do the mini-bosses and lesser gunships that arrive during a stage: they say rude posts by strangers, drawn from Bluesky's moderation stream and from replies a thread's owner hid, not from your feed. A boss says a line of its own before any rude post has arrived, and as its last word.</p>
@@ -485,7 +485,7 @@
           <button type="button" id="start-random" class="ghost big">Play random</button>
         </section>
         <section class="choice" id="start-card-howto" aria-labelledby="start-h-howto">
-          <h2 id="start-h-howto">Help</h2>
+          <h2 id="start-h-howto">How to play</h2>
           <button type="button" id="start-howto" class="ghost big" aria-haspopup="dialog" aria-controls="howto">How to play</button>
         </section>
       </div>

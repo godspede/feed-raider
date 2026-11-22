@@ -10,7 +10,7 @@ public class RudeStoreTests
     private const int Cols = 120, Rows = 46;
 
     private static RudePost Post(ulong seed, string? text = null) =>
-        new(seed, text ?? "post " + seed, DarkSource.Label, "rude", 0);
+        new(seed, text ?? "post " + seed, DarknessSource.Label, "rude", 0);
 
     private static RaiderGame NewGame(bool gates = false)
     {
@@ -22,9 +22,8 @@ public class RudeStoreTests
     // ---------------------------------------------------------------- the store alone
 
     [Fact]
-    public void It_holds_twenty_four_and_only_a_twenty_fifth_drops_the_oldest()
+    public void It_holds_its_cap_of_waiting_posts_and_only_one_more_drops_the_oldest()
     {
-        Assert.Equal(24, Tuning.RudeWaiting);
         var s = new RudeStore();
         for (ulong i = 1; i <= Tuning.RudeWaiting; i++) Assert.True(s.Add(Post(i)));
         Assert.Equal(Tuning.RudeWaiting, s.Waiting.Count);
@@ -105,7 +104,7 @@ public class RudeStoreTests
         Assert.Equal("post 11", s.Echoes[0].Text);
     }
 
-    // ---------------------------------------------------------------- through the game
+    // ---------------------------------------------------------------- the heard list and recall
 
     [Fact]
     public void It_keeps_the_last_thirty_two_heard_in_the_order_said_and_a_thirty_third_drops_the_oldest()
@@ -180,9 +179,9 @@ public class RudeStoreTests
     public void A_rude_post_spawns_nothing_and_waits_in_the_store()
     {
         var g = NewGame();
-        var post = new DarkPost(DarknessKind.Rude, 11, "you are all idiots", DarkSource.Label, "rude");
+        var post = new DarknessPost(DarknessKind.Rude, 11, "you are all idiots", DarknessSource.Label, "rude");
         Assert.Empty(WaveSpawner.FromPost(post, 1).Enemies);
-        g.OfferDark(post);
+        g.OfferDarkness(post);
         Assert.Single(g.Rude.Waiting);
         Assert.Equal("you are all idiots", g.Rude.Waiting[0].Text);
         Assert.Equal(11UL, g.Rude.Waiting[0].Seed);
@@ -198,7 +197,7 @@ public class RudeStoreTests
     public void A_spam_post_still_launches_its_wave_and_never_reaches_the_store()
     {
         var g = NewGame();
-        g.OfferDark(new DarkPost(DarknessKind.Spam, 12, "buy my coin", DarkSource.Label, "spam"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Spam, 12, "buy my coin", DarknessSource.Label, "spam"));
         Assert.Empty(g.Rude.Waiting);
         bool carried = false;
         for (int i = 0; i < 1500 && !carried; i++) { g.Step(); carried = g.Enemies.Any(e => e.Text == "buy my coin"); }
@@ -209,16 +208,16 @@ public class RudeStoreTests
     public void A_demo_rude_post_takes_the_same_road()
     {
         var g = NewGame();
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 13, "demo words", DarkSource.Demo));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 13, "demo words", DarknessSource.Demo));
         Assert.Single(g.Rude.Waiting);
-        Assert.Equal(DarkSource.Demo, g.Rude.Waiting[0].Source);
+        Assert.Equal(DarknessSource.Demo, g.Rude.Waiting[0].Source);
     }
 
     [Fact]
     public void The_stored_text_is_cleaned_like_the_gunships_was()
     {
         var g = NewGame();
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 14, "  tabs\tand   gaps  ", DarkSource.Label, "rude"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 14, "  tabs\tand   gaps  ", DarknessSource.Label, "rude"));
         Assert.Single(g.Rude.Waiting);
         Assert.Equal(DarknessText.Clean("  tabs\tand   gaps  ", DarknessText.MaxPostChars), g.Rude.Waiting[0].Text);
     }
@@ -227,8 +226,8 @@ public class RudeStoreTests
     public void A_post_offered_twice_is_stored_once()
     {
         var g = NewGame();
-        var post = new DarkPost(DarknessKind.Rude, 15, "say it once", DarkSource.Label, "rude");
-        g.OfferDark(post); g.OfferDark(post);
+        var post = new DarknessPost(DarknessKind.Rude, 15, "say it once", DarknessSource.Label, "rude");
+        g.OfferDarkness(post); g.OfferDarkness(post);
         Assert.Single(g.Rude.Waiting);
     }
 
@@ -236,7 +235,7 @@ public class RudeStoreTests
     public void Nothing_is_lost_on_a_stage_change_a_death_or_a_gate()
     {
         var g = NewGame(gates: true);
-        for (ulong i = 1; i <= 5; i++) g.OfferDark(new DarkPost(DarknessKind.Rude, i, "post " + i, DarkSource.Label, "rude"));
+        for (ulong i = 1; i <= 5; i++) g.OfferDarkness(new DarknessPost(DarknessKind.Rude, i, "post " + i, DarknessSource.Label, "rude"));
         g.StartAtStage(3);
         EnemyKit.StepSweeping(g, 5);
         Assert.Equal(5, g.Rude.Waiting.Count);

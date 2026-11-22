@@ -72,7 +72,7 @@ public sealed partial class RaiderGame
         }
 
         /// <summary>
-        /// A friendly bullet of 30 timed to land on the middle of every other enemy, or of every open part of one, inside the disc: the
+        /// A friendly shot of 30 timed to land on the middle of every other enemy, or of every open part of one, inside the disc: the
         /// blast is the game's own damage, so score, shields, drops and a boss's phases all answer to it as they do to a shot.
         /// </summary>
         private static void Blast(RaiderGame g, Enemy e)

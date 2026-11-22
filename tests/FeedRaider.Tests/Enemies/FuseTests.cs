@@ -145,7 +145,7 @@ public sealed class FuseTests
     {
         var g = EnemyKit.Game();
         g.StartAtStage(FirstStage);
-        var f = g.SpawnKind(EnemyKind.Fuse, 0.5);
+        var f = g.SpawnKind(EnemyKind.Fuse, EnemyKit.MidWidth);
         Assert.Equal(Fuse.Hp * Ramp.HpMul(FirstStage), f.Hp, Places);
         Assert.Contains(EnemyKind.Fuse, Ramp.Unlocks(FirstStage));
     }
@@ -160,7 +160,7 @@ public sealed class FuseTests
         const int MaxSinkFrames = 500;
         double target = PlantRow * g.PH;
         MoveShipAndWaitOutCover(g, g.PW / 2.0, target + ShipBelowFuse);
-        var f = g.SpawnKind(EnemyKind.Fuse, 0.5);
+        var f = g.SpawnKind(EnemyKind.Fuse, EnemyKit.MidWidth);
         Assert.True(f.Y < 0, "it comes in from above");
         double was = f.Y;
         int sank = 0;
@@ -181,11 +181,11 @@ public sealed class FuseTests
             EnemyKit.StepSweeping(g);
             Assert.Contains(f, g.Enemies);
             Assert.Equal(k, f.ModeAge);
-            if (k < Count) Assert.Equal(target, f.Y, Places);     // after the blast the ship's shield shoves what is near it
+            if (k < Count) Assert.Equal(target, f.Y, Places);
             if (k < Count) { Assert.False(Fuse.Touches(g, f), $"step {k}: lethal before the count ends"); Assert.Equal(0, Taken(g)); }
             else { Assert.True(Fuse.Touches(g, f), $"step {k}: the blast is lethal for {BlastFrames} frames"); Assert.Equal(1, Taken(g)); }
         }
-        EnemyKit.StepSweeping(g);                                       // the blast is over: gone, with no score and no kill
+        EnemyKit.StepSweeping(g);
         Assert.DoesNotContain(f, g.Enemies);
         Assert.Equal(0, g.Kills);
         Assert.Equal(0, g.Score);
@@ -197,7 +197,7 @@ public sealed class FuseTests
     {
         var g = EnemyKit.Game(cols, rows);
         const int MaxFrames = 400;   // enough to sink, count and blast on the tallest field
-        var f = g.SpawnKind(EnemyKind.Fuse, 0.5);
+        var f = g.SpawnKind(EnemyKind.Fuse, EnemyKit.MidWidth);
         for (int k = 0; k < MaxFrames && g.Enemies.Contains(f); k++)
         {
             EnemyKit.StepSweeping(g);
@@ -236,7 +236,7 @@ public sealed class FuseTests
     {
         const double FuseAboveShip = 8;
         const int WalkFrames = 20;
-        int Go(int walkFrom)
+        int HitsTakenWalkingFrom(int walkFrom)
         {
             var g = EnemyKit.Game(cols, rows);
             EnemyKit.StepSweeping(g, CoverGone);
@@ -251,8 +251,8 @@ public sealed class FuseTests
             g.Input.Key(side, false);
             return Taken(g);
         }
-        Assert.Equal(0, Go(Count - WalkFrames));      // out of the ring in time
-        Assert.Equal(1, Go(Count + BlastFrames - 1));     // a ship that never moved is hit
+        Assert.Equal(0, HitsTakenWalkingFrom(Count - WalkFrames));      // out of the ring in time
+        Assert.Equal(1, HitsTakenWalkingFrom(Count + BlastFrames - 1));     // a ship that never moved is hit
     }
 
     [Fact]
@@ -457,7 +457,7 @@ public sealed class FuseTests
     {
         const ulong Seed = 11;
         const double LeftOfMiddle = 0.4;
-        (string, bool) Go(ulong seed)
+        (string, bool) PlaySeededRun(ulong seed)
         {
             var g = new RaiderGame(seed) { SignedIn = true, BossGates = false };
             g.SetLayout(FieldLayout.Compute(EnemyKit.BigCols, EnemyKit.BigRows));
@@ -473,8 +473,8 @@ public sealed class FuseTests
             var state = string.Join("|", g.Enemies.Select(e => $"{e.Kind}:{e.X:0.000}:{e.Y:0.000}:{e.Hp:0.000}:{e.Mode}:{e.ModeAge}")) + $"#{g.Score}:{g.Kills}:{Taken(g)}:{g.PX:0.0}";
             return (state, seen);
         }
-        var (a, seenA) = Go(Seed);
-        var (b, _) = Go(Seed);
+        var (a, seenA) = PlaySeededRun(Seed);
+        var (b, _) = PlaySeededRun(Seed);
         Assert.Equal(a, b);
         Assert.True(seenA);
     }

@@ -7,7 +7,7 @@ namespace FeedRaider.Tests.Enemies;
 /// <summary>
 /// The Pile-On (stage 8's boss) and the Brick it throws. The wall of bricks never moves; the instigator on top paces in whole cells
 /// and fires only down a column with every brick gone. These tests give the layout table on the four fields, what a shot meets, the
-/// cost of a column, the core's volley, the throws, the regrowth, the voice and the fight (a bot at stage 8's weapon level 3).
+/// cost of a column, the core's volley, the throws, the regrowth, the voice and the fight (a bot with the heavy laser).
 /// </summary>
 public sealed class PileOnTests(ITestOutputHelper output)
 {
@@ -104,7 +104,6 @@ public sealed class PileOnTests(ITestOutputHelper output)
 
     private static double Floor(RaiderGame g) => EnemyKit.BossFloor(g.PH);
 
-    /// <summary>The middle column of the field, in pixels.</summary>
     private static double MidX(RaiderGame g) => g.PW / 2.0;
 
     /// <summary>The top and the bottom of the wall's drawing, in pixels.</summary>
@@ -520,7 +519,7 @@ public sealed class PileOnTests(ITestOutputHelper output)
         Assert.True(white >= SlitWait - WarnCrimsonFrames - FrameSlack, $"{white} white frames");
         Assert.Equal(Palette.Crimson, colours[1]);
         Assert.Equal(Palette.White, colours[SlitWait - FrameSlack]);
-        Assert.True(Array.FindIndex([.. colours], c => c == Palette.White) > Array.FindLastIndex([.. colours.Take(SlitWait)], c => c == Palette.Crimson) - crimsonWhiteOverlap, "white comes after the crimson");
+        Assert.True(colours.FindIndex(c => c == Palette.White) > colours.GetRange(0, SlitWait).FindLastIndex(c => c == Palette.Crimson) - crimsonWhiteOverlap, "white comes after the crimson");
     }
 
     // ---------------------------------------------------------------- the throws
@@ -649,26 +648,26 @@ public sealed class PileOnTests(ITestOutputHelper output)
         var up = Brick(e, MiddleDepth, farCol);
         Break(up);   // two gone: the highest empty place is depth 1
         int back = -1, outline = -1;
-        var litFrames = new List<int>();
         int simFrames = 0;
         for (int f = 0; f < regrowWatchFrames && back < 0; f++)
         {
             if (g.HitStop == 0) simFrames++;
             StepKeepingOnlyWall(g);
             if (up.State == PartState.Open) back = simFrames;
-            else if (outline < 0 || back < 0)
+            else if (outline < 0)
             {
                 var screen = EnemyKit.ClearPickupsAndDraw(g);
                 int left = (int)Math.Round(e.X + up.OX - BrickW / 2), top = (int)Math.Round(e.Y + up.OY - BrickH / 2);
                 bool lit = false;
                 for (int x = 0; x < BrickW; x++) lit |= (screen.Get(left + x, top) & EnemyKit.RgbMask) == GrowOutline;
-                if (lit) { if (outline < 0) outline = simFrames; litFrames.Add(simFrames); }
+                if (lit) outline = simFrames;
             }
         }
         Assert.True(back > 0, "the brick regrows");
         Assert.Equal(PartState.Dead, lowest.State);
         Assert.Equal(up.MaxHp, up.Hp, Places);
-        Assert.True(outline > 0 && back - outline <= OutlineFrames && back - outline >= fewestOutlineFrames, $"outline at {outline}, brick at {back} {string.Join(",", litFrames)}");
+        Assert.True(outline > 0, $"no outline before the brick at {back}");
+        Assert.InRange(back - outline, fewestOutlineFrames, OutlineFrames);
     }
 
     [Fact]
@@ -719,7 +718,7 @@ public sealed class PileOnTests(ITestOutputHelper output)
     /// <summary>The start and the multiplier of the string hash that gives each waiting post its id.</summary>
     private const ulong PostIdSeed = 17, PostIdPrime = 31;
 
-    private static void Post(RaiderGame g, string text) => g.OfferDark(new DarkPost(DarknessKind.Rude, text.Aggregate(PostIdSeed, (hash, ch) => hash * PostIdPrime + ch), text));
+    private static void Post(RaiderGame g, string text) => g.OfferDarkness(new DarknessPost(DarknessKind.Rude, text.Aggregate(PostIdSeed, (hash, ch) => hash * PostIdPrime + ch), text));
 
     [Fact]
     public void The_pile_on_speaks_a_waiting_post_else_its_own_words_under_its_header()
@@ -833,7 +832,7 @@ public sealed class PileOnTests(ITestOutputHelper output)
     /// far aside from a lit hole, looks this far up for a falling brick, and steps this far aside from one.</summary>
     private const double BotOverHoleWithin = 0.6, BotDangerHalfWidth = 6, BotHoleStepAside = 9, BotBrickLookUp = 32, BotBrickStepAside = 8;
 
-    private const int BotWeaponLevel = 3;
+    private const int BotWeaponLevel = 2;
 
     /// <summary>A bot: fires always; goes to a column with every brick gone if there is one (and steps off it while it is lit), else under
     /// the column with the fewest brick hit points.</summary>
@@ -885,7 +884,7 @@ public sealed class PileOnTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void A_bot_at_weapon_level_three_kills_it_in_the_short_end_of_the_band_over_several_seeds()
+    public void A_bot_with_the_heavy_laser_kills_it_in_the_short_end_of_the_band_over_several_seeds()
     {
         const int bandSeeds = 7;
         const double fastestSeconds = 21, slowestSeconds = 33;

@@ -170,7 +170,6 @@ public sealed class ChorusTests(ITestOutputHelper output)
         double x0 = e.X;
         StepOnly(g, e, FirstWatch);
         Assert.True(Math.Abs(e.X - x0) <= DriftSpeed * FirstWatch + Rounding);
-        // far from the ship, a long way to go: it moves at its drift speed and no faster
         e.X = FarFromShip; e.BaseX = FarFromShip;
         double last = e.X;
         for (int f = 0; f < SteadyFrames; f++)
@@ -235,7 +234,6 @@ public sealed class ChorusTests(ITestOutputHelper output)
             StepOnly(g, e);
             Assert.Empty(Hostile(g));
             if (f < WaitFrames) continue;
-            // a dotted column below the middle lane of the first voice
             int x = (int)Math.Round(e.X + voices[0].OX), y0 = (int)Math.Round(e.Y + VoiceH / 2.0) + BelowMouth;
             var s = EnemyKit.ClearPickupsAndDraw(g);
             var col = new List<uint>();
@@ -245,7 +243,6 @@ public sealed class ChorusTests(ITestOutputHelper output)
         }
         Assert.True(tint >= TintFramesAtLeast, $"{tint} frames with the dotted column in the tell colour");
         Assert.True(white >= WhiteFramesAtLeast, $"{white} white frames");
-        // before the charge starts there is no column
         var g2 = EnemyKit.Game();
         var e2 = Held(g2);
         StepOnly(g2, e2, BeforeTheCharge);
@@ -350,7 +347,7 @@ public sealed class ChorusTests(ITestOutputHelper output)
     {
         const ulong AnyPostSeed = 1;
         var g = EnemyKit.Game();
-        g.OfferDark(new DarkPost(DarknessKind.Rude, AnyPostSeed, "sing it back"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, AnyPostSeed, "sing it back"));
         var e = EnemyKit.Place(g, EnemyKind.Chorus, g.PW / 2.0, AboveField);
         for (int f = 0; f < MaxWaitFrames && e.Text is null; f++) StepOnly(g, e);
         Assert.Equal("sing it back", e.Text);
@@ -403,7 +400,7 @@ public sealed class ChorusTests(ITestOutputHelper output)
         var g = EnemyKit.Game();
         var played = new List<string>();
         g.Sfx = new SfxBus((n, _, _, _) => played.Add(n));
-        g.SpawnKind(EnemyKind.Chorus, 0.5);
+        g.SpawnKind(EnemyKind.Chorus, EnemyKit.MidWidth);
         Assert.Contains(SfxNames.Sting, played);
     }
 }

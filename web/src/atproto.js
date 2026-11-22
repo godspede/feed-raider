@@ -10,7 +10,7 @@ const isLoopback = ['127.0.0.1', '[::1]', 'localhost'].includes(location.hostnam
 
 let client, agent, reader, did = null, handle = null, granted = null, returnSearch = null, failure = null, note = null;
 // Reading localStorage throws when the browser blocks storage (private mode, cookies off). The page then runs without it: callers take null as "no storage" and skip saving the sign-in report.
-const storage = () => { try { return globalThis.localStorage ?? null; } catch { return null; } };
+const storage = () => { try { return globalThis.localStorage ?? null; } catch (e) { if (!(e instanceof DOMException)) throw e; return null; } };
 
 // ?scope=transition requests atproto transition:generic instead of the granular scopes (loopback only; Pages is fixed by client-metadata.json).
 function requestedScope() {
@@ -55,15 +55,20 @@ async function adopt(session) {
   // what this sign-in was granted: the page turns it into what the player may do. Null when the token set carries no scope.
   granted = (await session.getTokenInfo(false)).scope ?? null;
   reader = agent.withProxy(APPVIEW_SERVICE, APPVIEW_DID);
+  // the handle is only shown: where the profile cannot be read the player sees the DID in its place, on the start page and
+  // in the pause menu
+  handle = (await profileHandle(did)) ?? did;
+}
+
+// The account's handle from the public API, or null where the lookup is refused (its status) or the API cannot be reached
+// (fetch's TypeError) or answers what is not JSON (SyntaxError). Any other error is a fault and is thrown.
+async function profileHandle(did) {
   try {
     const r = await fetch(`${PUBLIC_API}/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`);
-    // the handle is only shown; the DID stands in for it when the lookup is refused, and the refusal is logged
-    if (!r.ok) console.warn(`profile lookup answered ${r.status}, showing the DID as the handle`);
-    handle = r.ok ? (await r.json()).handle : did;
+    return r.ok ? (await r.json()).handle ?? null : null;
   } catch (e) {
-    if (!(e instanceof TypeError)) throw e;
-    console.warn('profile lookup failed, showing the DID as the handle: ' + e.message);
-    handle = did;
+    if (!(e instanceof TypeError || e instanceof SyntaxError)) throw e;
+    return null;
   }
 }
 
@@ -191,7 +196,7 @@ export async function getTimeline(cursor, limit) {
   return JSON.stringify(res.data);
 }
 
-// One post's thread, as deep as asked. The game asks when a hold finishes a like, with depth 1 and no parents, and reads
+// One post's thread, as deep as asked. The game asks the first time a post is liked, with depth 1 and no parents, and reads
 // the author's own next reply out of the answer.
 export async function getPostThread(uri, depth, parentHeight) {
   const res = await needReader().app.bsky.feed.getPostThread({ uri, depth, parentHeight });
@@ -204,7 +209,7 @@ export async function like(uri, cid) {
 }
 
 // A refusal for missing scope is the player's cue to sign in again, in those words; anything else passes through as it came.
-async function write(call) {
+async function translateScopeRefusal(call) {
   try {
     return await call();
   } catch (e) {
@@ -215,7 +220,7 @@ async function write(call) {
 }
 
 export async function repost(uri, cid) {
-  return write(async () => {
+  return translateScopeRefusal(async () => {
     const res = await need().app.bsky.feed.repost.create({ repo: did }, { subject: { uri, cid }, createdAt: new Date().toISOString() });
     return JSON.stringify({ uri: res.uri, cid: res.cid });
   });
@@ -225,5 +230,5 @@ export async function repost(uri, cid) {
 export async function remove(recordUri) {
   const m = /^at:\/\/([^/]+)\/(app\.bsky\.feed\.(?:like|repost))\/([^/]+)$/.exec(recordUri);
   if (!m || m[1] !== did) throw new Error('not one of your likes or reposts');
-  await write(() => need().com.atproto.repo.deleteRecord({ repo: did, collection: m[2], rkey: m[3] }));
+  await translateScopeRefusal(() => need().com.atproto.repo.deleteRecord({ repo: did, collection: m[2], rkey: m[3] }));
 }

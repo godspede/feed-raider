@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 namespace FeedRaider.Engine.Raider;
 
 /// <summary>The colours of a card in the background. Everything here is dim on purpose: the fight draws over it, and no idle colour
-/// is brighter than <see cref="MaxIdleLuminance"/> so the ships, bullets and text always stand out of it.</summary>
+/// is brighter than <see cref="MaxIdleLuminance"/> so the ships, shots, bolts and text always stand out of it.</summary>
 public static class CardColours
 {
     public const uint Slab = 0x131a2b, Edge = 0x1e2942;
@@ -17,7 +17,7 @@ public static class CardColours
     public static readonly uint ThreadText = LikeIcon;
     public const uint LikeIdle = 0x6b3348, RepostIdle = 0x2f5a45;
     public const uint LikeLit = 0xe0456f, RepostLit = 0x35c28a;
-    /// <summary>A button held to the end while signed out: the line under its icon is in the lit colour at half strength, since nothing was sent.</summary>
+    /// <summary>A button pressed while signed out: the line under its icon is in the lit colour at half strength, since nothing was sent.</summary>
     public static readonly uint LikeMarked = Surface.Mix(Slab, LikeLit, 0.5), RepostMarked = Surface.Mix(Slab, RepostLit, 0.5);
     public const double MaxIdleLuminance = 0.40;
     /// <summary>How far toward the slab a picture is mixed, and how far toward its icon a lit button's ground is.</summary>
@@ -26,7 +26,7 @@ public static class CardColours
     public const uint PictureWaiting = Edge;
 
     // An idle button has no ground of its own, only its icon: every extra colour behind the fight is one more pair for the terminal's
-    // glyph atlas wherever a bullet crosses it (a tinted ground cost about 650 entries in a 60 second run).
+    // glyph atlas wherever a shot or a bolt crosses it (a tinted ground cost about 650 entries in a 60 second run).
     public static readonly uint LikeButtonLit = Surface.Mix(Slab, LikeLit, ButtonTint), RepostButtonLit = Surface.Mix(Slab, RepostLit, ButtonTint);
 
     /// <summary>The words of a card. Each reads on the slab at 4.5 to 1 or better, and is dim enough to stay under
@@ -36,15 +36,32 @@ public static class CardColours
     /// <summary>A count on a lit button's ground, which is lighter than the slab: the lit icon colour made legible on it (4.5 to 1).</summary>
     public static readonly uint LikeCountLit = Surface.Legible(LikeLit, LikeButtonLit), RepostCountLit = Surface.Legible(RepostLit, RepostButtonLit);
 
-    /// <summary>Every colour a card is painted in while idle: none is brighter than <see cref="MaxIdleLuminance"/>.</summary>
-    public static readonly uint[] Idle = [Slab, Edge, GoldEdge, LikeIdle, RepostIdle, NameText, PostText, DimText, GoldText, LikeIcon, RepostIcon];
+    // The link card and the video mark are painted in the card's own colours. A colour of their own would be one more the encoder holds
+    // exactly, and each near colour of the sky it took in cost about 100 atlas entries in a 60 second run with no link or video on it.
+
+    /// <summary>A link card's slab: the edge colour, a step lighter than the card's slab, so the box reads as one thing inside the card.</summary>
+    public const uint LinkSlab = Edge;
+    /// <summary>A quote box's outline: the card's own edge colour, so the box costs the atlas no colour, and its words stay on the slab.</summary>
+    public const uint QuoteEdge = Edge;
+    /// <summary>A link card's thumbnail that has not come, or never will: the card's slab, a dark slot in the lighter link box.</summary>
+    public const uint LinkThumbWaiting = Slab;
+    /// <summary>A link card's title, and its host and description: the card's name and dim colours made legible on the link slab.</summary>
+    public static readonly uint LinkTitle = Surface.Legible(NameText, LinkSlab), LinkDim = Surface.Legible(DimText, LinkSlab);
+    /// <summary>The video mark's ground: the card's slab, darker than a picture's waiting box and dimmer than any dimmed thumbnail's light parts.</summary>
+    public const uint VideoMark = Slab;
+    /// <summary>The play sign on the video mark: the name colour, the brightest of the card's words.</summary>
+    public const uint VideoPlay = NameText;
+
+    /// <summary>Every colour a card is painted in while idle, each once: none is brighter than <see cref="MaxIdleLuminance"/>. The link
+    /// card's text colours are the card's own where those already read on the link slab, so they are listed once.</summary>
+    public static readonly uint[] Idle = [.. new[] { Slab, Edge, GoldEdge, LikeIdle, RepostIdle, NameText, PostText, DimText, GoldText, LikeIcon, RepostIcon, LinkTitle, LinkDim }.Distinct()];
 
     /// <summary>Every fixed colour of a card, for the encoder to hold exactly (see <see cref="ColourSnap.Prime"/>).</summary>
     public static readonly uint[] All = [.. Idle, LikeLit, RepostLit, LikeButtonLit, RepostButtonLit, LikeCountLit, RepostCountLit, LikeMarked, RepostMarked];
 }
 
 /// <summary>Draws the posts of the feed into the background pass of the field: each card's slab, its top edge, its avatar, the
-/// pictures of its post and its two buttons. The layer is under the units, the bullets and the text.</summary>
+/// pictures of its post and its two buttons. The layer is under the units, the shots, the bolts and the text.</summary>
 public static class CardPainter
 {
     /// <summary>Pixel rows 0 to 3 of the screen belong to the HUD; the cards never paint there.</summary>
@@ -52,7 +69,7 @@ public static class CardPainter
     /// <summary>The avatar's side in pixels.</summary>
     private const int AvatarPx = CardLayout.AvatarCells * CardField.PixelsPerCell;
 
-    /// <summary>The heart and the repost loop a held button grows, centred on the button's box. A button at rest draws no art: its
+    /// <summary>The heart and the repost loop a pressed button grows, centred on the button's box. A button at rest draws no art: its
     /// icon is one character on the action row.</summary>
     public static readonly string[] Heart =
     [
@@ -103,7 +120,10 @@ public static class CardPainter
             Fill(s, x0, y0, shape.Cols * CardField.PixelsPerCell, h, CardColours.Slab, clipTop);
             Fill(s, x0, y0, shape.Cols * CardField.PixelsPerCell, 1, c.Gold ? CardColours.GoldEdge : CardColours.Edge, clipTop);
             DrawAvatar(s, g, c, x0, y0, clipTop);
+            DrawQuote(s, c, x0, y0, clipTop);
             DrawPictures(s, g, c, x0, y0, clipTop);
+            DrawLink(s, g, c, x0, y0, clipTop);
+            DrawVideo(s, g, c, x0, y0, clipTop);
             DrawButton(s, g, c, PostAction.Like, x0, y0, clipTop);
             DrawButton(s, g, c, PostAction.Repost, x0, y0, clipTop);
         }
@@ -117,7 +137,7 @@ public static class CardPainter
     /// <summary>Writes the words of every card into <paramref name="scr"/> as cells, over what <see cref="QuadComposer"/> made of the
     /// slab. A letter goes in only where the four pixels of its cell are the same in <paramref name="after"/> (the field as drawn) as in
     /// <paramref name="before"/> (the field just after the slabs), and are the ground the letter is for: anything the fight drew there
-    /// (a ship, a bullet, a pickup, a ring, a particle) changes a pixel, and a cell the HUD cuts off the slab is not the slab. A wide
+    /// (a ship, a shot, a bolt, a pickup, a ring, a particle) changes a pixel, and a cell the HUD cuts off the slab is not the slab. A wide
     /// letter needs both of its cells clear. The cards move by the shake rounded to a cell, so the words move with them.</summary>
     internal static void DrawText(Screen scr, RaiderGame g, uint[] before, uint[] after, int pw, int ph, int col0, int sx, int sy)
     {
@@ -132,6 +152,20 @@ public static class CardPainter
             DrawTextRun(scr, before, after, pw, ph, col0, sx, sy, left, top, s.Handle, CardColours.DimText, CardColours.Slab);
             foreach (var l in s.Lines) DrawTextRun(scr, before, after, pw, ph, col0, sx, sy, left, top, l, CardColours.PostText, CardColours.Slab);
             if (s.Note is { } n) DrawTextRun(scr, before, after, pw, ph, col0, sx, sy, left, top, n, c.Thread ? CardColours.ThreadText : CardColours.DimText, CardColours.Slab);
+            if (s.Link is { } link)
+            {
+                foreach (var l in link.Title) DrawTextRun(scr, before, after, pw, ph, col0, sx, sy, left, top, l, CardColours.LinkTitle, CardColours.LinkSlab);
+                DrawTextRun(scr, before, after, pw, ph, col0, sx, sy, left, top, link.Host, CardColours.LinkDim, CardColours.LinkSlab);
+                if (link.Description is { } d) DrawTextRun(scr, before, after, pw, ph, col0, sx, sy, left, top, d, CardColours.LinkDim, CardColours.LinkSlab);
+            }
+            if (s.Video is { } video) DrawTextRun(scr, before, after, pw, ph, col0, sx, sy, left, top, video.Play, CardColours.VideoPlay, CardColours.VideoMark, own: true);
+            if (s.Quote is { } quote)
+            {
+                if (quote.Head is { } head) DrawTextRun(scr, before, after, pw, ph, col0, sx, sy, left, top, head, CardColours.DimText, CardColours.Slab);
+                foreach (var l in quote.Lines) DrawTextRun(scr, before, after, pw, ph, col0, sx, sy, left, top, l, CardColours.PostText, CardColours.Slab);
+                if (quote.Note is { } qn) DrawTextRun(scr, before, after, pw, ph, col0, sx, sy, left, top, qn, CardColours.DimText, CardColours.Slab);
+                if (quote.Notice is { } notice) DrawTextRun(scr, before, after, pw, ph, col0, sx, sy, left, top, notice, CardColours.DimText, CardColours.Slab, own: true);
+            }
             DrawAction(scr, g, c, PostAction.Like, before, after, pw, ph, col0, sx, sy, left, top);
             DrawAction(scr, g, c, PostAction.Repost, before, after, pw, ph, col0, sx, sy, left, top);
         }
@@ -226,81 +260,50 @@ public static class CardPainter
         }
     }
 
-    /// <summary>The build-up of every held or draining button, drawn over the slabs and under every unit: the button's outline while
-    /// the ship is on it, a halo on the slab round the icon, the icon grown to its step's width but never taller than the footer
-    /// (<see cref="HoldBeats.MaxIconHeight"/>), and the progress line along the card's foot, which the ship covers only a little of. The heart fills from the
-    /// bottom as far as progress has come; the loop is drawn round, its arrows a quarter turn on with every beat. For the frames
-    /// of a finish the icon is drawn at its widest and near white, then falls back; the loop turns once as it does.</summary>
-    public static void DrawHoldGlow(Surface s, RaiderGame g, int dx, int dy, int clipTop)
+    /// <summary>What a press shows on the cards, drawn over the slabs and under every unit: while the keyboard was the last device,
+    /// an outline round both buttons of the card the like and repost keys would act on (<see cref="RaiderGame.KeyCard"/>; none on the start page's tour, whose pilot clicks); and for
+    /// the frames of a press the icon drawn at its widest (<see cref="PressLook.MaxIconHeight"/> tall, the footer) and near white
+    /// in a halo, then falling back. A pressed repost's loop turns once as it does.</summary>
+    public static void DrawPressGlow(Surface s, RaiderGame g, int dx, int dy, int clipTop)
     {
-        var touch = HoldTracker.Touching(g);
+        var target = g.Input.PointerLast || g.Charmed ? null : g.KeyCard;
         foreach (var c in g.Cards.Cards)
             foreach (var a in (ReadOnlySpan<PostAction>)[PostAction.Like, PostAction.Repost])
             {
-                var m = c.Marks;
-                int progress = m.Progress(a);
-                long finished = g.Hold.SinceFinished(m, a, g.Frame);
-                int settle = (int)finished - HoldBeats.FinishedHitStop - 1;
-                bool flash = finished <= HoldBeats.FinishedHitStop, settling = settle >= 0 && settle < HoldBeats.SettleWidths.Length;
-                bool on = touch is { } t && ReferenceEquals(t.Card, c) && t.Action == a;
-                if (progress <= 0 && !flash && !settling && !on) continue;
+                long sincePress = g.LastPress.Since(c.Marks, a, g.Frame);
+                int settle = (int)sincePress - PressLook.HitStop - 1;
+                bool flash = sincePress <= PressLook.HitStop, settling = settle >= 0 && settle < PressLook.SettleWidths.Length;
+                bool aimed = ReferenceEquals(target, c);
+                if (!flash && !settling && !aimed) continue;
                 var box = g.Cards.ButtonBox(c, a);
                 box = new PixelRect(box.X + dx, box.Y + dy, box.W, box.H);
-                uint[] steps = HoldBeats.Colours(a);
-                if (on) Outline(s, box, steps[0], clipTop);
+                if (aimed) Outline(s, box, PressLook.Dim(a), clipTop);
                 string[] art = a == PostAction.Like ? Heart : Loop;
-                uint idle = a == PostAction.Like ? CardColours.LikeIdle : CardColours.RepostIdle;
                 bool loop = a == PostAction.Repost;
-                var (lineLeft, lineRight) = ProgressLineSpan(g, c, dx);
-                int lineY = box.Y + box.H - 1;
-                var (lineLit, lineTrack) = HoldBeats.LineColours(a);
-                double lineFilled = flash || settling ? 1 : progress / (double)Tuning.HoldFrames;
-                if (lineFilled > 0) ProgressLine(s, lineLeft, lineRight, lineY, lineLit, lineTrack, lineFilled, clipTop);
                 if (flash)
                 {
-                    Halo(s, box, HoldBeats.FinishedWidth, HoldBeats.HaloColour(a, HoldBeats.Ticks.Length - 1), clipTop);
-                    if (loop) LoopIcon(s, box, HoldBeats.FinishedWidth, HoldBeats.FinishedColour(a), idle, 1, SpinPhase(HoldBeats.FinishedWidth, finished), clipTop);
-                    else Icon(s, box, art, HoldBeats.FinishedWidth, HoldBeats.FinishedColour(a), idle, 1, clipTop);
+                    Halo(s, box, PressLook.MaxIconWidth, PressLook.HaloColour(a), clipTop);
+                    if (loop) LoopIcon(s, box, PressLook.MaxIconWidth, PressLook.FlashColour(a), SpinPhase(PressLook.MaxIconWidth, sincePress), clipTop);
+                    else Icon(s, box, art, PressLook.MaxIconWidth, PressLook.FlashColour(a), clipTop);
                 }
                 else if (settling)
                 {
-                    int sw = HoldBeats.SettleWidths[settle];
-                    if (loop) LoopIcon(s, box, sw, steps[^1], idle, 1, SpinPhase(sw, finished), clipTop);
-                    else Icon(s, box, art, sw, steps[^1], idle, 1, clipTop);
-                }
-                else if (progress > 0)
-                {
-                    int step = HoldBeats.StepAt(progress);
-                    long beat = g.Hold.SinceBeat(m, a, g.Frame);
-                    int w = beat < HoldBeats.ThumpFrames ? HoldBeats.Thumped(HoldBeats.Widths[step]) : HoldBeats.Widths[step];
-                    double filled = progress / (double)Tuning.HoldFrames;
-                    Halo(s, box, w, HoldBeats.HaloColour(a, step), clipTop);
-                    if (loop) LoopIcon(s, box, w, steps[step], idle, filled, LoopPhase(w, step, beat), clipTop);
-                    else Icon(s, box, art, w, steps[step], idle, filled, clipTop);
+                    int sw = PressLook.SettleWidths[settle];
+                    if (loop) LoopIcon(s, box, sw, PressLook.Lit(a), SpinPhase(sw, sincePress), clipTop);
+                    else Icon(s, box, art, sw, PressLook.Lit(a), clipTop);
                 }
             }
     }
 
-    /// <summary>The loop of a held repost button is not the button's small picture scaled up but drawn for its size: the outline of a
-    /// rounded box <paramref name="w"/> pixels wide, as the pixels of one walk round it, clockwise from the top left. The lit part
-    /// of a hold is the first so many of them.</summary>
+    /// <summary>The loop of a pressed repost is not the button's small picture scaled up but drawn for its size: the outline of a
+    /// rounded box <paramref name="w"/> pixels wide, as the pixels of one walk round it, clockwise from the top left.</summary>
     public static (int X, int Y)[] LoopPath(int w) => Loops.GetOrAdd(w, BuildLoop).Path;
 
-    /// <summary>How far round the loop its arrowheads are, in pixels of <see cref="LoopPath"/>: a quarter turn for every beat
-    /// passed, and on a beat they travel that quarter over the frames of the thump instead of jumping it.</summary>
-    public static int LoopPhase(int w, int step, long sinceBeat)
-    {
-        int quarter = LoopPath(w).Length / 4;
-        if (step > 0 && sinceBeat >= 0 && sinceBeat < HoldBeats.ThumpFrames)
-            return (step - 1) * quarter + Math.Max(1, quarter * ((int)sinceBeat + 1) / (HoldBeats.ThumpFrames + 1));
-        return step * quarter;
-    }
-
-    /// <summary>A finished repost spins its loop once: how far round the arrowheads are this many frames after the hold ended.</summary>
+    /// <summary>A pressed repost spins its loop once: how far round the arrowheads are this many frames after the press.</summary>
     public static int SpinPhase(int w, long sinceDone) =>
         (int)Math.Round(LoopPath(w).Length * Math.Clamp(sinceDone, 0, SpinFrames) / (double)SpinFrames);
 
-    /// <summary>The frames a finished loop takes to turn once.</summary>
+    /// <summary>The frames a pressed repost's loop takes to turn once.</summary>
     public const int SpinFrames = 6;
 
     /// <summary>The gap left ahead of each arrow is this fraction of the outline: one part in this many.</summary>
@@ -318,7 +321,7 @@ public static class CardPainter
 
     private static LoopShape BuildLoop(int w)
     {
-        int h = HoldBeats.IconHeight(w);
+        int h = PressLook.IconHeight(w);
         var path = new List<(int, int)>();
         var inward = new List<(int, int)>();
         void Add(int x, int y, int ix, int iy) { path.Add((x, y)); inward.Add((ix, iy)); }
@@ -330,31 +333,27 @@ public static class CardPainter
         return new LoopShape([.. path], [.. inward]);
     }
 
-    /// <summary>The loop <paramref name="w"/> pixels wide, centred on the button: two arrows chasing each other round it, their heads
-    /// <paramref name="phase"/> pixels round from the top left, a gap ahead of each. The first <paramref name="filled"/> of the
-    /// outline, clockwise from the top left, is in <paramref name="lit"/> and the rest in <paramref name="idle"/>: where the heart
-    /// fills like a glass, the loop is drawn round.</summary>
-    private static void LoopIcon(Surface s, PixelRect button, int w, uint lit, uint idle, double filled, int phase, int clipTop)
+    /// <summary>The loop <paramref name="w"/> pixels wide, centred on the button, in <paramref name="colour"/>: two arrows chasing
+    /// each other round it, their heads <paramref name="phase"/> pixels round from the top left, a gap ahead of each.</summary>
+    private static void LoopIcon(Surface s, PixelRect button, int w, uint colour, int phase, int clipTop)
     {
         var shape = Loops.GetOrAdd(w, BuildLoop);
         var (path, inward) = shape;
-        int n = path.Length, h = HoldBeats.IconHeight(w);
+        int n = path.Length, h = PressLook.IconHeight(w);
         int x0 = button.X + (int)Math.Floor((button.W - w) / 2.0), y0 = button.Y + (int)Math.Floor((button.H - h) / 2.0);
-        int count = (int)Math.Round(n * Math.Clamp(filled, 0, 1));
         int gap = Math.Max(1, n / LoopGapDivisor);
         int head0 = (phase % n + n) % n, head1 = (head0 + n / 2) % n;
         for (int i = 0; i < n; i++)
         {
             // the pixels just ahead of a head are left out: the space between one arrow's point and the other's tail
             if ((i - head0 - 1 + n) % n < gap || (i - head1 - 1 + n) % n < gap) continue;
-            uint colour = i < count ? lit : idle;
             Put(s, x0 + path[i].X, y0 + path[i].Y, colour, clipTop);
         }
         // each head is a one-pixel barb on the inside of the line, a pixel back from the point: the icon stays as wide as its step
         foreach (int head in (ReadOnlySpan<int>)[head0, head1])
         {
             int j = (head - 1 + n) % n;
-            Put(s, x0 + path[j].X + inward[j].X, y0 + path[j].Y + inward[j].Y, head < count ? lit : idle, clipTop);
+            Put(s, x0 + path[j].X + inward[j].X, y0 + path[j].Y + inward[j].Y, colour, clipTop);
         }
     }
 
@@ -388,32 +387,13 @@ public static class CardPainter
         for (int y = b.Y; y < b.Y + b.H; y++) { Put(s, b.X, y, colour, clipTop); Put(s, b.X + b.W - 1, y, colour, clipTop); }
     }
 
-    /// <summary>Cells the progress line keeps clear of the card's left and right edges.</summary>
-    private const int ProgressLineInsetCols = 1;
-
-    /// <summary>Where a held button's progress line runs, in pixels from the left: the card's width inside its edges.</summary>
-    public static (int Left, int Right) ProgressLineSpan(RaiderGame g, Card c, int dx = 0)
-    {
-        int x0 = g.Cards.CardLeft * CardField.PixelsPerCell + dx;
-        return (x0 + ProgressLineInsetCols * CardField.PixelsPerCell, x0 + (c.Shape.Cols - ProgressLineInsetCols) * CardField.PixelsPerCell);
-    }
-
-    /// <summary>A hold's progress as a line along the card's last pixel row: lit from the left in <paramref name="lit"/> for the
-    /// <paramref name="filled"/> share of it, the rest in <paramref name="track"/>. The ship rests on the icon and hides it; it hides
-    /// only its own width of this line.</summary>
-    private static void ProgressLine(Surface s, int left, int right, int y, uint lit, uint track, double filled, int clipTop)
-    {
-        int litPixels = (int)Math.Ceiling((right - left) * Math.Clamp(filled, 0, 1));
-        for (int x = left; x < right; x++) Put(s, x, y, x - left < litPixels ? lit : track, clipTop);
-    }
-
     /// <summary>A soft disc round an icon <paramref name="w"/> wide, laid only where the slab shows: it never tints a picture, a
-    /// button's ground or the sky, so it is one colour a step.</summary>
+    /// button's ground or the sky, so it is one colour.</summary>
     private static void Halo(Surface s, PixelRect button, int w, uint colour, int clipTop)
     {
-        int h = HoldBeats.IconHeight(w);
+        int h = PressLook.IconHeight(w);
         double cx = button.X + button.W / 2.0 - 0.5, cy = button.Y + button.H / 2.0 - 0.5;
-        double rx = w / 2.0 + HoldBeats.HaloMargin, ry = Math.Min(h / 2.0 + HoldBeats.HaloMargin, button.H / 2.0);
+        double rx = w / 2.0 + PressLook.HaloMargin, ry = Math.Min(h / 2.0 + PressLook.HaloMargin, button.H / 2.0);
         for (int y = (int)Math.Floor(cy - ry); y <= (int)Math.Ceiling(cy + ry); y++)
             for (int x = (int)Math.Floor(cx - rx); x <= (int)Math.Ceiling(cx + rx); x++)
             {
@@ -422,17 +402,14 @@ public static class CardPainter
             }
     }
 
-    /// <summary>The icon art scaled to <paramref name="w"/> pixels wide and centred on the button; the bottom <paramref name="filled"/>
-    /// of its rows in <paramref name="lit"/>, the rest in <paramref name="idle"/>.</summary>
-    private static void Icon(Surface s, PixelRect button, string[] art, int w, uint lit, uint idle, double filled, int clipTop)
+    /// <summary>The icon art scaled to <paramref name="w"/> pixels wide and centred on the button, in <paramref name="colour"/>.</summary>
+    private static void Icon(Surface s, PixelRect button, string[] art, int w, uint colour, int clipTop)
     {
-        int h = HoldBeats.IconHeight(w);
+        int h = PressLook.IconHeight(w);
         int x0 = button.X + (int)Math.Floor((button.W - w) / 2.0), y0 = button.Y + (int)Math.Floor((button.H - h) / 2.0);
-        int rows = (int)Math.Round(h * Math.Clamp(filled, 0, 1));
         for (int y = 0; y < h; y++)
         {
             string row = art[y * CardLayout.IconHeightPx / h];
-            uint colour = y >= h - rows ? lit : idle;
             for (int x = 0; x < w; x++)
                 if (row[x * CardLayout.IconWidthPx / w] == '#') Put(s, x0 + x, y0 + y, colour, clipTop);
         }
@@ -498,22 +475,56 @@ public static class CardPainter
     private static void DrawPictures(Surface s, RaiderGame g, Card c, int x0, int y0, int clipTop)
     {
         var boxes = c.Shape.Pictures;
-        if (boxes.Count == 0 || c.Post.Pictures is not { } pictures) return;
-        for (int i = 0; i < boxes.Count && i < pictures.Count; i++)
+        if (boxes.Count == 0 || c.Shape.Media.Pictures is not { } pictures) return;
+        for (int i = 0; i < boxes.Count && i < pictures.Count; i++) DrawPicture(s, g, pictures[i].Thumb, boxes[i], x0, y0, clipTop);
+    }
+
+    /// <summary>The quote box's one-pixel outline, on the outer pixels of its border cells; its words are cells, written by <see cref="DrawText"/>.</summary>
+    private static void DrawQuote(Surface s, Card c, int x0, int y0, int clipTop)
+    {
+        if (c.Shape.Quote is not { } quote) return;
+        const int px = CardField.PixelsPerCell;
+        var b = quote.Box;
+        int x = x0 + b.X * px, y = y0 + b.Y * px, w = b.W * px, h = b.H * px;
+        Fill(s, x, y, w, 1, CardColours.QuoteEdge, clipTop);
+        Fill(s, x, y + h - 1, w, 1, CardColours.QuoteEdge, clipTop);
+        Fill(s, x, y, 1, h, CardColours.QuoteEdge, clipTop);
+        Fill(s, x + w - 1, y, 1, h, CardColours.QuoteEdge, clipTop);
+    }
+
+    /// <summary>The link card's slab, and its thumbnail drawn as a picture is, in <see cref="CardColours.LinkThumbWaiting"/> until it comes.
+    /// Its words are cells, written by <see cref="DrawText"/>.</summary>
+    private static void DrawLink(Surface s, RaiderGame g, Card c, int x0, int y0, int clipTop)
+    {
+        if (c.Shape.Link is not { } link) return;
+        var b = link.Box;
+        Fill(s, x0 + b.X * CardField.PixelsPerCell, y0 + b.Y * CardField.PixelsPerCell, b.W * CardField.PixelsPerCell, b.H * CardField.PixelsPerCell, CardColours.LinkSlab, clipTop);
+        if (link.Thumb is { } thumb && c.Shape.Media.Link?.ThumbUrl is { } url) DrawPicture(s, g, url, thumb, x0, y0, clipTop, CardColours.LinkThumbWaiting);
+    }
+
+    /// <summary>The video's thumbnail drawn as a picture is, with the dark mark over its bottom left corner whether or not the picture
+    /// has come, so a video reads as one before it arrives, and when it never does. The play sign is a cell, written by <see cref="DrawText"/>.</summary>
+    private static void DrawVideo(Surface s, RaiderGame g, Card c, int x0, int y0, int clipTop)
+    {
+        if (c.Shape.Video is not { } box || c.Shape.Media.Video is not { } video) return;
+        DrawPicture(s, g, RaiderGame.VideoKey(video), box.Picture, x0, y0, clipTop);
+        var m = box.Mark;
+        Fill(s, x0 + m.X * CardField.PixelsPerCell, y0 + m.Y * CardField.PixelsPerCell, m.W * CardField.PixelsPerCell, m.H * CardField.PixelsPerCell, CardColours.VideoMark, clipTop);
+    }
+
+    private static void DrawPicture(Surface s, RaiderGame g, string key, CardRect b, int x0, int y0, int clipTop, uint waiting = CardColours.PictureWaiting)
+    {
+        int px = x0 + b.X * CardField.PixelsPerCell, py = y0 + b.Y * CardField.PixelsPerCell, w = b.W * CardField.PixelsPerCell, h = b.H * CardField.PixelsPerCell;
+        if (py >= s.H || py + h <= clipTop) return;
+        if (g.PictureOf(key) is not { } pic)
         {
-            var b = boxes[i];
-            int px = x0 + b.X * CardField.PixelsPerCell, py = y0 + b.Y * CardField.PixelsPerCell, w = b.W * CardField.PixelsPerCell, h = b.H * CardField.PixelsPerCell;
-            if (py >= s.H || py + h <= clipTop) continue;
-            if (g.PictureOf(pictures[i].Thumb) is not { } pic)
-            {
-                Fill(s, px, py, w, h, CardColours.PictureWaiting, clipTop);
-                continue;
-            }
-            for (int y = Math.Max(0, clipTop - py); y < h && py + y < s.H; y++)
-            {
-                int row = y * pic.H / h * pic.W;
-                for (int x = 0; x < w; x++) s.Set(px + x, py + y, pic.Px[row + x * pic.W / w]);
-            }
+            Fill(s, px, py, w, h, waiting, clipTop);
+            return;
+        }
+        for (int y = Math.Max(0, clipTop - py); y < h && py + y < s.H; y++)
+        {
+            int row = y * pic.H / h * pic.W;
+            for (int x = 0; x < w; x++) s.Set(px + x, py + y, pic.Px[row + x * pic.W / w]);
         }
     }
 

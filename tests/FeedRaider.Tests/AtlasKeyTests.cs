@@ -17,9 +17,6 @@ public class AtlasKeyTests
     // every 24-bit colour, the bound for a random channel triple
     private const int ColourSpace = 0x1000000;
 
-    // a cell of the hold's progress line is all track, half lit or all lit
-    private const int ProgressLineCellStates = 3;
-
     private const int GameSeed = 5;
     private const ulong BackgroundSeed = RaiderView.DefaultBackgroundSeed;
 
@@ -110,24 +107,24 @@ public class AtlasKeyTests
         Play(PhoneCols, PhoneRows, frames, new DiffEncoder(), plain, _ => { });
         int lastThird = snapped.Count - atTwoThirds;
         // The bounds are the keys measured snapped, in the whole run and in its last 30 s with the denser enemy fire, and a margin of
-        // about one in a hundred. The ship rests on a repost button long enough to finish the hold, and the build-up mints keys of its
-        // own (the scripted hold below measures them). Unsnapped, a phone at DPR 3 would renew its atlas over and over and spend its
-        // frames rasterising; past these bounds the phone build is heading back there.
+        // about one in a hundred. Unsnapped, a phone at DPR 3 would renew its atlas over and over and spend its frames rasterising,
+        // and past these bounds the phone build is heading back there. A moving star pairs its colour with each colour of the sky it crosses.
         var seen = $"snapped {snapped.Count} ({lastThird} in the last 30 s), unsnapped {plain.Count}";
         Assert.True(plain.Count > 5 * snapped.Count, seen);
-        Assert.True(snapped.Count <= 13_310, seen);
+        Assert.True(snapped.Count <= 15_240, seen);
         Assert.True(lastThird <= 3_735, seen);
     }
 
     // Real cards: each distinct picture is up to 16 cells of its own colour pairs (about 1.1k keys for the 40 authors here, and noise
     // is the worst case), and a lit button's ground adds the rest wherever a shot crosses it. The sky keeps the steps of its fade
-    // (Background.SkySteps) apart from the card's colours, and the cells where they meet the cards are keys of their own. The cards as
-    // pixels with no words minted 9477 in this run; with the words, 9481. The ceiling is the measured number and a margin of about one
-    // in a hundred, so the cards cannot grow past it unseen. The count takes in the build-up of every button the wandering ship rests on.
-    private const int KeysWithRealCards = 9_575;
+    // (Background.SkySteps) apart from the card's colours, and the cells where they meet the cards are keys of their own; so is each
+    // far or near star's colour over each sky colour it falls through and over the cards' edges. The words cover some of the sky, so
+    // the run with them mints a few keys fewer than KeysWithCardsAndNoWords. The ceiling is the count measured with the words and a
+    // margin of about one in a hundred, so the cards cannot grow past it unseen.
+    private const int KeysWithRealCards = 10_790;
 
-    // The same run with the card words left out: what the words are measured against.
-    private const int KeysWithCardsAndNoWords = 9_477;
+    // The same run with the card words left out (CardPainter.DrawText drawing nothing): what the words are measured against.
+    private const int KeysWithCardsAndNoWords = 10_718;
 
     [Fact]
     public void A_sixty_second_phone_run_with_real_card_pixels_stays_inside_the_measured_atlas_keys_of_the_first_cards()
@@ -137,15 +134,15 @@ public class AtlasKeyTests
         Assert.True(keys.Count <= KeysWithRealCards, $"minted {keys.Count}, the ceiling is {KeysWithRealCards}");
     }
 
-    // The same sixty seconds with one to four pictures on every third card. Scenes of soft bands and a shape minted 14403 keys and
-    // pictures of noise 17362, against the cards with no pictures above: about half as many again for pictures like photographs and
+    // The same sixty seconds with one to four pictures on every third card. Scenes of soft bands and a shape minted 15121 keys and
+    // pictures of noise 18528 against the cards with no pictures above: about half as many again for pictures like photographs and
     // nearly twice as many for the worst a feed can send. A card is short, so more cards and more of their pictures are on the screen
     // at once. Taking the pictures' colours down to steps of 16 or 32 a channel changed neither number by more than 3 in 100 (the
     // encoder already folds near colours together), so the pictures are left as they come. The ceilings are the measured numbers and
     // a margin of about one in a hundred.
     [Theory]
-    [InlineData(Pictures.Scenes, 14_550)]
-    [InlineData(Pictures.Noise, 17_535)]
+    [InlineData(Pictures.Scenes, 15_270)]
+    [InlineData(Pictures.Noise, 18_715)]
     public void A_sixty_second_phone_run_with_pictures_on_every_third_card_stays_inside_its_measured_atlas_keys(object kind, int ceiling)
     {
         Assert.NotEmpty(Pictured(PicturedEvery).Pictures!);
@@ -171,47 +168,6 @@ public class AtlasKeyTests
         uint[] grounds = [CardColours.Slab, CardColours.LikeButtonLit, CardColours.RepostButtonLit, RaiderView.HudBg, RaiderView.PanelBg];
         foreach (var (ch, fg, bg) in keys)
             if (chars.Contains(ch) && colours.Contains(fg)) Assert.Contains(bg, grounds);
-    }
-
-    [Theory]
-    [InlineData(PostAction.Like)]
-    [InlineData(PostAction.Repost)]
-    public void A_scripted_hold_at_phone_size_mints_no_more_keys_than_the_run_without_it_plus_the_cells_of_the_ships_ring_at_each_step_and_of_the_progress_line(PostAction action)
-    {
-        // the ship rests on the button of one card for the whole build-up, or stays where it starts, clear of every button
-        int Run(bool holds)
-        {
-            var keys = new HashSet<(char, uint, uint)>();
-            var game = new RaiderGame(GameSeed) { SignedIn = false, BossGates = false };
-            game.SetLayout(FieldLayout.Compute(PhoneCols, PhoneRows));
-            game.Posts.Offer(HoldRig.Post(1));
-            game.Step();
-            var card = game.Cards.Cards[0];
-            card.Top = 10;
-            var screen = new Screen(PhoneCols, PhoneRows);
-            var view = new RaiderView(BackgroundSeed);
-            var term = new Term(PhoneCols, PhoneRows, keys);
-            var encoder = DiffEncoder.Snapped();
-            while (game.Tick < Tuning.HoldFrames)
-            {
-                if (holds) HoldRig.Park(game, card, action);
-                HoldRig.Step(game);
-                view.FitAndRender(game, screen);
-                term.Feed(encoder.Encode(screen));
-            }
-            Assert.Equal(holds ? Tuning.HoldFrames - 1 : 0, card.Marks.Progress(action));
-            return keys.Count;
-        }
-        int without = Run(false), with = Run(true);
-        // each step recolours the ring of dots round the ship, and the icon and its halo lie inside the ring: the ring's square in
-        // cells (and one more for a row step); the progress line along the card's foot passes each of its cells through its states
-        static int CellsOver(int pixels) => (pixels + CardField.PixelsPerCell - 1) / CardField.PixelsPerCell + 1;
-        int ring = CellsOver(2 * RaiderView.HoldRingRadius + 1), cells = ring * ring;
-        Assert.True(HoldBeats.MaxIconWidth + 2 * HoldBeats.HaloMargin <= 2 * RaiderView.HoldRingRadius, "the icon and its halo lie inside the ring");
-        Assert.True(with > without, "the build-up is on the screen");
-        int steps = HoldBeats.Widths.Length, line = PhoneCols * ProgressLineCellStates;
-        Assert.True(with <= without + steps * cells + line,
-            $"minted {with} with the hold and {without} without; {steps} steps of {cells} cells and {line} for the line allow {steps * cells + line} more");
     }
 
     private static FeedPost Post(int number) =>
@@ -266,15 +222,15 @@ public class AtlasKeyTests
         // avatars of every colour, the worst a feed can send
         game.AvatarWanted = post => game.SetAvatar(post.AuthorDid, Noise(dice, AvatarCsv.Pixels));
         var paint = new Random(11);
-        game.PictureWanted = (post, picture, width, height) =>
+        game.PictureWanted = ask =>
         {
             var pixels = pictures switch
             {
-                Pictures.Scenes => Scene(paint, width, height),
-                Pictures.Noise => Noise(paint, width * height),
-                _ => new uint[width * height],
+                Pictures.Scenes => Scene(paint, ask.W, ask.H),
+                Pictures.Noise => Noise(paint, ask.W * ask.H),
+                _ => new uint[ask.W * ask.H],
             };
-            game.SetPicture(post.Pictures![picture].Thumb, width, height, pixels);
+            game.SetPicture(ask.Key, ask.W, ask.H, pixels);
         };
         var screen = new Screen(cols, rows);
         var view = new RaiderView(BackgroundSeed);

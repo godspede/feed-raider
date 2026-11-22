@@ -1,7 +1,7 @@
 namespace FeedRaider.Engine.Raider;
 
 /// <summary>A rude post kept to be spoken: cleaned text, the label it came with, and the frame it arrived on.</summary>
-public record RudePost(ulong Seed, string Text, DarkSource Source, string? Label, long Arrived);
+public record RudePost(ulong Seed, string Text, DarknessSource Source, string? Label, long Arrived);
 
 /// <summary>
 /// The feed's rude posts, waiting for a speaker. A rude post makes no enemy: it waits here, oldest first, until a boss, a mini-boss or a

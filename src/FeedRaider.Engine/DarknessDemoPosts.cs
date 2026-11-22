@@ -13,9 +13,9 @@ public static class DarknessDemoPosts
         (DarknessKind.Rude, "ugh, of course you would post that"),
     ];
 
-    public static DarkPost Next(int i)
+    public static DarknessPost Next(int i)
     {
         var (kind, text) = Samples[i % Samples.Length];
-        return new DarkPost(kind, Hashing.MixedFnv64("demo" + i), DarknessText.Clean(text, DarknessText.MaxPostChars), DarkSource.Demo);
+        return new DarknessPost(kind, Hashing.MixedFnv64("demo" + i), DarknessText.Clean(text, DarknessText.MaxPostChars), DarknessSource.Demo);
     }
 }

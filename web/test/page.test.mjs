@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { avatarCid, bestEffort, cellAt, createGestures, didDocUrl, FIELD_MAX_COLS, grants, leftPanel, metadataUrl, renderLog, SIDE_GAP_COLS, SIDE_MIN_COLS } from '../../src/FeedRaider.Web/wwwroot/page.js';
+import { avatarCid, cellAt, createGestures, didDocUrl, FIELD_MAX_COLS, grants, leftPanel, metadataUrl, renderLog, SIDE_GAP_COLS, SIDE_MIN_COLS } from '../../src/FeedRaider.Web/wwwroot/page.js';
 
 const wwwroot = new URL('../../src/FeedRaider.Web/wwwroot/', import.meta.url);
 const metadataScript = fileURLToPath(new URL('../make-client-metadata.mjs', import.meta.url));
@@ -142,7 +142,7 @@ test('grants: a collection scope without actions allows every action, and other 
   assert.deepEqual(grants('atproto repo:app.bsky.feed.like?action=delete'), { ...NONE, unlike: true });
 });
 
-// --- the feed log on the field's left: cells, clicks, taps and the pause menu's list ---
+// --- the feed log on the field's left: cells, log clicks and the pause menu's list ---
 
 const metrics = { left: 10, top: 20, cellW: 8, cellH: 16, cols: 100, rows: 40 };
 
@@ -176,48 +176,48 @@ function gestureRig(inPanel) {
   const calls = [];
   let t = 0;
   const host = {
-    tap: (c) => calls.push(['tap', c]), bomb: () => calls.push(['bomb']),
-    click: (c) => calls.push(['click', c]), inPanel,
+    click: (c, touch) => calls.push(['click', c, touch]), bomb: () => calls.push(['bomb']),
+    logClick: (c) => calls.push(['logClick', c]), inPanel,
   };
   return { calls, g: createGestures(host, () => t), at: (ms) => { t = ms; } };
 }
 
-test('gestures: a click on the left panel is a click and no tap; a click elsewhere is a tap', () => {
+test('gestures: a click on the left panel is a log click and no field click; a click elsewhere is a field click that is not a touch', () => {
   const { calls, g } = gestureRig((c) => c[0] < 30);
   g.mouseDown(0, [12, 7]);
-  assert.deepEqual(calls, [['click', [12, 7]]]);
+  assert.deepEqual(calls, [['logClick', [12, 7]]]);
   calls.length = 0;
   g.mouseDown(0, [60, 7]);
-  assert.deepEqual(calls, [['tap', [60, 7]]]);
+  assert.deepEqual(calls, [['click', [60, 7], false]]);
   calls.length = 0;
   g.mouseDown(2, [12, 7]);
   assert.deepEqual(calls, [['bomb']], 'the right button still bombs');
 });
 
-test('gestures: a quick tap on the left panel clicks, and neither taps nor asks for a steering drag', () => {
+test('gestures: a quick touch on the left panel is a log click, and neither a field click nor a steering drag', () => {
   const { calls, g, at } = gestureRig((c) => c[0] < 30);
   at(1000);
   g.touchStart(1, 50, 50, [12, 7]);
   assert.equal(g.touchMove(1, 3, 1), false, 'the finger moved a little: no steering');
   at(1100);
   g.touchEnd(0);
-  assert.deepEqual(calls, [['click', [12, 7]]]);
+  assert.deepEqual(calls, [['logClick', [12, 7]]]);
 });
 
-test('gestures: a long press or a drag that began on the left panel is not a click and still does not steer', () => {
+test('gestures: a long press or a drag that began on the left panel is not a log click and still does not steer', () => {
   const { calls, g, at } = gestureRig((c) => c[0] < 30);
   at(0);
   g.touchStart(1, 50, 50, [12, 7]);
   assert.equal(g.touchMove(1, 30, 0), false);
   at(100);
   g.touchEnd(0);
-  assert.equal(calls.some((c) => c[0] === 'click'), false);
+  assert.equal(calls.some((c) => c[0] === 'logClick'), false);
   calls.length = 0;
   at(0);
   g.touchStart(1, 50, 50, [12, 7]);
   at(900);
   g.touchEnd(0);
-  assert.equal(calls.some((c) => c[0] === 'click'), false);
+  assert.equal(calls.some((c) => c[0] === 'logClick'), false);
 });
 
 test('gestures: a touch on the field still steers', () => {
@@ -225,6 +225,46 @@ test('gestures: a touch on the field still steers', () => {
   g.touchStart(1, 50, 50, [60, 7]);
   assert.equal(g.touchMove(1, 3, 1), true);
   assert.deepEqual(calls, []);
+});
+
+test('gestures: a 200 ms touch on the field that moved 5 px is a click, sent as a touch', () => {
+  const { calls, g, at } = gestureRig(() => false);
+  at(1000);
+  g.touchStart(1, 50, 50, [60, 7]);
+  g.touchMove(1, 3, 2);
+  at(1200);
+  g.touchEnd(0);
+  assert.deepEqual(calls, [['click', [60, 7], true]]);
+});
+
+test('gestures: a 200 ms touch on the field that moved 20 px steers and never clicks', () => {
+  const { calls, g, at } = gestureRig(() => false);
+  at(1000);
+  g.touchStart(1, 50, 50, [60, 7]);
+  assert.equal(g.touchMove(1, 12, 8), true);
+  at(1200);
+  g.touchEnd(0);
+  assert.deepEqual(calls, []);
+});
+
+test('gestures: a still touch held 400 ms does nothing, so a resting thumb never likes', () => {
+  const { calls, g, at } = gestureRig(() => false);
+  at(1000);
+  g.touchStart(1, 50, 50, [60, 7]);
+  at(1400);
+  g.touchEnd(0);
+  assert.deepEqual(calls, []);
+});
+
+test('gestures: a quick two-finger touch on the field bombs and does not click', () => {
+  const { calls, g, at } = gestureRig(() => false);
+  at(1000);
+  g.touchStart(1, 50, 50, [60, 7]);
+  g.touchStart(2, 80, 50, [70, 7]);
+  at(1150);
+  g.touchEnd(1);
+  g.touchEnd(0);
+  assert.deepEqual(calls, [['bomb']]);
 });
 
 // A stand-in for the document: just what renderLog uses.
@@ -309,17 +349,4 @@ test('renderLog: pressing a button names the post and the action', () => {
   like.click();
   repost.click();
   assert.deepEqual(pressed, [['at://x/post/1', 'like'], ['at://x/post/1', 'repost']]);
-});
-
-test('bestEffort: a call that throws is warned of once, by name, and never stops its caller', () => {
-  const warned = [];
-  const guard = bestEffort('a music cue', (message) => warned.push(message));
-  let ran = 0;
-  guard(() => { ran++; });
-  guard(() => { throw new Error('no audio context'); });
-  guard(() => { throw new Error('still none'); });
-  guard(() => { ran++; });
-  assert.equal(ran, 2);
-  assert.equal(warned.length, 1);
-  assert.match(warned[0], /^a music cue failed.*no audio context$/);
 });

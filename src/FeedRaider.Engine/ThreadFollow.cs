@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace FeedRaider.Engine;
 
-/// <summary>Finds the post a finished like brings in: the earliest direct reply to the liked post by its own author, from an
+/// <summary>Finds the post a like brings in: the earliest direct reply to the liked post by its own author, from an
 /// <c>app.bsky.feed.getPostThread</c> body requested with depth 1 and no parents.</summary>
 public static class ThreadMapper
 {

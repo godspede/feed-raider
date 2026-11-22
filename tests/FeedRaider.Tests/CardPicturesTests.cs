@@ -14,8 +14,6 @@ public class CardPicturesTests
     private const string NoWords = "";
     /// <summary>The words a picture's alt text gives.</summary>
     private const string AltText = "what it shows";
-    /// <summary>Ticks on a button that start a hold and are far short of finishing it.</summary>
-    private const int HoldStartTicks = 12;
     /// <summary>The stated shape of an ordinary picture: a 4:3 photo.</summary>
     private const int PhotoW = 4, PhotoH = 3;
     /// <summary>A picture's long and short side in pixels, for a wide (16:9) picture and a tall one.</summary>
@@ -37,9 +35,10 @@ public class CardPicturesTests
 
     private static FeedPost PicturePost(string text = Words, int pictures = 1, int width = PhotoW, int height = PhotoH, string? alt = null, bool adult = false,
         bool optOut = false, PostRef? parent = null, AttachmentKind kind = AttachmentKind.Picture) =>
-        new(PostUri, "c", AuthorDid, AuthorHandle, text, HoldRig.OrdinaryLikes, HoldRig.OrdinaryReposts, 0, null, parent,
+        new(PostUri, "c", AuthorDid, AuthorHandle, text, PressRig.OrdinaryLikes, PressRig.OrdinaryReposts, 0, null, parent,
             DisplayName: "Some Name", HasEmbed: true, Adult: adult, AuthorOptOut: optOut, Attachment: kind, AttachmentText: alt,
-            Pictures: pictures == NoPictures ? null : Enumerable.Range(0, pictures).Select(i => NumberedPicture(i, width, height)).ToArray());
+            Pictures: pictures == NoPictures ? null : Enumerable.Range(0, pictures).Select(i => NumberedPicture(i, width, height)).ToArray(),
+            Video: kind == AttachmentKind.Video ? new VideoRef(AuthorDid, "cidvideo", null, alt) : null);
 
     // ---- the rules
 
@@ -83,11 +82,10 @@ public class CardPicturesTests
     }
 
     [Theory]
-    [InlineData(AttachmentKind.Video)]
     [InlineData(AttachmentKind.Link)]
     [InlineData(AttachmentKind.Quote)]
     [InlineData(AttachmentKind.Other)]
-    public void A_post_with_another_attachment_keeps_its_note_and_its_rules(AttachmentKind kind)
+    public void A_post_with_an_attachment_it_cannot_draw_keeps_its_note_and_its_rules(AttachmentKind kind)
     {
         var p = PicturePost(pictures: NoPictures, kind: kind);
         Assert.True(PostRules.Shown(p, false, false));
@@ -134,9 +132,11 @@ public class CardPicturesTests
     }
 
     [Fact]
-    public void A_quote_with_pictures_a_video_and_a_link_card_carry_no_pictures()
+    public void A_video_and_a_link_card_carry_no_pictures_and_a_quote_with_media_draws_the_posts_own_pictures_in_its_body()
     {
-        Assert.Null(Parse("{\"$type\":\"app.bsky.embed.recordWithMedia#view\",\"media\":" + ImagesEmbedJson(TwoPictures) + "}").Pictures);
+        var withMedia = Parse("{\"$type\":\"app.bsky.embed.recordWithMedia#view\",\"media\":" + ImagesEmbedJson(TwoPictures) + "}");
+        Assert.Equal(AttachmentKind.Quote, withMedia.Attachment);
+        Assert.Equal(TwoPictures, CardLayout.Measure(withMedia, WideCardCols, false).Pictures.Count);
         Assert.Null(Parse("{\"$type\":\"app.bsky.embed.video#view\",\"cid\":\"x\",\"thumbnail\":\"https://video.bsky.app/t.jpg\"}").Pictures);
         Assert.Null(Parse("{\"$type\":\"app.bsky.embed.external#view\",\"external\":{\"uri\":\"https://e.example/a\",\"title\":\"t\",\"thumb\":\"https://cdn.bsky.app/t\"}}").Pictures);
     }
@@ -236,21 +236,21 @@ public class CardPicturesTests
     private const double LuminanceSlack = 1e-9;
 
     /// <summary>A game stepped once, with the ship off the field and nothing on it but the card of <paramref name="post"/>, if one is given.</summary>
-    private static RaiderGame QuietGame(FeedPost? post = null, Action<FeedPost, int, int, int>? pictureWanted = null)
+    private static RaiderGame QuietGame(FeedPost? post = null, Action<PictureAsk>? pictureWanted = null)
     {
         var g = new RaiderGame(EnemyKit.PlainSeed) { SignedIn = true, BossGates = false, PictureWanted = pictureWanted };
-        g.SetLayout(FieldLayout.Compute(HoldRig.ScrCols, HoldRig.ScrRows));
+        g.SetLayout(FieldLayout.Compute(PressRig.ScrCols, PressRig.ScrRows));
         if (post is not null) g.Posts.Offer(post);
         g.Step();
         g.Enemies.Clear(); g.Bullets.Clear(); g.Particles.Clear(); g.Rings.Clear(); g.Pickups.Clear();
-        HoldRig.Force(g, nameof(RaiderGame.PX), CardRig.ParkedShipX);
+        PressRig.Force(g, nameof(RaiderGame.PX), CardRig.ParkedShipX);
         return g;
     }
 
-    private static (RaiderGame G, Card C, List<(int Index, int W, int H)> Asked) Scene(FeedPost post)
+    internal static (RaiderGame G, Card C, List<PictureAsk> Asked) Scene(FeedPost post)
     {
-        var asked = new List<(int, int, int)>();
-        var g = QuietGame(post, (_, i, w, h) => asked.Add((i, w, h)));
+        var asked = new List<PictureAsk>();
+        var g = QuietGame(post, asked.Add);
         var card = g.Cards.Cards[0];
         card.Top = CardTop;
         return (g, card, asked);
@@ -267,8 +267,8 @@ public class CardPicturesTests
     private static uint[] BrightPixels(int width, int height) => Enumerable.Range(0, width * height).Select(i => i % 2 == 0 ? BrightWhite : BrightOrange).ToArray();
 
     /// <summary>Answers the card's first picture with bright pixels at the size it asked for.</summary>
-    private static void AnswerFirstPicture(RaiderGame g, Card c, List<(int Index, int W, int H)> asked) =>
-        g.SetPicture(c.Post.Pictures![0].Thumb, asked[0].W, asked[0].H, BrightPixels(asked[0].W, asked[0].H));
+    private static void AnswerFirstPicture(RaiderGame g, List<PictureAsk> asked) =>
+        g.SetPicture(asked[0].Key, asked[0].W, asked[0].H, BrightPixels(asked[0].W, asked[0].H));
 
     [Fact]
     public void A_card_asks_for_each_picture_once_as_it_is_made_at_two_pixels_to_a_cell_of_its_box()
@@ -276,7 +276,11 @@ public class CardPicturesTests
         const int pictures = 3;
         var (g, c, asked) = Scene(PicturePost(pictures: pictures));
         Assert.Equal(pictures, asked.Count);
-        for (int i = 0; i < pictures; i++) Assert.Equal((i, c.Shape.Pictures[i].W * CardField.PixelsPerCell, c.Shape.Pictures[i].H * CardField.PixelsPerCell), asked[i]);
+        for (int i = 0; i < pictures; i++)
+        {
+            string thumb = c.Post.Pictures![i].Thumb;
+            Assert.Equal(new PictureAsk(thumb, PictureSource.Pds, AuthorDid, thumb, c.Shape.Pictures[i].W * CardField.PixelsPerCell, c.Shape.Pictures[i].H * CardField.PixelsPerCell), asked[i]);
+        }
         for (int i = 0; i < Tuning.Fps; i++) g.Step();
         Assert.Equal(pictures, asked.Count);
     }
@@ -286,7 +290,7 @@ public class CardPicturesTests
     {
         var (g, c, asked) = Scene(PicturePost(pictures: TwoPictures));
         int rows = c.Shape.Rows;
-        var f = HoldRig.Draw(g);
+        var f = PressRig.Draw(g);
         for (int i = 0; i < TwoPictures; i++)
         {
             var b = PictureBox(g, c, i);
@@ -295,8 +299,8 @@ public class CardPicturesTests
                     Assert.Equal(CardColours.PictureWaiting, f.Get(b.X + x, b.Y + y));
         }
         Assert.True(Surface.Luminance(CardColours.PictureWaiting) <= CardColours.MaxIdleLuminance);
-        AnswerFirstPicture(g, c, asked);
-        f = HoldRig.Draw(g);
+        AnswerFirstPicture(g, asked);
+        f = PressRig.Draw(g);
         var first = PictureBox(g, c, 0);
         Assert.NotEqual(CardColours.PictureWaiting, f.Get(first.X, first.Y));
         var second = PictureBox(g, c, 1);
@@ -308,11 +312,11 @@ public class CardPicturesTests
     public void A_picture_is_drawn_pixel_for_pixel_in_its_box_dimmed_like_the_avatar_and_under_the_luminance_cap()
     {
         var (g, c, asked) = Scene(PicturePost());
-        var (_, w, h) = asked[0];
+        var (w, h) = (asked[0].W, asked[0].H);
         var px = BrightPixels(w, h);
         px[0] = DarkBlue;
         g.SetPicture(c.Post.Pictures![0].Thumb, w, h, px);
-        var f = HoldRig.Draw(g);
+        var f = PressRig.Draw(g);
         var b = PictureBox(g, c, 0);
         Assert.Equal((w, h), (b.W, b.H));
         Assert.Equal(Surface.Mix(DarkBlue, CardColours.Slab, CardColours.AvatarDim), f.Get(b.X, b.Y));
@@ -335,13 +339,13 @@ public class CardPicturesTests
     public void A_picture_half_above_the_fields_top_is_clipped_there()
     {
         var (g, c, asked) = Scene(PicturePost());
-        AnswerFirstPicture(g, c, asked);
+        AnswerFirstPicture(g, asked);
         var pic = c.Shape.Pictures[0];
         int halfAbove = -(pic.Y + pic.H / 2);
         c.Top = halfAbove;
-        var f = HoldRig.Draw(g);
-        c.Top = LikeHoldTests.OffFieldTop;
-        var behind = HoldRig.Draw(g);
+        var f = PressRig.Draw(g);
+        c.Top = LikePressTests.OffFieldTop;
+        var behind = PressRig.Draw(g);
         c.Top = halfAbove;
         var b = PictureBox(g, c, 0);
         for (int y = 0; y < CardPainter.HudPixelRows; y++)
@@ -355,22 +359,22 @@ public class CardPicturesTests
     public void An_enemy_and_a_shot_over_a_picture_are_drawn_as_they_are_over_the_sky()
     {
         var (g, c, asked) = Scene(PicturePost());
-        AnswerFirstPicture(g, c, asked);
+        AnswerFirstPicture(g, asked);
         var b = PictureBox(g, c, 0);
-        var alone = HoldRig.Draw(g);
+        var alone = PressRig.Draw(g);
         double middleX = CardActionRowTests.Middle(b.X, b.W), middleY = CardActionRowTests.Middle(b.Y, b.H);
         void AddGunshipAndShot(RaiderGame game)
         {
-            var e = game.SpawnKind(EnemyKind.Gunship, 0.5);
+            var e = game.SpawnKind(EnemyKind.Gunship, EnemyKit.MidWidth);
             e.X = middleX; e.Y = middleY; e.Grace = 0; e.Age = 0; e.Flash = 0;
             game.Bullets.Add(new Bullet { X = b.X + ShotInset, Y = b.Y + ShotInset, Friendly = true });
         }
         AddGunshipAndShot(g);
-        var over = HoldRig.Draw(g);
+        var over = PressRig.Draw(g);
         var sky = QuietGame();
-        var empty = HoldRig.Draw(sky);
+        var empty = PressRig.Draw(sky);
         AddGunshipAndShot(sky);
-        var units = HoldRig.Draw(sky);
+        var units = PressRig.Draw(sky);
         int covered = 0;
         for (int y = b.Y; y < b.Y + b.H; y++)
             for (int x = b.X; x < b.X + b.W; x++)
@@ -392,8 +396,8 @@ public class CardPicturesTests
     public void The_words_are_never_written_into_a_pictures_cells()
     {
         var (g, c, asked) = Scene(PicturePost(alt: AltText));
-        AnswerFirstPicture(g, c, asked);
-        var scr = new Screen(HoldRig.ScrCols, HoldRig.ScrRows);
+        AnswerFirstPicture(g, asked);
+        var scr = new Screen(PressRig.ScrCols, PressRig.ScrRows);
         new RaiderView().FitAndRender(g, scr);
         var pic = c.Shape.Pictures[0];
         foreach (var t in c.Shape.Lines.Append(c.Shape.Note!.Value).Append(c.Shape.Name).Append(c.Shape.Handle))
@@ -443,19 +447,15 @@ public class CardPicturesTests
     }
 
     [Fact]
-    public void The_buttons_of_a_card_made_taller_by_four_pictures_are_under_them_and_still_take_a_hold()
+    public void The_buttons_of_a_card_made_taller_by_four_pictures_are_under_them_and_still_take_a_press()
     {
         var post = PicturePost(pictures: FeedMapper.MaxPictures, alt: "four of them") with { Uri = "at://did:plc:h9/app.bsky.feed.post/9" };
-        var (g, c, _) = HoldRig.Scene(post: post);
+        var (g, c, _) = PressRig.Scene(post: post);
         var like = g.Cards.ButtonBox(c, PostAction.Like);
         foreach (var b in c.Shape.Pictures) Assert.True((c.Top + b.Y + b.H) * CardField.PixelsPerCell <= like.Y, "a picture reaches the like button");
         Assert.Equal((c.Top + c.Shape.Rows - CardLayout.FooterRows) * CardField.PixelsPerCell, like.Y);
-        for (int i = 0; i < HoldStartTicks; i++)
-        {
-            HoldRig.Park(g, c, PostAction.Like);
-            HoldRig.Step(g);
-        }
-        Assert.True(c.Marks.Progress(PostAction.Like) > 0, "the hold did not start on the taller card");
+        PressRig.Press(g, c, PostAction.Like);
+        Assert.NotEqual(ButtonState.Off, c.Marks.Like);
     }
 
     [Fact]

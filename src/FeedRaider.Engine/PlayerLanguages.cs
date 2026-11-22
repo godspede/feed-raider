@@ -4,7 +4,7 @@ using System.Text;
 namespace FeedRaider.Engine;
 
 /// <summary>
-/// The languages the player reads, as primary subtags, and the test of whether a dark post is in one of them.
+/// The languages the player reads, as primary subtags, and the test of whether a <see cref="DarknessPost"/> is in one of them.
 /// A post's own <c>langs</c> decides when it has them. Without, the post's writing system stands in: counting the
 /// letters of each Unicode script needs no language model and no network call, and a post in the wrong script is
 /// the one a player cannot read at all.
@@ -45,6 +45,10 @@ public sealed class PlayerLanguages
 
     /// <summary>The primary subtags, lower case, in the order given and without repeats.</summary>
     public IReadOnlyCollection<string> Codes => _codes;
+
+    /// <summary>These languages and <see cref="Fallback"/>: what a <see cref="DarknessPost"/> may be in while the player's own languages give too few.
+    /// The same instance when they already hold it.</summary>
+    public PlayerLanguages WithFallback() => _codes.Contains(Fallback) ? this : new(_codes.Append(Fallback));
 
     /// <summary>The primary language subtag of a BCP-47 tag in lower case (<c>pt-BR</c> gives <c>pt</c>); null for a tag with none.</summary>
     public static string? Primary(string? tag)

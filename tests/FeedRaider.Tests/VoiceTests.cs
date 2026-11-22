@@ -70,13 +70,13 @@ public class VoiceTests
     /// <summary>The last line of a dying speaker; the gunship's own last line is the same words.</summary>
     private const string DyingLine = "Ratioed.";
 
-    private static DarkPost Rude(ulong seed, string? text = null, string? label = RudeLabel, DarkSource src = DarkSource.Label) =>
+    private static DarknessPost Rude(ulong seed, string? text = null, string? label = RudeLabel, DarknessSource src = DarknessSource.Label) =>
         new(DarknessKind.Rude, seed, text ?? RudeText(seed), src, label);
 
     /// <summary>The words of the rude post made from <paramref name="seed"/> when a test gives none.</summary>
     private static string RudeText(ulong seed) => RudePostLead + seed;
 
-    private static void Offer(RaiderGame game, int count) { for (ulong i = 1; i <= (ulong)count; i++) game.OfferDark(Rude(i)); }
+    private static void Offer(RaiderGame game, int count) { for (ulong i = 1; i <= (ulong)count; i++) game.OfferDarkness(Rude(i)); }
 
     private static void Use(RaiderGame game, params EnemyBehaviour[] behaviours) => game.BehaviourOverride = kind => behaviours.FirstOrDefault(behaviour => behaviour.Kind == kind);
 
@@ -162,7 +162,7 @@ public class VoiceTests
     {
         var game = NewEmptyGame();
         const string words = "first words";
-        game.OfferDark(Rude(1, words));
+        game.OfferDarkness(Rude(1, words));
         const int quietFrames = 200;
         StepWithoutBoltsOrFillers(game, quietFrames);
         Assert.Single(game.Rude.Waiting);
@@ -210,7 +210,7 @@ public class VoiceTests
         StepWithoutBoltsOrFillers(game, quietFrames);
         Assert.Null(lesser.Text);
         const string words = "late words";
-        game.OfferDark(Rude(1, words, null, DarkSource.Hidden));
+        game.OfferDarkness(Rude(1, words, null, DarknessSource.Hidden));
         StepWithoutBoltsOrFillers(game, SettleFrames);
         Assert.Equal(words, lesser.Text);
         Assert.Equal(HiddenHeader, lesser.Header);
@@ -247,12 +247,12 @@ public class VoiceTests
         var game = NewEmptyGame(cols, rows);
         InstallBossVoice(game);
         const string label = "x";
-        game.OfferDark(Rude(1, LongPost, label));
+        game.OfferDarkness(Rude(1, LongPost, label));
         var boss = SpawnBoss(game);
         StepWithoutBoltsOrFillersUntil(game, () => boss.Text is not null);
         StepWithoutBoltsOrFillers(game);
         Assert.Equal(LongPost, boss.Text);
-        Assert.Equal(EnemySpeechBox.Header(label, DarknessKind.Rude, DarkSource.Label), boss.Header);
+        Assert.Equal(EnemySpeechBox.Header(label, DarknessKind.Rude, DarknessSource.Label), boss.Header);
         Assert.Equal("X", boss.Header);
         Assert.Equal(LongPost, Squash(boss.SpeechLines!));
         Assert.DoesNotContain(Ellipsis, Squash(boss.SpeechLines!));
@@ -268,7 +268,7 @@ public class VoiceTests
     {
         var game = NewEmptyGame();
         InstallBossVoice(game);
-        game.OfferDark(Rude(1, "hidden words", null, DarkSource.Hidden));
+        game.OfferDarkness(Rude(1, "hidden words", null, DarknessSource.Hidden));
         var boss = SpawnBoss(game);
         StepWithoutBoltsOrFillersUntil(game, () => boss.Text is not null);
         Assert.Equal(HiddenHeader, boss.Header);
@@ -280,7 +280,7 @@ public class VoiceTests
     {
         var game = NewEmptyGame();
         InstallBossVoice(game);
-        game.OfferDark(Rude(1, "plain", null));
+        game.OfferDarkness(Rude(1, "plain", null));
         var boss = SpawnBoss(game);
         StepWithoutBoltsOrFillersUntil(game, () => boss.Text is not null);
         Assert.Equal(RudeHeader, boss.Header);
@@ -545,7 +545,7 @@ public class VoiceTests
     [Fact]
     public void The_default_taste_is_the_oldest()
     {
-        Assert.Equal(0, new VoiceBehaviour(EnemyKind.Bulwark).Taste(EnemyKit.Speaker(EnemyKind.Bulwark), [new RudePost(1, "older", DarkSource.Label, null, 0), new RudePost(2, "newer", DarkSource.Label, null, 0)]));
+        Assert.Equal(0, new VoiceBehaviour(EnemyKind.Bulwark).Taste(EnemyKit.Speaker(EnemyKind.Bulwark), [new RudePost(1, "older", DarknessSource.Label, null, 0), new RudePost(2, "newer", DarknessSource.Label, null, 0)]));
     }
 
     [Fact]
@@ -661,7 +661,7 @@ public class VoiceTests
         const double shipParkX = 8;   // the ship moves to the far left, away from the boss's box
         var behaviour = InstallBossVoice(game);
         behaviour.HoldY = topHoldY;
-        game.OfferDark(Rude(1, "no u"));
+        game.OfferDarkness(Rude(1, "no u"));
         var boss = SpawnSpeaker(game, behaviour, rightOfCentre, topHoldY);
         const int walkLimitFrames = 400, openLimitFrames = 200;
         for (int i = 0; i < walkLimitFrames && game.PX > shipParkX; i++) { game.Input.Key(GameKey.Left, true); StepWithoutBoltsOrFillers(game); }
@@ -942,7 +942,7 @@ public class VoiceTests
         const int runFrames = 2400, postEvery = 150, firstPostAt = 3, swayFrames = 120;
         for (int i = 0; i < runFrames; i++)
         {
-            if (i % postEvery == firstPostAt) withPosts.OfferDark(Rude((ulong)i + 1, "words number " + i));
+            if (i % postEvery == firstPostAt) withPosts.OfferDarkness(Rude((ulong)i + 1, "words number " + i));
             foreach (var game in new[] { withPosts, withoutPosts })
             {
                 game.Input.Key(GameKey.Fire, true);

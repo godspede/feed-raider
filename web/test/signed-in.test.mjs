@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { gameKey, isTextEntry, createGestures, signInAgain, grants, TAP_MS, SLOP } from '../../src/FeedRaider.Web/wwwroot/page.js';
+import { gameKey, isTextEntry, createGestures, signInAgain, grants, CLICK_MS, SLOP } from '../../src/FeedRaider.Web/wwwroot/page.js';
 
 const scope = JSON.parse(readFileSync(new URL('../scope.json', import.meta.url), 'utf8'));
 const bundle = readFileSync(new URL('../../src/FeedRaider.Web/wwwroot/atproto.js', import.meta.url), 'utf8');
@@ -29,7 +29,7 @@ test('the granular scope creates and deletes likes and reposts and names no othe
   assert.equal(parts.length, 7);
 });
 
-test('the bundle exposes getTimeline and the rebuilt file carries it', () => {
+test('the built atproto.js names getTimeline', () => {
   assert.match(bundle, /getTimeline/);
 });
 
@@ -39,6 +39,12 @@ test('B, Space, F and E are game keys, by code or by the typed letter', () => {
   assert.equal(gameKey({ code: '', key: 'B' }), 'KeyB');
   assert.equal(gameKey({ code: '', key: ' ' }), 'Space');
   assert.equal(gameKey({ code: 'KeyQ', key: 'q' }), null);
+});
+
+test('Z and X, which like and repost the post under the ship, are game keys by code or by the typed letter', () => {
+  for (const c of ['KeyZ', 'KeyX']) assert.equal(gameKey({ code: c, key: '' }), c);
+  assert.equal(gameKey({ code: 'Unidentified', key: 'z' }), 'KeyZ');
+  assert.equal(gameKey({ code: '', key: 'X' }), 'KeyX');
 });
 
 test('text fields keep their keys; buttons, sliders and the xterm helper do not', () => {
@@ -52,33 +58,33 @@ test('text fields keep their keys; buttons, sliders and the xterm helper do not'
 
 function rig() {
   const log = []; let t = 0;
-  const g = createGestures({ tap: () => log.push('tap'), bomb: () => log.push('bomb') }, () => t);
+  const g = createGestures({ click: () => log.push('click'), bomb: () => log.push('bomb') }, () => t);
   return { g, log, at: (ms) => { t = ms; } };
 }
 
-test('a left click taps and never likes; right click bombs', () => {
+test('a left button press clicks; a right one bombs', () => {
   const { g, log } = rig();
   g.mouseDown(0, [1, 1]);
-  assert.deepEqual(log, ['tap']);
+  assert.deepEqual(log, ['click']);
   g.mouseDown(2, [1, 1]);
   assert.equal(log.at(-1), 'bomb');
 });
 
-test('a quick touch is a tap; a long still touch is not', () => {
+test('a quick touch is a click; a long still touch is not', () => {
   const { g, log, at } = rig();
   g.touchStart(1, 10, 10, [2, 2]); at(100); g.touchEnd(0);
-  assert.deepEqual(log, ['tap']);
+  assert.deepEqual(log, ['click']);
   log.length = 0; at(1000);
-  g.touchStart(1, 10, 10, [2, 2]); at(1000 + TAP_MS + 200);
+  g.touchStart(1, 10, 10, [2, 2]); at(1000 + CLICK_MS + 200);
   g.touchEnd(0);
-  assert.deepEqual(log, []);   // too long to be a tap
+  assert.deepEqual(log, []);
 });
 
-test('a dragged touch is not a tap; a two-finger tap bombs', () => {
+test('a dragged touch is not a click; a quick two-finger touch bombs', () => {
   const { g, log, at } = rig();
   g.touchStart(1, 0, 0, [2, 2]); g.touchMove(1, SLOP + 1, 0);
   g.touchEnd(0);
-  assert.ok(!log.includes('tap') && !log.includes('bomb'));
+  assert.ok(!log.includes('click') && !log.includes('bomb'));
   log.length = 0; at(5000);
   g.touchStart(1, 0, 0, [2, 2]); g.touchStart(2, 0, 0, [2, 2]); at(5100); g.touchEnd(1); g.touchEnd(0);
   assert.ok(log.includes('bomb'));

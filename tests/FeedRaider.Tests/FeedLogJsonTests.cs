@@ -19,7 +19,7 @@ public class FeedLogJsonTests
 
     private static LogEntry Add(RaiderGame g, FeedPost p)
     {
-        var e = new LogEntry(p, g.Book.For(p));
+        var e = new LogEntry(p, g.Book.MarksFor(p));
         g.Log.Add(e);
         return e;
     }

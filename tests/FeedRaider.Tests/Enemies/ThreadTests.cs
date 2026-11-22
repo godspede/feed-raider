@@ -98,7 +98,7 @@ public sealed class ThreadTests(ITestOutputHelper output)
         g.Enemies.RemoveAll(e => !ReferenceEquals(e, keep));
     }
 
-    /// <summary>One frame as <see cref="StepKeepingEnemy"/>, then every hostile bullet is removed too, because a bolt a car drops
+    /// <summary>One frame as <see cref="StepKeepingEnemy"/>, then every bolt is removed too, because a bolt a car drops
     /// is not what most tests are about.</summary>
     private static void StepKeepingEnemyClearingHostileBolts(RaiderGame g, Enemy keep)
     {
@@ -304,7 +304,7 @@ public sealed class ThreadTests(ITestOutputHelper output)
         Assert.Equal(before + BossScore, g.Score);
     }
 
-    /// <summary>How far the counted square reaches from the head's centre: over the visor, inside the head's shell.</summary>
+    /// <summary>How far the counted square reaches from the head's centre: over the visor, inside the head's outline.</summary>
     private const int HeadCentreReach = 3;
 
     /// <summary>The pixels of the given colour in the square round the head's centre.</summary>
@@ -507,7 +507,8 @@ public sealed class ThreadTests(ITestOutputHelper output)
                 StepKeepingEnemy(g, e);
                 if (g.Bullets.FirstOrDefault(b => !b.Friendly) is { } b) return Math.Sqrt(b.VX * b.VX + b.VY * b.VY);
             }
-            throw new Xunit.Sdk.XunitException($"no bolt dropped at stage {stage} inside {FirstDropFramesCap} frames");
+            Assert.Fail($"no bolt dropped at stage {stage} inside {FirstDropFramesCap} frames");
+            throw new System.Diagnostics.UnreachableException();
         }
         Assert.Equal(DropSpeed, Speed(ThreadStage), ExactTolerance);
         Assert.Equal(DropSpeed, Speed(LateStage), ExactTolerance);
@@ -620,7 +621,7 @@ public sealed class ThreadTests(ITestOutputHelper output)
     {
         const int PostWords = 300, PagesLeast = 3;
         var g = FieldGame();
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 1, PostOfWords(PostWords)));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 1, PostOfWords(PostWords)));
         var e = MakeThread(g);
         for (int i = 0; i < SettleFrames; i++) StepKeepingEnemyClearingHostileBolts(g, e);
         Assert.True(EnemySpeechBox.Speaks(e));
@@ -628,7 +629,6 @@ public sealed class ThreadTests(ITestOutputHelper output)
         Assert.True(pages >= PagesLeast, "the post is long enough to page");
         Assert.StartsWith($"1/{pages} ", EnemySpeechBox.Title(e));
         Assert.EndsWith(e.Header!, EnemySpeechBox.Title(e));
-        // some way into the second page the header reads 2/n
         int age = 0;
         while (SpeechBoxText.Progress(e.SpeechLines!, e.PageLines, age).Page < 1) age++;
         e.SpeechBoxAge = age;
@@ -642,7 +642,7 @@ public sealed class ThreadTests(ITestOutputHelper output)
         var g = FieldGame();
         var e = MakeThread(g);
         Assert.Null(Thread.Prefix(g, e));
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 1, ShortPost));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 1, ShortPost));
         for (int i = 0; i < PostTakenFrames; i++) StepKeepingEnemyClearingHostileBolts(g, e);
         Assert.Equal(ShortPost, e.Text);
         Assert.Null(Thread.Prefix(g, e));
@@ -652,7 +652,7 @@ public sealed class ThreadTests(ITestOutputHelper output)
     [Fact]
     public void It_takes_the_longest_waiting_post_first_and_the_oldest_of_equals()
     {
-        RudePost Post(ulong n, string t) => new(n, t, DarkSource.Label, null, (long)n);
+        RudePost Post(ulong n, string t) => new(n, t, DarknessSource.Label, null, (long)n);
         Assert.Equal(1, Thread.Taste(EnemyKit.Speaker(EnemyKind.Thread), [Post(1, "aa"), Post(2, "aaaaaa"), Post(3, "aaa")]));
         Assert.Equal(0, Thread.Taste(EnemyKit.Speaker(EnemyKind.Thread), [Post(1, "aaaa"), Post(2, "bbbb")]));
         Assert.Equal(0, Thread.Taste(EnemyKit.Speaker(EnemyKind.Thread), [Post(1, "a")]));
@@ -670,7 +670,7 @@ public sealed class ThreadTests(ITestOutputHelper output)
         Assert.Equal(Turn.Wait, Thread.TurnFor(g, e, VoiceCue.Arrive));
         Assert.Equal(Turn.Wait, Thread.TurnFor(g, e, VoiceCue.Phase));
         Assert.Equal(Turn.Cut, Thread.TurnFor(g, e, VoiceCue.Dying));
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 1, "grr"));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 1, "grr"));
         var turns = new List<Turn>();
         for (int lost = 1; lost <= Cars; lost++)
         {
@@ -734,7 +734,7 @@ public sealed class ThreadTests(ITestOutputHelper output)
     public void It_says_a_waiting_post_on_arriving()
     {
         var g = FieldGame();
-        g.OfferDark(new DarkPost(DarknessKind.Rude, 1, ShortPost));
+        g.OfferDarkness(new DarknessPost(DarknessKind.Rude, 1, ShortPost));
         var e = MakeThread(g);
         for (int i = 0; i < PostTakenFrames; i++) StepKeepingEnemyClearingHostileBolts(g, e);
         Assert.Equal(ShortPost, e.Text);
@@ -746,10 +746,10 @@ public sealed class ThreadTests(ITestOutputHelper output)
     public void Boss_four_is_the_thread_and_the_gate_brings_it_whole()
     {
         const ulong GateSeed = 3;
-        const int ThreadBoss = 4, GateFramesCap = 100 * Tuning.Fps;
+        const int GateFramesCap = 100 * Tuning.Fps;
         var g = new RaiderGame(GateSeed) { SignedIn = true };
         g.SetLayout(FieldLayout.Compute(EnemyKit.BigCols, EnemyKit.BigRows));
-        g.StartAtBoss(ThreadBoss);
+        g.StartAtBoss(ThreadStage);
         for (int i = 0; i < GateFramesCap && g.Boss is null; i++) g.Step();
         Assert.NotNull(g.Boss);
         Assert.Equal(EnemyKind.Thread, g.Boss!.Kind);
@@ -782,7 +782,7 @@ public sealed class ThreadTests(ITestOutputHelper output)
     }
 
     /// <summary>The weapon level a player has reached by stage 4, and the time a fight may take before it counts as lost.</summary>
-    private const int StageFourWeaponLevel = 2, FightSeconds = 60;
+    private const int StageFourWeaponLevel = 5, FightSeconds = 60;
 
     /// <summary>The bot's ship starts this far in from either side, at one of this many evenly spread columns, picked by stepping
     /// the seed by a stride that shares no factor with the count.</summary>
@@ -814,7 +814,7 @@ public sealed class ThreadTests(ITestOutputHelper output)
             if (open is not null)
             {
                 // where a part will be when a shot fired now passes its row: its last step, carried on
-                double Flight(Part p) => Math.Max(0, (g.PY - MuzzleAbove - (e.Y + p.OY)) / Tuning.ShipShotSpeed);
+                double Flight(Part p) => Math.Max(0, (g.PY - MuzzleAbove - (e.Y + p.OY)) / (Tuning.ShipShotSpeed * Weapons.At(g.WeaponLevel).Shots[0].VyMul));
                 double LeadX(Part p) => e.X + p.OX + (prev.TryGetValue(p, out var o) && o.Count > 0 ? (e.X + p.OX - o.Peek()) / o.Count : 0) * Flight(p);
                 double aim = LeadX(open);
                 bool ShotIsClear(double x) => Math.Abs(x - aim) <= AimReach && !e.Parts!.Any(q => q != open && (q.State != PartState.Dead || q.Wreck is not null)

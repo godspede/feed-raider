@@ -1,5 +1,8 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text.Json;
 using FeedRaider.Engine.Raider;
+using NAudio;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
@@ -13,9 +16,9 @@ namespace FeedRaider.Console.Audio;
 public sealed record AudioOptions(bool Sfx = true, bool Music = true, string? DumpWav = null);
 
 /// <summary>
-/// The sound of the terminal game. It plays on the machine the process runs on (over SSH, the remote machine). Audio must never
-/// cost the game anything: <see cref="TryStart"/> returns null when there is no device, no player for this OS or nothing to
-/// play, and every call after that swallows its own failures, so the game runs silent and nothing reaches the screen.
+/// The sound of the terminal game. It plays on the machine the process runs on (over SSH, the remote machine). The game plays
+/// on without it: <see cref="TryStart"/> returns null when there is no device or no player for this OS, and plays the effects
+/// alone when the music is missing or cannot be read; each of those is told to the player once, in the game's message line.
 /// </summary>
 public sealed class AudioEngine : IDisposable
 {
@@ -27,6 +30,7 @@ public sealed class AudioEngine : IDisposable
 
     private readonly AudioMixer _mixer;
     private readonly AudioOptions _options;
+    private readonly Action<string> _tellMusic;
     private readonly CancellationTokenSource _stop = new();
     private readonly IWavePlayer? _device;
     private readonly WaveFileWriter? _wav;
@@ -35,9 +39,9 @@ public sealed class AudioEngine : IDisposable
     private readonly Thread _pump;
     private readonly Thread? _dump;
 
-    private AudioEngine(AudioMixer mixer, AudioOptions options, IWavePlayer? device, WaveFileWriter? wav, StreamWriter? cueLog)
+    private AudioEngine(AudioMixer mixer, AudioOptions options, Action<string> tellMusic, IWavePlayer? device, WaveFileWriter? wav, StreamWriter? cueLog)
     {
-        _mixer = mixer; _options = options; _device = device; _wav = wav; _cueLog = cueLog;
+        _mixer = mixer; _options = options; _tellMusic = tellMusic; _device = device; _wav = wav; _cueLog = cueLog;
         _pump = new Thread(PumpLoop) { IsBackground = true, Name = "audio-pump" };
         _pump.Start();
         if (wav is not null)
@@ -49,74 +53,72 @@ public sealed class AudioEngine : IDisposable
 
     public bool Muted => _mixer.Muted;
 
-    /// <summary>Starts the sound, or returns null (silent) when anything about it fails.</summary>
-    public static AudioEngine? TryStart(AudioOptions options)
+    /// <summary>Starts the sound, or returns null (silent) when the options turn it all off or there is nothing to play it on.
+    /// <paramref name="tell"/> shows the player a line: once when the sound cannot start, once for the first music failure.</summary>
+    public static AudioEngine? TryStart(AudioOptions options, Action<string> tell)
     {
+        if (!options.Sfx && !options.Music) return null;
+        if (options.DumpWav is null && !OperatingSystem.IsWindows())
+        {
+            tell(SoundTrouble("the terminal game plays sound only on Windows"));
+            return null;
+        }
+        int told = 0;
+        void TellMusic(string what) { if (Interlocked.Exchange(ref told, 1) == 0) tell(MusicTrouble(what)); }
+        var (rotation, open) = options.Music ? LoadMusic(TellMusic) : (null, null);
+        var mixer = new AudioMixer(rotation, open, new Random());
+        if (options.DumpWav is { } path)
+        {
+            var wav = new WaveFileWriter(path, WaveFormat.CreateIeeeFloatWaveFormat(SfxSynth.SampleRate, AudioMixer.Channels));
+            return new AudioEngine(mixer, options, TellMusic, null, wav, new StreamWriter(path + ".cues.txt"));
+        }
+        var provider = new MixerProvider(mixer);
+        var device = new WaveOutEvent { DesiredLatency = DeviceLatencyMs };
         try
         {
-            if (!options.Sfx && !options.Music) return null;
-            if (options.DumpWav is null && !OperatingSystem.IsWindows()) return null;
-            if (options.Music) _musicDir = FindMusicDir();
-            var rotation = options.Music ? LoadRotation(_musicDir) : null;
-            var mixer = new AudioMixer(rotation, options.Music ? OpenTrack : null, new Random());
-            if (options.DumpWav is { } path)
-            {
-                var wav = new WaveFileWriter(path, WaveFormat.CreateIeeeFloatWaveFormat(SfxSynth.SampleRate, AudioMixer.Channels));
-                return new AudioEngine(mixer, options, null, wav, new StreamWriter(path + ".cues.txt"));
-            }
-            var provider = new MixerProvider(mixer);
-            var device = new WaveOutEvent { DesiredLatency = DeviceLatencyMs };
             device.Init(provider.ToWaveProvider());
             device.Play();
-            return new AudioEngine(mixer, options, device, null, null);
         }
-        catch (Exception) { return null; }   // no device, no codec, no folder: the game runs silent
+        catch (MmException e)   // the machine has no audio output device, or none that will open
+        {
+            device.Dispose();
+            tell(SoundTrouble($"no audio device would play ({e.Message})"));
+            return null;
+        }
+        return new AudioEngine(mixer, options, TellMusic, device, null, null);
     }
 
     /// <summary>The music cue from the game's <c>MusicDirector</c>.</summary>
     public void Cue(string cue)
     {
-        try
-        {
-            if (!_options.Music) return;
-            _mixer.Cue(cue);
-            Log("cue", cue);
-        }
-        catch (Exception) { /* audio is best effort */ }
+        if (!_options.Music) return;
+        _mixer.Cue(cue);
+        Log("cue", cue);
     }
 
     /// <summary>The effect from the game's <c>SfxBus</c>.</summary>
     public void Sfx(string name, double pan, int step, double size)
     {
-        try
-        {
-            if (!_options.Sfx) return;
-            _mixer.Play(name, pan, step, size);
-            Log("sfx", name);
-        }
-        catch (Exception) { /* audio is best effort */ }
+        if (!_options.Sfx) return;
+        _mixer.Play(name, pan, step, size);
+        Log("sfx", name);
     }
 
     /// <summary>M: mutes or unmutes everything. Returns the new state.</summary>
-    public bool ToggleMute()
-    {
-        try { return _mixer.Muted = !_mixer.Muted; }
-        catch (Exception) { return false; }   // audio is best effort: report "not muted" rather than fail the key press
-    }
+    public bool ToggleMute() => _mixer.Muted = !_mixer.Muted;
 
     public void Dispose()
     {
-        try
-        {
-            _stop.Cancel();
-            _device?.Dispose();
-            _pump.Join(ShutdownJoinMs);
-            _dump?.Join(ShutdownJoinMs);
-            _wav?.Dispose();
-            _cueLog?.Dispose();
-        }
-        catch (Exception) { /* shutting down */ }
+        _stop.Cancel();
+        _device?.Dispose();
+        _pump.Join(ShutdownJoinMs);
+        _dump?.Join(ShutdownJoinMs);
+        _wav?.Dispose();
+        _cueLog?.Dispose();
     }
+
+    private static string SoundTrouble(string what) => $"Sound: {what}. The game plays on without it.";
+    private static string MusicTrouble(string what) => $"Music: {what}. The game plays on without it.";
 
     private void Log(string kind, string name)
     {
@@ -128,7 +130,7 @@ public sealed class AudioEngine : IDisposable
     {
         while (!_stop.IsCancellationRequested)
         {
-            try { _mixer.Pump(); } catch (Exception) { /* a bad track leaves the music as it was */ }
+            if (_mixer.Pump() is { } failure) _tellMusic(failure);
             _stop.Token.WaitHandle.WaitOne(PumpIntervalMs);
         }
     }
@@ -162,19 +164,44 @@ public sealed class AudioEngine : IDisposable
         return null;
     }
 
-    private static string? _musicDir;
-
-    private static MusicRotation? LoadRotation(string? dir)
+    // The music is optional: each way it can be missing is told, and the effects play without it.
+    private static (MusicRotation?, Func<string, MusicOpen>?) LoadMusic(Action<string> tellMusic)
     {
-        if (dir is null) return null;
-        var tracks = MusicRotation.ParseManifest(File.ReadAllText(Path.Combine(dir, ManifestName)));
-        return tracks.Count == 0 ? null : new MusicRotation(tracks, new Random());
+        if (!OperatingSystem.IsWindows())
+        {
+            tellMusic("the terminal game decodes its tracks only on Windows");
+            return (null, null);
+        }
+        if (FindMusicDir() is not { } dir)
+        {
+            tellMusic($"no {MusicDirName} folder with a {ManifestName} beside the game");
+            return (null, null);
+        }
+        string manifest = Path.Combine(dir, ManifestName);
+        List<MusicTrack> tracks;
+        try { tracks = MusicRotation.ParseManifest(File.ReadAllText(manifest)); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
+        {
+            tellMusic($"{manifest} could not be read ({e.Message})");
+            return (null, null);
+        }
+        if (tracks.Count == 0)
+        {
+            tellMusic($"{manifest} lists no tracks");
+            return (null, null);
+        }
+        return (new MusicRotation(tracks, new Random()), file => OpenTrack(Path.Combine(dir, file)));
     }
 
-    private static IMusicStream? OpenTrack(string file)
+    // Media Foundation reports a missing or unreadable file as an IOException or UnauthorizedAccessException, and a file it
+    // cannot decode as a COMException; the mixer skips that track.
+    private static MusicOpen OpenTrack(string path)
     {
-        try { return _musicDir is null ? null : new Mp3MusicStream(Path.Combine(_musicDir, file)); }
-        catch (Exception) { return null; }   // a missing or undecodable file: that track is skipped, the game plays on
+        try { return MusicOpen.Opened(new Mp3MusicStream(path)); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or COMException)
+        {
+            return MusicOpen.Failed($"{Path.GetFileName(path)} could not be played ({e.Message})");
+        }
     }
 
     private sealed class MixerProvider(AudioMixer mixer) : ISampleProvider

@@ -20,15 +20,17 @@ public sealed class MusicRotation(IReadOnlyList<MusicTrack> tracks, Random rng)
     private int _position = -1;
     private MusicTrack? _last;
 
-    /// <summary>Reads the manifest's JSON array; entries with an unknown role or no file are dropped.</summary>
+    /// <summary>Reads the manifest's JSON array; entries with an unknown role or no file are dropped. Throws
+    /// <see cref="JsonException"/> when the text is not JSON or its top level is not an array.</summary>
     public static List<MusicTrack> ParseManifest(string json)
     {
         string[] roles = [MusicCues.Start, MusicCues.Gameplay, MusicCues.Boss, MusicCues.GameOver];
         var list = new List<MusicTrack>();
         using var doc = JsonDocument.Parse(json);
-        // A manifest that is not an array is treated as having no tracks: the music is optional, and throwing here would
-        // also lose the effects, because TryStart gives up on all sound when anything throws.
-        if (doc.RootElement.ValueKind != JsonValueKind.Array) return list;
+        // A top level other than an array is a malformed manifest, not an empty one: it throws so the player is told the file
+        // could not be read rather than that it lists no tracks.
+        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            throw new JsonException($"the manifest's top level is a JSON {doc.RootElement.ValueKind.ToString().ToLowerInvariant()}, not an array of tracks");
         foreach (var e in doc.RootElement.EnumerateArray())
         {
             if (e.ValueKind != JsonValueKind.Object) continue;

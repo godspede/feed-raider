@@ -164,6 +164,10 @@ public class DarknessTests
         string cleaned = DarknessText.Clean(post);
         Assert.InRange(cleaned.Length, 20, DarknessText.MaxChars + Ellipsis.Length);
         Assert.EndsWith(Ellipsis, cleaned);
+        string feathers = string.Join(' ', Enumerable.Repeat("feather", 20));   // 8-char steps: a plain cut at the limit lands inside a word
+        string kept = DarknessText.Clean(feathers)[..^Ellipsis.Length];
+        Assert.StartsWith(kept, feathers);
+        Assert.Equal(' ', feathers[kept.Length]);
         Assert.Equal(post, DarknessText.Clean(post, DarknessText.MaxPostChars));
         Assert.Empty(DarknessText.Clean("   @only.mention.test https://x.test  "));
         Assert.Empty(DarknessText.Clean(null));
@@ -206,7 +210,7 @@ public class DarknessTests
     public async Task A_fetch_whose_body_is_not_json_counts_as_a_failure_and_the_stream_goes_on()
     {
         var stats = new DarknessStats();
-        var posts = new List<DarkPost>();
+        var posts = new List<DarknessPost>();
         string first = PostUri("first"), second = PostUri("second");
         await DarknessFeed.RunAsync(
             Labels(new LabelEvent(first, Rude, false, 1), new LabelEvent(second, Rude, false, 2)),
@@ -236,9 +240,9 @@ public class DarknessTests
         var taken = new List<string>();
         while (await backlog.TakeAsync(CancellationToken.None) is var (subject, _, _)) taken.Add(subject);
 
-        int oldestSpamKept = Burst - FetchBacklog.Capacity + 1;
+        int oldestSpamKept = Burst - FetchBacklog.RestCapacity + 1;
         Assert.Equal([firstRude, SpamSubject(oldestSpamKept), secondRude, SpamSubject(oldestSpamKept + 1)], taken.Take(4).ToArray());
-        Assert.Equal(2 + FetchBacklog.Capacity, taken.Count);
+        Assert.Equal(2 + FetchBacklog.RestCapacity, taken.Count);
         Assert.Equal(SpamSubject(Burst), taken[^1]);
         Assert.Null(await backlog.TakeAsync(CancellationToken.None));   // complete and empty stays so
     }
@@ -254,12 +258,12 @@ public class DarknessTests
         labels.Add(new LabelEvent(PostUri("rude0"), Rude, false, labels.Count + 1));
         for (int i = 0; i < After; i++) labels.Add(new LabelEvent(PostUri("late" + i), Spam, false, labels.Count + 1));
         var held = new TaskCompletionSource<string?>();
-        var posts = new List<DarkPost>();
+        var posts = new List<DarknessPost>();
         int asked = 0;
         await DarknessFeed.RunAsync(Burst(labels, held), (_, _) => Interlocked.Increment(ref asked) == 1 ? held.Task : Task.FromResult<string?>(FetchedText),
             posts.Add, new DarknessStats(), CancellationToken.None, paceMs: 1);
         Assert.InRange(posts.FindIndex(post => post.Kind == DarknessKind.Rude), 0, FirstFew - 1);
-        Assert.InRange(posts.Count, FetchBacklog.Capacity, FetchBacklog.Capacity + FirstFew);
+        Assert.InRange(posts.Count, FetchBacklog.RestCapacity, FetchBacklog.RestCapacity + FirstFew);
     }
 
     /// <summary>Every label at once, as a replay sends them; the first fetch is held until the last label is out.</summary>
@@ -271,11 +275,11 @@ public class DarknessTests
     }
 
     [Fact]
-    public async Task Nothing_identifying_is_ever_drawn_or_logged()
+    public async Task Nothing_identifying_is_ever_drawn_or_kept_on_the_enemy()
     {
         const long WatchMs = 20_000;
         var stats = new DarknessStats();
-        var posts = new List<DarkPost>();
+        var posts = new List<DarknessPost>();
         var fetched = new List<string>();
         string rudePost = PostUri(Rude);
         await DarknessFeed.RunAsync(
@@ -289,14 +293,14 @@ public class DarknessTests
         Assert.Equal(CleanedText, post.Text);
 
         var room = RoomOfFigures();
-        room.Dark.Offer(post);
+        room.Darkness.Offer(post);
         string everything = Watch(room, WatchMs);
-        Assert.True(room.Dark.Spawned > 0);
+        Assert.True(room.Darkness.Spawned > 0);
         Assert.Contains("muppet", everything);   // the text is drawn...
         foreach (var leak in new[] { AuthorDid, "authorauthor", AuthorHandle, "grumpy", AuthorName, "Grumpy", "img/avatar", "cdn.bsky", "friend", "t.example", "angry" })
             Assert.DoesNotContain(leak, everything, StringComparison.OrdinalIgnoreCase);
         // ...and the enemy itself holds nothing but a hash, a kind and the cleaned words
-        Assert.All(room.Dark.Enemies, enemy => Assert.Equal(CleanedText, enemy.Text));
+        Assert.All(room.Darkness.Enemies, enemy => Assert.Equal(CleanedText, enemy.Text));
         Assert.DoesNotContain(AuthorDid, post.ToString());
     }
 
@@ -317,14 +321,13 @@ public class DarknessTests
     /// <summary>How many motes one spam post sends.</summary>
     private const int MotesPerSpam = 3;
 
-    private static DarkEnemy DarkEnemyOf(ulong seed = 12345, long spawn = 1000, DarknessKind kind = DarknessKind.Rude) =>
+    private static DarknessEnemy DarknessEnemyOf(ulong seed = 12345, long spawn = 1000, DarknessKind kind = DarknessKind.Rude) =>
         new() { Kind = kind, Seed = seed, GroupSeed = seed, SpawnMs = spawn, Text = RudeWords, TargetDid = "target" };
 
-    /// <summary>A darkness offered one rude post.</summary>
     private static Darkness WithOneRude()
     {
         var darkness = new Darkness();
-        darkness.Offer(new DarkPost(DarknessKind.Rude, 9, RudeWords));
+        darkness.Offer(new DarknessPost(DarknessKind.Rude, 9, RudeWords));
         return darkness;
     }
 
@@ -335,21 +338,21 @@ public class DarknessTests
     {
         foreach (long ms in new long[] { 1000, 1700, 3333, 5000, 9000, 15000 })
         {
-            var first = DarkEnemyMotion.Position(DarkEnemyOf(77, kind: kind), ms, Target, FieldW, FieldH);
-            var second = DarkEnemyMotion.Position(DarkEnemyOf(77, kind: kind), ms, Target, FieldW, FieldH);
+            var first = DarknessEnemyMotion.Position(DarknessEnemyOf(77, kind: kind), ms, Target, FieldW, FieldH);
+            var second = DarknessEnemyMotion.Position(DarknessEnemyOf(77, kind: kind), ms, Target, FieldW, FieldH);
             Assert.Equal(first, second);
         }
-        Assert.NotEqual(DarkEnemyMotion.Start(DarkEnemyOf(1), FieldW, FieldH), DarkEnemyMotion.Start(DarkEnemyOf(2), FieldW, FieldH));
+        Assert.NotEqual(DarknessEnemyMotion.Start(DarknessEnemyOf(1), FieldW, FieldH), DarknessEnemyMotion.Start(DarknessEnemyOf(2), FieldW, FieldH));
     }
 
     [Fact]
     public void A_charging_brute_ends_up_beside_its_target()
     {
-        var brute = DarkEnemyOf();
-        var start = DarkEnemyMotion.Start(brute, FieldW, FieldH);
-        var end = DarkEnemyMotion.Position(brute, brute.SpawnMs + LongAfterMs, Target, FieldW, FieldH);
+        var brute = DarknessEnemyOf();
+        var start = DarknessEnemyMotion.Start(brute, FieldW, FieldH);
+        var end = DarknessEnemyMotion.Position(brute, brute.SpawnMs + LongAfterMs, Target, FieldW, FieldH);
         Assert.InRange(Math.Abs(end.X - Target.X), BruteSideOffset - ShakeSpread, BruteSideOffset + ShakeSpread);
-        Assert.Equal(start, DarkEnemyMotion.Position(brute, brute.SpawnMs, Target, FieldW, FieldH));
+        Assert.Equal(start, DarknessEnemyMotion.Position(brute, brute.SpawnMs, Target, FieldW, FieldH));
     }
 
     private static List<(string, (double, double))> Figures(params (double X, double Y)[] at) =>
@@ -360,7 +363,7 @@ public class DarknessTests
     {
         var darkness = new Darkness();
         var figures = Figures((10, 10), (60, 30));
-        for (int i = 0; i < 2 * Darkness.MaxPending; i++) darkness.Offer(new DarkPost(DarknessKind.Rude, (ulong)i + 1, RudeWords));
+        for (int i = 0; i < 2 * Darkness.MaxPending; i++) darkness.Offer(new DarknessPost(DarknessKind.Rude, (ulong)i + 1, RudeWords));
         Assert.Equal(Darkness.MaxPending, darkness.Pending);
 
         darkness.Update(0, figures, FieldW, FieldH);
@@ -377,7 +380,7 @@ public class DarknessTests
     public void Spam_comes_as_a_small_swarm_carrying_fragments()
     {
         var darkness = new Darkness();
-        darkness.Offer(new DarkPost(DarknessKind.Spam, 5, "buy followers now cheap fast guaranteed results"));
+        darkness.Offer(new DarknessPost(DarknessKind.Spam, 5, "buy followers now cheap fast guaranteed results"));
         darkness.Update(0, Figures((10, 10)), FieldW, FieldH);
         Assert.Equal(MotesPerSpam, darkness.Enemies.Count);
         Assert.All(darkness.Enemies, mote => Assert.Equal(DarknessKind.Spam, mote.Kind));
@@ -425,10 +428,10 @@ public class DarknessTests
     [Fact]
     public void Brute_has_its_size_and_a_mote_flickers()
     {
-        var brute = DarkEnemySprites.Build(DarkEnemyOf(), 0)!;
-        Assert.Equal((DarkEnemySprites.BruteW, DarkEnemySprites.BruteH), (brute.Width, brute.Height));
-        var mote = DarkEnemyOf(3, kind: DarknessKind.Spam);
-        int unseen = Enumerable.Range(0, FlickerSamples).Count(sample => DarkEnemySprites.Build(mote, sample * FlickerMs) is null);
+        var brute = DarknessEnemySprites.Build(DarknessEnemyOf(), 0)!;
+        Assert.Equal((DarknessEnemySprites.BruteW, DarknessEnemySprites.BruteH), (brute.Width, brute.Height));
+        var mote = DarknessEnemyOf(3, kind: DarknessKind.Spam);
+        int unseen = Enumerable.Range(0, FlickerSamples).Count(sample => DarknessEnemySprites.Build(mote, sample * FlickerMs) is null);
         Assert.InRange(unseen, 1, FlickerSamples / 2);
     }
 }

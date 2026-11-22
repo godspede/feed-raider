@@ -17,8 +17,8 @@ static class GameHost
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
         if (seconds is { } secs) cts.CancelAfter(TimeSpan.FromSeconds(secs));
 
-        var game = new RaiderGame((ulong)Environment.TickCount64);
-        using var audio = AudioEngine.TryStart(audioOptions);
+        var game = new RaiderGame((ulong)Environment.TickCount64) { OpeningBurst = true };
+        using var audio = AudioEngine.TryStart(audioOptions, m => { lock (game) game.Say(m); });
         if (audio is not null)
         {
             game.Music = new MusicDirector(audio.Cue);

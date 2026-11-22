@@ -14,10 +14,8 @@ public class CardActionRowTests
     // the screen of a 412 pixel phone and the card it gives, then the desktop's
     private const int PhoneCols = AtlasKeyTests.PhoneCols, PhoneRows = AtlasKeyTests.PhoneRows;
     internal const int PhoneCard = 52;
-    private const int DesktopCols = HoldRig.ScrCols, DesktopRows = HoldRig.ScrRows, DesktopCard = 60;
+    private const int DesktopCols = PressRig.ScrCols, DesktopRows = PressRig.ScrRows, DesktopCard = 60;
 
-    // a third of a hold: the glow is up and nothing is finished
-    private const int PartHeldTicks = Tuning.HoldFrames / 3;
     /// <summary>The number of the one post each scene here shows.</summary>
     private const int PostNumber = 1;
     /// <summary>The name the button's look with nothing done to it is kept under.</summary>
@@ -27,20 +25,20 @@ public class CardActionRowTests
     {
         var g = new RaiderGame(EnemyKit.PlainSeed) { SignedIn = signedIn, BossGates = false };
         g.SetLayout(FieldLayout.Compute(cols, rows));
-        g.Posts.Offer(post ?? HoldRig.Post(PostNumber));
+        g.Posts.Offer(post ?? PressRig.Post(PostNumber));
         g.Step();
         var card = g.Cards.Cards[0];
         card.Top = CardRig.DefaultCardTop;
-        HoldRig.Away(g);
-        HoldRig.Sweep(g);
+        PressRig.Away(g);
+        PressRig.Sweep(g);
         return (g, card);
     }
 
     /// <summary>Renders the card alone at its place: the ship is moved off it and everything else is taken off the field.</summary>
     private static Screen Render(RaiderGame g, Card c, int cols, int rows)
     {
-        HoldRig.Away(g);
-        HoldRig.Sweep(g);
+        PressRig.Away(g);
+        PressRig.Sweep(g);
         g.Particles.Clear(); g.Rings.Clear();
         c.Top = CardRig.DefaultCardTop;
         var scr = new Screen(cols, rows);
@@ -81,33 +79,28 @@ public class CardActionRowTests
     [InlineData(PhoneCols, PhoneRows, Repost)]
     [InlineData(DesktopCols, DesktopRows, Like)]
     [InlineData(DesktopCols, DesktopRows, Repost)]
-    public void Held_lit_pending_marked_and_locked_each_look_different_from_the_button_at_rest_and_from_each_other(int cols, int rows, PostAction a)
+    public void Lit_pending_marked_and_locked_each_look_different_from_the_button_at_rest_and_from_each_other(int cols, int rows, PostAction a)
     {
         var looks = new Dictionary<string, string>();
 
         var (rest, restCard) = Scene(cols, rows);
         looks[AtRest] = ButtonLook(rest, restCard, a, cols, rows);
 
-        var (held, heldCard) = Scene(cols, rows);
-        HoldRig.Hold(held, heldCard, a, PartHeldTicks);
-        Assert.Equal(PartHeldTicks, heldCard.Marks.Progress(a));
-        looks["held"] = ButtonLook(held, heldCard, a, cols, rows);
-
-        var (lit, litCard) = Scene(cols, rows, post: HoldRig.Post(PostNumber, liked: a == Like, reposted: a == Repost));
+        var (lit, litCard) = Scene(cols, rows, post: PressRig.Post(PostNumber, liked: a == Like, reposted: a == Repost));
         Assert.Equal(ButtonState.Lit, litCard.Marks.Of(a));
         looks["lit"] = ButtonLook(lit, litCard, a, cols, rows);
 
         var (pending, pendingCard) = Scene(cols, rows);
         AnswerNothing(pending, a);
-        HoldRig.Hold(pending, pendingCard, a, Tuning.HoldFrames);
+        PressRig.Press(pending, pendingCard, a);
         Assert.Equal(ButtonState.Pending, pendingCard.Marks.Of(a));
-        HoldRig.Rest(pending, LikeHoldTests.SettledTicks);
+        PressRig.Rest(pending, LikePressTests.SettledTicks);
         looks["pending"] = ButtonLook(pending, pendingCard, a, cols, rows);
 
         var (marked, markedCard) = Scene(cols, rows, signedIn: false);
-        HoldRig.Hold(marked, markedCard, a, Tuning.HoldFrames);
+        PressRig.Press(marked, markedCard, a);
         Assert.Equal(ButtonState.Marked, markedCard.Marks.Of(a));
-        HoldRig.Rest(marked, LikeHoldTests.SettledTicks);
+        PressRig.Rest(marked, LikePressTests.SettledTicks);
         looks["marked"] = ButtonLook(marked, markedCard, a, cols, rows);
 
         var (locked, lockedCard) = Scene(cols, rows);
@@ -129,25 +122,25 @@ public class CardActionRowTests
     {
         var (g, c) = Scene(cols, rows);
         AnswerNothing(g, a);
-        HoldRig.Hold(g, c, a, Tuning.HoldFrames);
-        HoldRig.Rest(g, LikeHoldTests.SettledTicks);
+        PressRig.Press(g, c, a);
+        PressRig.Rest(g, LikePressTests.SettledTicks);
         const int pendingLooks = 2, watchedBlinks = 2;
         var seen = new List<string>();
         for (int i = 0; i < watchedBlinks * CardPainter.BlinkFrames; i++)
         {
             seen.Add(ButtonLook(g, c, a, cols, rows));
-            HoldRig.Rest(g, HoldRig.OneTick);
+            PressRig.Rest(g, PressRig.OneTick);
         }
         Assert.Equal(pendingLooks, seen.Distinct().Count());
         Assert.InRange(Enumerable.Range(1, seen.Count - 1).Count(i => seen[i] != seen[i - 1]), watchedBlinks - 1, watchedBlinks);
     }
 
     [Theory]
-    [InlineData(PhoneCols, PhoneRows, Like, LikeHoldTests.CountBefore, LikeHoldTests.CountAfter)]
-    [InlineData(PhoneCols, PhoneRows, Repost, RepostHoldTests.RepostsBefore, RepostHoldTests.RepostsAfter)]
-    [InlineData(DesktopCols, DesktopRows, Like, LikeHoldTests.CountBefore, LikeHoldTests.CountAfter)]
-    [InlineData(DesktopCols, DesktopRows, Repost, RepostHoldTests.RepostsBefore, RepostHoldTests.RepostsAfter)]
-    public void A_hold_finished_signed_in_writes_the_count_one_higher_one_space_after_the_icon(int cols, int rows, PostAction a, string before, string after)
+    [InlineData(PhoneCols, PhoneRows, Like, LikePressTests.CountBefore, LikePressTests.CountAfter)]
+    [InlineData(PhoneCols, PhoneRows, Repost, RepostPressTests.RepostsBefore, RepostPressTests.RepostsAfter)]
+    [InlineData(DesktopCols, DesktopRows, Like, LikePressTests.CountBefore, LikePressTests.CountAfter)]
+    [InlineData(DesktopCols, DesktopRows, Repost, RepostPressTests.RepostsBefore, RepostPressTests.RepostsAfter)]
+    public void A_press_signed_in_writes_the_count_one_higher_one_space_after_the_icon(int cols, int rows, PostAction a, string before, string after)
     {
         var (g, c) = Scene(cols, rows);
         AnswerNothing(g, a);
@@ -156,8 +149,8 @@ public class CardActionRowTests
         Assert.Equal(before, was.Text);
         Assert.Equal(before, ShownText(g, c, Render(g, c, cols, rows), was));
 
-        HoldRig.Hold(g, c, a, Tuning.HoldFrames);
-        HoldRig.Rest(g, LikeHoldTests.SettledTicks);
+        PressRig.Press(g, c, a);
+        PressRig.Rest(g, LikePressTests.SettledTicks);
         var count = CardPainter.CountAt(c, a);
         Assert.Equal(after, count.Text);
         Assert.Equal(icon.Row, count.Row);
@@ -170,7 +163,7 @@ public class CardActionRowTests
     [Theory]
     [InlineData(PhoneCols, PhoneRows, PhoneCard, 16)]
     [InlineData(DesktopCols, DesktopRows, DesktopCard, 22)]
-    public void A_buttons_box_is_wider_than_the_ship_and_three_rows_tall_and_a_ship_between_the_two_holds_neither(int cols, int rows, int card, int boxWidth)
+    public void A_buttons_box_is_wider_than_the_ship_and_three_rows_tall_and_the_repost_box_sits_right_of_the_hearts_on_its_row(int cols, int rows, int card, int boxWidth)
     {
         var (g, c) = Scene(cols, rows);
         Assert.Equal(card, g.Cards.CardCols);
@@ -184,16 +177,7 @@ public class CardActionRowTests
             Assert.True(box.W > CardLayout.IconWidthPx && box.H >= CardLayout.IconHeightPx);
         }
         Assert.Equal(like.Y, repost.Y);
-        int gap = repost.X - (like.X + like.W);
-        Assert.True(gap > g.Ship.W, $"{gap} pixels between the boxes and a ship {g.Ship.W} wide");
-
-        HoldRig.Force(g, nameof(RaiderGame.PX), Middle(like.X + like.W, gap));
-        HoldRig.Force(g, nameof(RaiderGame.PY), Middle(like.Y, like.H));
-        Assert.Null(HoldTracker.Touching(g));
-        HoldRig.Park(g, c, Like);
-        Assert.Equal((c, Like), HoldTracker.Touching(g));
-        HoldRig.Park(g, c, Repost);
-        Assert.Equal((c, Repost), HoldTracker.Touching(g));
+        Assert.True(repost.X >= like.X + like.W, "the repost box starts right of the heart's");
     }
 
     /// <summary>The middle of a span of field pixels <paramref name="length"/> long from <paramref name="start"/>.</summary>

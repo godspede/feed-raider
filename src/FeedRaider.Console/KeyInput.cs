@@ -81,7 +81,7 @@ sealed class KeyInput : IDisposable
         var reply = new StringBuilder();
         var waited = Stopwatch.StartNew();
         // The device-attributes reply (ending in 'c') comes after any kitty reply, so it closes the wait.
-        while (waited.Elapsed < KittyReplyWait && !reply.ToString().Contains('c'))
+        while (waited.Elapsed < KittyReplyWait && !_bytes.IsCompleted && !reply.ToString().Contains('c'))
         {
             if (_bytes.TryTake(out byte next, ReplyPoll)) reply.Append((char)next);
         }
@@ -91,17 +91,24 @@ sealed class KeyInput : IDisposable
 
     private Thread? _reader;
     private readonly System.Collections.Concurrent.BlockingCollection<byte> _bytes = new();
+    private System.Runtime.ExceptionServices.ExceptionDispatchInfo? _readFailure;
 
+    /// <summary>Copies stdin's bytes into <see cref="_bytes"/> until stdin ends, then marks it complete. A read that fails is kept in
+    /// <see cref="_readFailure"/> so the Unix loop rethrows it on the key loop's task, which the host rethrows once the screen is back.</summary>
     private void ReadStdin()
     {
-        using var stdin = Console.OpenStandardInput();
-        var chunk = new byte[StdinChunkBytes];
         try
         {
+            using var stdin = Console.OpenStandardInput();
+            var chunk = new byte[StdinChunkBytes];
             int read;
             while ((read = stdin.Read(chunk, 0, chunk.Length)) > 0) for (int i = 0; i < read; i++) _bytes.Add(chunk[i]);
         }
-        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException) { }   // stdin closed or the reader was disposed: no more keys, and the game's own loop ends the run
+        catch (Exception ex)
+        {
+            _readFailure = System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex);
+        }
+        finally { _bytes.CompleteAdding(); }
     }
 
     /// <summary>Blocks reading keys until the token is cancelled or the player quits; key events are applied under the game's lock.</summary>
@@ -144,10 +151,21 @@ sealed class KeyInput : IDisposable
         var events = new List<TermKeyEvent>();
         while (!cts.IsCancellationRequested)
         {
+            bool ended = false;
             if (_bytes.TryTake(out byte next, parser.Pending ? EscapeWait : IdlePoll)) parser.Feed(next, events);
-            else parser.Flush(events);
+            else
+            {
+                parser.Flush(events);
+                ended = _bytes.IsCompleted;
+            }
             foreach (var keyEvent in events) if (ApplyAndCancelOnQuit(game, router, cts, keyEvent)) return;
             events.Clear();
+            // stdin has ended: a failed read faults the key loop with its own exception; a plain end of input ends the loop, and with it the run
+            if (ended)
+            {
+                _readFailure?.Throw();
+                return;
+            }
         }
     }
 
@@ -166,8 +184,10 @@ sealed class KeyInput : IDisposable
                 ConsoleKey.Spacebar => TermKey.Fire,
                 ConsoleKey.F => TermKey.AutoFire,
                 ConsoleKey.B => TermKey.Bomb,
-                ConsoleKey.E => TermKey.Like,
-                ConsoleKey.R => TermKey.Repost,
+                ConsoleKey.E => TermKey.LogLike,
+                ConsoleKey.R => TermKey.LogRepost,
+                ConsoleKey.Z => TermKey.ShipLike,
+                ConsoleKey.X => TermKey.ShipRepost,
                 ConsoleKey.Oem4 => TermKey.MarkUp,
                 ConsoleKey.Oem6 => TermKey.MarkDown,
                 ConsoleKey.M => TermKey.Mute,

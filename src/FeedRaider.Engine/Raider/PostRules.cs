@@ -3,12 +3,27 @@ namespace FeedRaider.Engine.Raider;
 /// <summary>Which feed posts may be shown, in one place so the README's rule and the code cannot drift apart.</summary>
 public static class PostRules
 {
+    /// <summary>The media a card shows; see <see cref="MediaShown"/>.</summary>
+    public readonly record struct CardMedia(IReadOnlyList<PostPicture>? Pictures, LinkCard? Link, VideoRef? Video, bool Quoted);
+
     /// <summary>Whether the post may be shown at all: never an adult or graphic post, and when the viewer is signed out never one by an
     /// author who opted out of signed-out viewers (a signed-in feed is governed by the AppView).</summary>
     public static bool Allowed(FeedPost p, bool signedOut) => !p.Adult && !(signedOut && p.AuthorOptOut);
 
     /// <summary>Whether the post carries pictures of its own that a card can draw.</summary>
     public static bool HasPictures(FeedPost p) => p.Attachment == AttachmentKind.Picture && p.Pictures is { Count: > 0 };
+
+    /// <summary>The media a card shows, decided as Bluesky's app does: the post's own pictures, link card or video if it has any, else those of the
+    /// quoted post. <see cref="CardMedia.Quoted"/> says the media belong to the quote, so the quote box holds them and the post body none.</summary>
+    public static CardMedia MediaShown(FeedPost p)
+    {
+        if (p.Pictures is { Count: > 0 } || p.Link is not null || p.Video is not null) return new CardMedia(p.Pictures, p.Link, p.Video, false);
+        if (p.Quote is { State: QuoteState.Shown, HasMedia: true } q) return new CardMedia(q.Pictures, q.Link, q.Video, true);
+        return new CardMedia(null, null, null, false);
+    }
+
+    /// <summary>The state a quote shows for this viewer: Hidden when its author opted out of signed-out viewers and the viewer is signed out.</summary>
+    public static QuoteState QuoteStateFor(PostQuote q, bool signedOut) => q.State == QuoteState.Shown && signedOut && q.AuthorOptOut ? QuoteState.Hidden : q.State;
 
     /// <summary>Whether the post is a gold card: one with <see cref="Tuning.GoldLikes"/> likes or more, counted as the feed gave them.</summary>
     public static bool Gold(FeedPost p) => p.LikeCount >= Tuning.GoldLikes;
@@ -20,6 +35,7 @@ public static class PostRules
     public static bool Shown(FeedPost p, bool signedOut, bool textOnly)
     {
         if (!Allowed(p, signedOut) || p.ReplyParent is not null || p.ReplyRoot is not null) return false;
+        if (p.Attachment == AttachmentKind.Video && p.Video is null) return false;
         bool pictures = HasPictures(p);
         int len = CellText.Clean(p.Text).Length;
         if (len == 0) return pictures;
@@ -27,7 +43,7 @@ public static class PostRules
         return !textOnly || pictures || (p.Attachment == AttachmentKind.None && !p.HasEmbed && len >= Tuning.TextOnlyMinChars);
     }
 
-    /// <summary>Whether the author's own next reply may be the card a finished like brings in. <see cref="Shown"/> refuses every
+    /// <summary>Whether the author's own next reply may be the card a like brings in. <see cref="Shown"/> refuses every
     /// reply, so this stands in for it: never an adult or graphic post, with text that is more than a link or with pictures, and
     /// with nothing else attached, since the thread note stands on the line that would name a video, link or quote. Whether a
     /// signed-out viewer may see the author is asked by the game, which knows who is playing.</summary>

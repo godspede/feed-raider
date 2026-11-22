@@ -76,7 +76,7 @@ public static class Art
         ['+'] = DarkViolet,
         ['r'] = Palette.Crimson,
         ['y'] = Palette.Gold,
-        ['.'] = 0,
+        ['.'] = 0,   // opaque black, not clear: FromArt makes every mapped character opaque, and the dark enemies' gaps are drawn solid
     };
 
     /// <summary>A small grunt: a dark husk with one angry eye.</summary>
@@ -146,7 +146,7 @@ public static class Art
         "a..a..a",
     ];
 
-    /// <summary>A mine, armed: an amber spiked orb. Bullets ping off it.</summary>
+    /// <summary>A mine, armed: an amber spiked orb. Shots ping off it.</summary>
     public static readonly Sprite Mine = Sprite.FromArt(MineRows, With(('a', MineLit), ('y', Palette.Gold)));
 
     /// <summary>A mine before it arms: the same orb, unlit.</summary>

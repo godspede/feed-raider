@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using FeedRaider.Engine;
 using FeedRaider.Engine.Raider;
+using FeedRaider.Tests.Enemies;
 
 namespace FeedRaider.Tests;
 
@@ -56,7 +57,7 @@ public class CardTextTests
     private const int SpeechBoxWaitSteps = 1500;
 
     /// <summary>Three wide characters, each taking two cells.</summary>
-    private static readonly string Cjk = char.ConvertFromUtf32(0x65E5) + char.ConvertFromUtf32(0x672C) + char.ConvertFromUtf32(0x8A9E);
+    private const string Cjk = "日本語";
 
     /// <summary>The id of the one post each test puts on the field, which its links and handle are built from.</summary>
     private const int PostId = 1;
@@ -223,7 +224,7 @@ public class CardTextTests
             _ => all.Last(),
         };
         var (px, py) = PixelOf(game, anchor.Col, anchor.Row);
-        HoldRig.Force(game, nameof(RaiderGame.PX), px); HoldRig.Force(game, nameof(RaiderGame.PY), py);
+        PressRig.Force(game, nameof(RaiderGame.PX), px); PressRig.Force(game, nameof(RaiderGame.PY), py);
         var (scr, withShip) = Draw(game);
         var touched = Touched(bare, withShip, game.Layout.Col0);
         Assert.NotEmpty(touched);
@@ -239,7 +240,7 @@ public class CardTextTests
         var adds = new (string Name, Action<RaiderGame, double, double> Add)[]
         {
             ("pickup", (game, x, y) => game.Pickups.Add(new Pickup { Kind = PickupKind.Shield, X = x, Y = y })),
-            ("enemy", (game, x, y) => { var enemy = game.SpawnKind(EnemyKind.Gunship, 0.5); enemy.X = x; enemy.Y = y; enemy.Grace = 0; enemy.Age = 0; enemy.Flash = 0; }),
+            ("enemy", (game, x, y) => { var enemy = game.SpawnKind(EnemyKind.Gunship, EnemyKit.MidWidth); enemy.X = x; enemy.Y = y; enemy.Grace = 0; enemy.Age = 0; enemy.Flash = 0; }),
             ("ring", (game, x, y) => game.Rings.Add(new Ring { X = x, Y = y, R0 = CardRig.RingStartRadius, R1 = CardRig.RingEndRadius, Life = CardRig.RingLife, Max = CardRig.RingMaxLife, Colour = Palette.Crimson })),
             ("particle", (game, x, y) => game.Particles.Add(new Particle { X = x, Y = y, Life = CardRig.ParticleLife, MaxLife = CardRig.ParticleLife, Colour = CardRig.ParticleColour, Size = CardRig.ParticleSize })),
         };
@@ -289,11 +290,11 @@ public class CardTextTests
         var all = Expected(game, card);
         foreach (int flash in new[] { 1, LongFlashFrames })
         {
-            HoldRig.Force(game, nameof(RaiderGame.ScreenFlash), flash);
+            PressRig.Force(game, nameof(RaiderGame.ScreenFlash), flash);
             var (scr, _) = Draw(game);
             Assert.All(all, letter => Assert.False(Shown(scr, letter), $"'{letter.Ch}' at {letter.Col},{letter.Row} was written in a flash of {flash}"));
         }
-        HoldRig.Force(game, nameof(RaiderGame.ScreenFlash), 0);
+        PressRig.Force(game, nameof(RaiderGame.ScreenFlash), 0);
         var (after, _) = Draw(game);
         Assert.All(all, letter => Assert.True(Shown(after, letter)));
     }
@@ -305,7 +306,7 @@ public class CardTextTests
     {
         var game = new RaiderGame(SpeechSeed) { BossGates = false };
         game.SetLayout(FieldLayout.Compute(ScrCols, ScrRows));
-        game.OfferDark(new DarkPost(DarknessKind.Spam, SpamPostSeed, "buy followers cheap click my profile now", DarkSource.Label, "spam"));
+        game.OfferDarkness(new DarknessPost(DarknessKind.Spam, SpamPostSeed, "buy followers cheap click my profile now", DarknessSource.Label, "spam"));
         for (int step = 0; step < SpeechBoxWaitSteps && !game.Enemies.Any(EnemySpeechBox.IsOpen); step++) game.Step();
         game.Posts.Offer(Post());
         game.Step();
@@ -359,7 +360,7 @@ public class CardTextTests
     public void Text_moves_a_cell_under_a_whole_cell_shake_and_stays_put_under_a_one_pixel_shake(int pixels, int cells)
     {
         var (game, card) = Scene(top: OnFieldCardTop);
-        HoldRig.Force(game, nameof(RaiderGame.PX), CardRig.ShipOverCardX); HoldRig.Force(game, nameof(RaiderGame.PY), CardRig.ShipBelowCardY);
+        PressRig.Force(game, nameof(RaiderGame.PX), CardRig.ShipOverCardX); PressRig.Force(game, nameof(RaiderGame.PY), CardRig.ShipBelowCardY);
         CardRig.ShakeBy(game, pixels);
         var (shakeX, shakeY) = game.ShakeOffset();
         var (scr, _) = Draw(game);

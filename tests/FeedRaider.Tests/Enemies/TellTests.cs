@@ -60,7 +60,7 @@ public class TellTests
     public void A_gunship_s_muzzle_is_white_for_the_twelve_frames_before_each_volley_and_the_volleys_keep_their_gap(bool lesser)
     {
         var g = EnemyKit.Game();
-        var e = lesser ? g.SpawnLesser() : g.SpawnKind(EnemyKind.Gunship, 0.5);
+        var e = lesser ? g.SpawnLesser() : g.SpawnKind(EnemyKind.Gunship, EnemyKit.MidWidth);
         var seen = Watch(g, e, () => GunshipMuzzle(e));
         var volleys = Enumerable.Range(0, seen.Count).Where(i => seen[i].Bolts.Count > 0).ToList();
         AssertWhiteBeforeEachVolley(seen, volleys, Tuning.GunshipTellFrames);
@@ -75,7 +75,7 @@ public class TellTests
     {
         const int firstVolleyAge = 20, secondVolleyAge = 50;
         var g = EnemyKit.Game();
-        var e = g.SpawnKind(EnemyKind.Spotlight, 0.5);
+        var e = g.SpawnKind(EnemyKind.Spotlight, EnemyKit.MidWidth);
         var ages = new List<int>();
         IEnumerable<(int X, int Y)> Muzzles() => e.Parts!.Where(p => p.Name.StartsWith("battery", StringComparison.Ordinal) && p.State != PartState.Dead)
             .Select(p => ((int)Math.Round(e.X + p.OX), (int)Math.Round(e.Y + p.OY + p.HH)));
@@ -90,7 +90,7 @@ public class TellTests
     {
         const int fanWidth = 5, fanEvery = 70, muzzleDrop = 6;
         var g = EnemyKit.Game();
-        var e = g.SpawnKind(EnemyKind.Schism, 0.5);
+        var e = g.SpawnKind(EnemyKind.Schism, EnemyKit.MidWidth);
         var ice = e.Parts!.Single(p => p.Name == "ice");
         var seen = Watch(g, e, () => [((int)Math.Round(e.X + ice.OX), (int)Math.Round(e.Y + ice.OY + muzzleDrop))]);
         var fans = Enumerable.Range(0, seen.Count).Where(i => seen[i].Bolts.Count >= fanWidth).ToList();
@@ -103,7 +103,7 @@ public class TellTests
     {
         const double dropBelow = 4, dropReach = 2;
         var g = EnemyKit.Game();
-        var e = g.SpawnKind(EnemyKind.Thread, 0.5);
+        var e = g.SpawnKind(EnemyKind.Thread, EnemyKit.MidWidth);
         var view = new RaiderView(); var scr = new Screen(EnemyKit.BigCols, EnemyKit.BigRows);
         var known = new HashSet<Bullet>();
         var white = new List<Dictionary<Part, bool>>(); var across = new List<Dictionary<Part, double>>();

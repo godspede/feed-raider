@@ -32,8 +32,8 @@ public sealed class GlintTests(ITestOutputHelper output)
     /// <summary>The blue-grey of a dull pane, the part of it a shot can hurt.</summary>
     private const uint Silver = 0x8f8a9a;
 
-    /// <summary>Where a lone glint arrives, as shares of the field's width: the middle, and well left of the ship.</summary>
-    private const double MidWidth = 0.5, LeftOfShip = 0.2;
+    /// <summary>Where a lone glint arrives, as a share of the field's width: well left of the ship.</summary>
+    private const double LeftOfShip = 0.2;
 
     /// <summary>Where a pair arrives, as shares of the field's width, one either side of the middle.</summary>
     private const double PairLeft = 0.3, PairRight = 0.7;
@@ -67,7 +67,7 @@ public sealed class GlintTests(ITestOutputHelper output)
         return g;
     }
 
-    /// <summary>Steps once, keeping only the given enemies and clearing every hostile bullet that is not a reflected one.</summary>
+    /// <summary>Steps once, keeping only the given enemies and clearing every bolt that is not a reflected one.</summary>
     private static void StepKeepingOnly(RaiderGame g, params Enemy[] keep)
     {
         g.Step();
@@ -82,7 +82,7 @@ public sealed class GlintTests(ITestOutputHelper output)
     /// <summary>A glint brought in and let to settle at its hold row.</summary>
     private static Enemy Settled(RaiderGame g)
     {
-        var e = g.SpawnKind(EnemyKind.Glint, MidWidth);
+        var e = g.SpawnKind(EnemyKind.Glint, EnemyKit.MidWidth);
         double hold = HoldRow * g.PH;
         for (int i = 0; i < MaxWaitFrames && e.Y < hold; i++) StepKeepingOnly(g, e);
         Assert.True(e.Y >= hold);
@@ -121,7 +121,7 @@ public sealed class GlintTests(ITestOutputHelper output)
     public void Its_hit_points_are_the_tables_five_scaled_by_the_stage_like_any_other_kind()
     {
         var g = Field();
-        var e = g.SpawnKind(EnemyKind.Glint, MidWidth);
+        var e = g.SpawnKind(EnemyKind.Glint, EnemyKit.MidWidth);
         Assert.Equal(Glint.Hp * Ramp.HpMul(g.Stage), e.Hp, Places);
         Assert.Equal(e.Hp, Pane(e).Hp, Places);
         Assert.True(Pane(e).Vital);
@@ -172,7 +172,7 @@ public sealed class GlintTests(ITestOutputHelper output)
     public void It_leaves_upward_after_four_cycles_and_is_gone_from_the_field()
     {
         var g = Field();
-        var e = g.SpawnKind(EnemyKind.Glint, MidWidth);
+        var e = g.SpawnKind(EnemyKind.Glint, EnemyKit.MidWidth);
         const int MaxFrames = 10 * Cycle, Slack = 5;
         int left = -1;
         for (int f = 0; f < MaxFrames && g.Enemies.Contains(e); f++)

@@ -1,5 +1,6 @@
 using FeedRaider.Engine;
 using FeedRaider.Engine.Raider;
+using FeedRaider.Tests.Enemies;
 
 namespace FeedRaider.Tests;
 
@@ -56,7 +57,7 @@ public sealed class MiniBossCapTests
     public void With_a_warden_alive_at_stage_two_no_second_one_comes_and_every_wave_keeps_its_count()
     {
         var g = NewGame(2);
-        var warden = g.SpawnKind(EnemyKind.Warden, 0.5);
+        var warden = g.SpawnKind(EnemyKind.Warden, EnemyKit.MidWidth);
         var arrived = Run(g, 400, gg => { warden.Age = 0; Assert.True(Alive(gg, EnemyKind.Warden) <= 1); }, EnemyKind.Warden);
         Assert.Contains(warden, g.Enemies);
         Assert.DoesNotContain(EnemyKind.Warden, arrived);
@@ -66,7 +67,7 @@ public sealed class MiniBossCapTests
     }
 
     [Fact]
-    public void The_replacement_is_the_stages_other_unlock_and_never_a_mine_in_place_of_a_warden()
+    public void The_replacement_is_the_stages_other_unlock_and_a_mine_only_when_it_is_the_only_one_unlocked()
     {
         Assert.Equal(EnemyKind.Diver, WaveSpawner.Substitute(EnemyKind.Warden, 2, 1, shootable: false));
         Assert.Equal(EnemyKind.Diver, WaveSpawner.Substitute(EnemyKind.Warden, 2, 1, shootable: true));
@@ -92,13 +93,13 @@ public sealed class MiniBossCapTests
     public void When_the_warden_dies_or_starts_to_leave_the_next_wave_that_picks_one_spawns_it()
     {
         var g = NewGame(2);
-        var first = g.SpawnKind(EnemyKind.Warden, 0.5);
+        var first = g.SpawnKind(EnemyKind.Warden, EnemyKit.MidWidth);
         Assert.DoesNotContain(EnemyKind.Warden, Run(g, 200, gg => first.Age = 0, EnemyKind.Warden));
         g.Enemies.Remove(first);   // killed
         Assert.Contains(EnemyKind.Warden, Run(g, 400, null, EnemyKind.Warden));
 
         var h = NewGame(2);
-        var leaving = h.SpawnKind(EnemyKind.Warden, 0.5);
+        var leaving = h.SpawnKind(EnemyKind.Warden, EnemyKit.MidWidth);
         Assert.DoesNotContain(EnemyKind.Warden, Run(h, 200, hh => leaving.Age = 0, EnemyKind.Warden));
         bool both = false;
         Run(h, 400, hh => { leaving.Age = 0; leaving.Leaving = true; leaving.Y = 20; both |= hh.Enemies.Count(e => e.Kind == EnemyKind.Warden) == 2; }, EnemyKind.Warden);
@@ -130,21 +131,21 @@ public sealed class MiniBossCapTests
     public void The_cap_is_one_at_stages_one_to_five_and_two_from_six()
     {
         for (int s = 1; s <= 5; s++) Assert.Equal(1, Ramp.MiniBossCapAt(s));
-        for (int s = 6; s <= 14; s++) Assert.Equal(2, Ramp.MiniBossCapAt(s));
+        for (int s = 6; s <= Tuning.StageCap; s++) Assert.Equal(2, Ramp.MiniBossCapAt(s));
     }
 
     [Fact]
     public void The_same_seed_gives_the_same_replacements()
     {
-        static List<EnemyKind> One()
+        static List<EnemyKind> ReplacementsOnStage2()
         {
             var g = NewGame(2);
-            var w = g.SpawnKind(EnemyKind.Warden, 0.5);
+            var w = g.SpawnKind(EnemyKind.Warden, EnemyKit.MidWidth);
             return Run(g, 500, gg => w.Age = 0, EnemyKind.Warden);
         }
-        var a = One();
+        var a = ReplacementsOnStage2();
         Assert.NotEmpty(a);
-        Assert.Equal(a, One());
+        Assert.Equal(a, ReplacementsOnStage2());
     }
 
     [Fact]
@@ -170,13 +171,6 @@ public sealed class MiniBossCapTests
         return string.Join("\n", Enumerable.Range(0, scr.Rows).Select(r => new string(Enumerable.Range(0, scr.Cols).Select(c => scr.CharAt(c, r)).ToArray())));
     }
 
-    private static int Count(string s, string needle)
-    {
-        int n = 0;
-        for (int i = s.IndexOf(needle, StringComparison.Ordinal); i >= 0; i = s.IndexOf(needle, i + 1, StringComparison.Ordinal)) n++;
-        return n;
-    }
-
     [Fact]
     public void Stage_two_shows_the_divers_hint_and_the_wardens_once_each()
     {
@@ -184,8 +178,8 @@ public sealed class MiniBossCapTests
         Assert.Equal(EnemyKind.Warden, Ramp.Introduced(2)[^1]);
         var g = NewGame(2);
         string all = ScreenText(g, DefaultCols, DefaultRows);
-        Assert.Equal(1, Count(all, "divers charge where they aim"));
-        Assert.Equal(1, Count(all, "wardens shield others: kill one first"));
+        Assert.Equal(1, all.AsSpan().Count("divers charge where they aim"));
+        Assert.Equal(1, all.AsSpan().Count("wardens shield others: kill one first"));
     }
 
     [Fact]

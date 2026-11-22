@@ -20,12 +20,12 @@ public class EnemySpeechBoxTests
     private const double LeftX = 20;
 
     [Theory]
-    [InlineData(DarknessKind.Spam, null, DarkSource.Label, SpamHeader)]
-    [InlineData(DarknessKind.Rude, null, DarkSource.Label, RudeHeader)]
-    [InlineData(DarknessKind.Rude, RudeLabel, DarkSource.Label, RudeHeader)]
-    [InlineData(DarknessKind.Spam, "scam", DarkSource.Label, "SCAM")]
-    [InlineData(DarknessKind.Rude, null, DarkSource.Hidden, "HIDDEN REPLY")]
-    public void Header_is_the_upper_case_label_else_the_kind(DarknessKind kind, string? label, DarkSource src, string expected) =>
+    [InlineData(DarknessKind.Spam, null, DarknessSource.Label, SpamHeader)]
+    [InlineData(DarknessKind.Rude, null, DarknessSource.Label, RudeHeader)]
+    [InlineData(DarknessKind.Rude, RudeLabel, DarknessSource.Label, RudeHeader)]
+    [InlineData(DarknessKind.Spam, "scam", DarknessSource.Label, "SCAM")]
+    [InlineData(DarknessKind.Rude, null, DarknessSource.Hidden, "HIDDEN REPLY")]
+    public void Header_is_the_upper_case_label_else_the_kind(DarknessKind kind, string? label, DarknessSource src, string expected) =>
         Assert.Equal(expected, EnemySpeechBox.Header(label, kind, src));
 
     /// <summary>The screen most of these tests lay the field out on and draw to.</summary>
@@ -54,7 +54,7 @@ public class EnemySpeechBoxTests
         var game = new RaiderGame(Seed) { BossGates = kind != DarknessKind.Rude };
         game.SetLayout(FieldLayout.Compute(cols, rows));
         if (kind == DarknessKind.Rude) game.SpawnLesser();
-        game.OfferDark(new DarkPost(kind, PostSeed, text, DarkSource.Label, label));
+        game.OfferDarkness(new DarknessPost(kind, PostSeed, text, DarknessSource.Label, label));
         for (int i = 0; i < MaxWaitFrames && !game.Enemies.Any(EnemySpeechBox.IsOpen); i++) game.Step();
         return game;
     }
@@ -252,7 +252,7 @@ public class EnemySpeechBoxTests
         var game = Offered(DarknessKind.Rude, LongPost, cols, rows);
         var speaker = game.Enemies.First(EnemySpeechBox.IsOpen);
         game.Enemies.RemoveAll(other => other != speaker);
-        HoldRig.Force(game, nameof(RaiderGame.RespawnIn), Tuning.RespawnFrames);
+        PressRig.Force(game, nameof(RaiderGame.RespawnIn), Tuning.RespawnFrames);
         game.StartAtStage(BannerStage);
         game.Say("a toast for the test");
         var view = new RaiderView();
@@ -318,8 +318,7 @@ public class EnemySpeechBoxTests
             var other = new Enemy { Kind = enemy.Kind, Sprite = enemy.Sprite, X = LeftX + i * spacingPx, Y = rowY, Text = enemy.Text, Header = RudeHeader, Live = true };
             EnemySpeechBox.Update(other, BoxCols, TerminalRows); other.SpeechBoxAge = JustOpenedAge; game.Enemies.Add(other);
         }
-        const int cap = 2;
-        Assert.True(EnemySpeechBox.Placed(game, game.Layout, cap).Count <= cap);
+        Assert.True(EnemySpeechBox.Placed(game, game.Layout, Tuning.MaxSpeechBoxes).Count <= Tuning.MaxSpeechBoxes);
     }
 
     private const string LongPost = "honestly i cannot believe how little you people understand about anything at all, every single take you post is worse than the last and the worst part is you think everyone is impressed by how loud you are";
@@ -331,7 +330,7 @@ public class EnemySpeechBoxTests
     [InlineData(DarknessKind.Spam)]
     public void A_long_post_comes_through_the_wave_and_shows_in_full_with_no_ellipsis(DarknessKind kind)
     {
-        var spec = WaveSpawner.FromPost(new DarkPost(kind, PostSeed, LongPost, DarkSource.Label, AnyLabel));
+        var spec = WaveSpawner.FromPost(new DarknessPost(kind, PostSeed, LongPost, DarknessSource.Label, AnyLabel));
         if (kind == DarknessKind.Rude) Assert.Empty(spec.Enemies);   // a rude post makes no enemy
         else Assert.Contains(spec.Enemies, spawn => spawn.Text == LongPost);
         const int fieldCols = 80, fieldRows = 40;

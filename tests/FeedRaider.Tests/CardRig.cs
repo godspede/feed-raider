@@ -36,17 +36,17 @@ internal static class CardRig
     public static RaiderGame ClearAndParkShip(RaiderGame game)
     {
         EnemyKit.Clear(game);
-        HoldRig.Force(game, nameof(RaiderGame.PX), ParkedShipX);
+        PressRig.Force(game, nameof(RaiderGame.PX), ParkedShipX);
         return game;
     }
 
     /// <summary>Sets a frame at which the shake reads <paramref name="want"/> pixels both ways.</summary>
     public static void ShakeBy(RaiderGame game, int want)
     {
-        HoldRig.Force(game, nameof(RaiderGame.Shake), (double)want);
+        PressRig.Force(game, nameof(RaiderGame.Shake), (double)want);
         for (long frame = 0; frame < ShakeSearchFrames; frame++)
         {
-            HoldRig.Force(game, nameof(RaiderGame.Frame), frame);
+            PressRig.Force(game, nameof(RaiderGame.Frame), frame);
             var (shakeX, shakeY) = game.ShakeOffset();
             if (Math.Abs(shakeX) == want && Math.Abs(shakeY) == want) return;
         }

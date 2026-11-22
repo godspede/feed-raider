@@ -73,14 +73,17 @@ async function setup({ manifest, gameplay = 3, random, connection } = {}) {
     }
   };
   const names = () => els.filter((e) => !e.paused && isBlob(e.src)).map((e) => lastSegment(e.src));
-  return { music, advance, flush, els, fetched, names, starts, revoked };
+  // the lines music.js would show the player, kept so a test can read them
+  const troubles = [];
+  const trouble = (line) => troubles.push(line);
+  return { music, advance, flush, els, fetched, names, starts, revoked, troubles, trouble };
 }
 
 async function start(opts = {}) {
   let unlock;
   const c = await setup(opts);
   window.addEventListener = (ev, fn) => { if (fn.name === 'unlock') unlock ??= fn; };
-  c.music.init({ manifestUrl: 'music/tracks.json', thin: thinConnection });
+  c.music.init({ manifestUrl: 'music/tracks.json', thin: thinConnection, trouble: c.trouble });
   await c.flush();
   unlock?.();
   await c.flush();
@@ -108,7 +111,7 @@ test('a cue that comes before the manifest is played once it has loaded', async 
   let unlock;
   const c = await setup();
   window.addEventListener = (ev, fn) => { if (fn.name === 'unlock') unlock ??= fn; };
-  c.music.init({ manifestUrl: 'music/tracks.json', thin: thinConnection });
+  c.music.init({ manifestUrl: 'music/tracks.json', thin: thinConnection, trouble: c.trouble });
   c.music.cue('gameplay');          // before the fetch of tracks.json has resolved
   unlock();
   await c.advance(CUE_SETTLE_SEC);
@@ -296,7 +299,7 @@ test('the start page cue fetches the start page track and no gameplay track ahea
 
 test('no track is fetched before the first gesture or the game\'s load, and the start page track once after the load', async () => {
   const c = await setup({ gameplay: 2 });
-  c.music.init({ manifestUrl: 'music/tracks.json', thin: thinConnection });
+  c.music.init({ manifestUrl: 'music/tracks.json', thin: thinConnection, trouble: c.trouble });
   c.music.cue('start');
   await c.advance(CUE_SETTLE_SEC);
   assert.deepEqual(mp3s(c), [], 'nothing while the game is still downloading');
@@ -312,7 +315,7 @@ test('the first gesture fetches the start page track and starts it at once, when
   let unlock;
   const c = await setup({ gameplay: 2 });
   window.addEventListener = (ev, fn) => { if (fn.name === 'unlock') unlock ??= fn; };
-  c.music.init({ manifestUrl: 'music/tracks.json', thin: thinConnection });
+  c.music.init({ manifestUrl: 'music/tracks.json', thin: thinConnection, trouble: c.trouble });
   c.music.cue('start');
   await c.advance(CUE_SETTLE_SEC);
   assert.deepEqual(mp3s(c), []);
@@ -327,7 +330,7 @@ test('the first gesture fetches the start page track and starts it at once, when
 
 test('a start page cue that comes after the game\'s load, with the manifest still on its way, is fetched once the manifest is in', async () => {
   const c = await setup({ gameplay: 2 });
-  c.music.init({ manifestUrl: 'music/tracks.json', thin: thinConnection });
+  c.music.init({ manifestUrl: 'music/tracks.json', thin: thinConnection, trouble: c.trouble });
   c.music.allowFetchAhead();
   c.music.cue('start');
   await c.advance(1);
@@ -344,7 +347,7 @@ test('the page lets the music fetch ahead only once the game has loaded', () => 
 
 test('on a data-saver connection nothing is fetched before the first gesture, only the track list', async () => {
   const c = await setup({ gameplay: 2, connection: { saveData: true } });
-  c.music.init({ manifestUrl: 'music/tracks.json', thin: thinConnection });
+  c.music.init({ manifestUrl: 'music/tracks.json', thin: thinConnection, trouble: c.trouble });
   c.music.cue('start');
   c.music.allowFetchAhead();
   await c.advance(1);
@@ -605,7 +608,7 @@ test('a hint that comes before the manifest is fetched once it has loaded', asyn
   let unlock;
   const c = await setup({ manifest: keyed() });
   window.addEventListener = (ev, fn) => { if (fn.name === 'unlock') unlock ??= fn; };
-  c.music.init({ manifestUrl: 'music/tracks.json', thin: thinConnection });
+  c.music.init({ manifestUrl: 'music/tracks.json', thin: thinConnection, trouble: c.trouble });
   c.music.cue('ahead:boss:thread');
   c.music.cue('gameplay');
   unlock();
